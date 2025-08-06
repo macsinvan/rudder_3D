@@ -1,0 +1,32 @@
+import sys
+import os
+import importlib
+
+project_root = "/Users/andrewmackenzie/Rudder_Code"
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+import outline.stock.stock2d as stock2d
+importlib.reload(stock2d)
+
+import FreeCAD as App
+import Part
+import FreeCADGui as Gui
+from FreeCAD import Vector
+
+doc = App.ActiveDocument or App.newDocument("TestStock3D")
+
+length, diameter = stock2d.load_stock_csv()
+center = Vector(0, 0, 0)
+
+# Create 2D circle
+circle = stock2d.draw_simple_stock_2d(length, diameter, center)
+
+# Extrude to 3D
+stock_cylinder = stock2d.extrude_stock_3d(circle, length)
+
+# Show 3D shape
+Part.show(stock_cylinder)
+
+doc.recompute()
+Gui.ActiveDocument.ActiveView.fitAll()
