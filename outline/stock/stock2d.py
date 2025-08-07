@@ -1,6 +1,7 @@
 import csv
 import os
 import FreeCAD as App
+import FreeCADGui as Gui
 import Part
 import TechDraw
 import TechDrawGui
@@ -73,6 +74,12 @@ def create_drawing_page(doc: App.Document, stock_obj: App.DocumentObject, title:
     page.addView(view)
 
     doc.recompute()
+
+    # Force redraw of the TechDraw page
+    Gui.activeDocument().setEdit(page.Name)
+    doc.recompute()
+    Gui.ActiveDocument.ActiveView.viewTop()
+    Gui.updateGui()
 
     # Export to PDF (manual export method)
     pdf_path = os.path.expanduser("~/Rudder_Code/output/stock_drawing.pdf")
