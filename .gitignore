@@ -16,3 +16,4 @@ venv/
 *.pyc
 .DS_Store
 outline/stock/mackensea_stock.csv
+output/
