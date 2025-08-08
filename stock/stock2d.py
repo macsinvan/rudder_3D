@@ -8,8 +8,9 @@ import Part
 import TechDraw
 import TechDrawGui
 from FreeCAD import Vector
+from stock.io import read_stock_csv_sectioned  # NEW: use shared CSV reader
 
-VERSION = "1.1.0"  # print-only update
+VERSION = "1.1.1"  # print-only update
 
 # ---------- Helpers ----------
 
@@ -39,87 +40,63 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
     body = doc.addObject("Part::Feature", "RudderStock")
     compound_shapes = []
 
-    meta_info = {}
+    # NEW: use the section-aware reader; keep the rest identical
+    rows, meta_info = read_stock_csv_sectioned(csv_path)
     summaries = []
 
-    with open(csv_path, newline='') as f:
-        current_header = []
-        reader = csv.reader(f, skipinitialspace=True)
+    for row_dict in rows:
+        # NOTE: do not change logic that was previously working
+        # shape_type comes from 'type' when present (post sections)
+        # or from the presence of the header name 'wedge' (tine section)
+        shape_type = row_dict.get('type', '').lower()
+        if not shape_type and 'wedge' in row_dict:
+            shape_type = 'wedge'  # keep behavior that rendered tine previously
 
-        for row in reader:
-            # skip blank or comment
-            if not row or all(not c.strip() for c in row) or row[0].strip().startswith('#'):
-                continue
+        label = row_dict.get('label', '')
 
-            # meta rows
-            if row[0].strip().lower() == 'meta':
-                if len(row) >= 3:
-                    meta_info[row[1].strip().lower()] = row[2].strip()
-                continue
+        try:
+            if shape_type == 'cylinder':
+                # build down in -Z
+                z0 = -float(row_dict['start'])
+                z1 = -float(row_dict['end'])
+                base_z = min(z0, z1)
+                height = abs(z1 - z0)
+                d = float(row_dict['diameter_start'])
+                cyl = Part.makeCylinder(d / 2.0, height, Vector(0, 0, base_z))
+                compound_shapes.append(cyl)
+                summaries.append(f"Cylinder '{label}' h={height} d={d}")
+                print(f"  ✓ Cylinder: label='{label}', d={d}, z0={z0}, z1={z1}, base={base_z}, h={height}")
 
-            # header rows (works for post/tine sections)
-            if 'start' in [c.strip().lower() for c in row]:
-                current_header = [c.strip().lower() for c in row]
-                print(f"ℹ️ Header set: {current_header}")
-                continue
+            elif shape_type == 'taper':
+                z0 = -float(row_dict['start'])
+                z1 = -float(row_dict['end'])
+                height = abs(z1 - z0)
+                d1 = float(row_dict['diameter_start'])  # top
+                d2 = float(row_dict['diameter_end'])    # bottom
+                # place so it tapers as Z decreases
+                cone = Part.makeCone(d2 / 2.0, d1 / 2.0, height, Vector(0, 0, z0 - height))
+                compound_shapes.append(cone)
+                summaries.append(f"Taper '{label}' h={height} d1={d1}→d2={d2}")
+                print(f"  ✓ Taper:   label='{label}', d_top={d1}, d_bot={d2}, base={z0 - height}, h={height}")
 
-            if not current_header:
-                print(f"⚠️ Skipping row without header context: {row}")
-                continue
+            elif shape_type == 'wedge':
+                # tine wedge (debug block form)
+                start = float(row_dict['start'])
+                width = float(row_dict['width'])
+                length_out = float(row_dict['length'])
+                t = float(row_dict['plate_thickness'])
+                wedge = make_wedge_debug_block(start, width, length_out, t)
+                compound_shapes.append(wedge)
+                summaries.append(f"Tine '{label}' start={start} w={width} len={length_out} t={t}")
+                print(f"  ✓ Tine:    label='{label}', start={start}, width={width}, length={length_out}, t={t}")
 
-            # map row -> dict
-            row_dict = {k: v.strip() for k, v in zip(current_header, row)}
-            # NOTE: do not change logic that was previously working
-            # shape_type comes from 'type' when present (post sections) or from the header name 'wedge' (tine section)
-            shape_type = row_dict.get('type', '').lower()
-            if not shape_type and 'wedge' in current_header:
-                shape_type = 'wedge'  # keep behavior that rendered tine previously
+            else:
+                print(f"  ❌ Unknown type in row: {row_dict}")
+                # keep behavior (just skip)
 
-            label = row_dict.get('label', '')
-
-            try:
-                if shape_type == 'cylinder':
-                    # build down in -Z
-                    z0 = -float(row_dict['start'])
-                    z1 = -float(row_dict['end'])
-                    base_z = min(z0, z1)
-                    height = abs(z1 - z0)
-                    d = float(row_dict['diameter_start'])
-                    cyl = Part.makeCylinder(d / 2.0, height, Vector(0, 0, base_z))
-                    compound_shapes.append(cyl)
-                    summaries.append(f"Cylinder '{label}' h={height} d={d}")
-                    print(f"  ✓ Cylinder: label='{label}', d={d}, z0={z0}, z1={z1}, base={base_z}, h={height}")
-
-                elif shape_type == 'taper':
-                    z0 = -float(row_dict['start'])
-                    z1 = -float(row_dict['end'])
-                    height = abs(z1 - z0)
-                    d1 = float(row_dict['diameter_start'])  # top
-                    d2 = float(row_dict['diameter_end'])    # bottom
-                    # place so it tapers as Z decreases
-                    cone = Part.makeCone(d2 / 2.0, d1 / 2.0, height, Vector(0, 0, z0 - height))
-                    compound_shapes.append(cone)
-                    summaries.append(f"Taper '{label}' h={height} d1={d1}→d2={d2}")
-                    print(f"  ✓ Taper:   label='{label}', d_top={d1}, d_bot={d2}, base={z0 - height}, h={height}")
-
-                elif shape_type == 'wedge':
-                    # tine wedge (debug block form)
-                    start = float(row_dict['start'])
-                    width = float(row_dict['width'])
-                    length_out = float(row_dict['length'])
-                    t = float(row_dict['plate_thickness'])
-                    wedge = make_wedge_debug_block(start, width, length_out, t)
-                    compound_shapes.append(wedge)
-                    summaries.append(f"Tine '{label}' start={start} w={width} len={length_out} t={t}")
-                    print(f"  ✓ Tine:    label='{label}', start={start}, width={width}, length={length_out}, t={t}")
-
-                else:
-                    print(f"  ❌ Unknown type in row: {row}")
-                    # do not change behavior (just skip)
-
-            except Exception as e:
-                print(f"  ❌ Error parsing row {row} → {e}")
-                # keep loop going without changing behavior
+        except Exception as e:
+            print(f"  ❌ Error parsing row {row_dict} → {e}")
+            # keep loop going without changing behavior
 
     if meta_info:
         print(f"📌 Meta: {meta_info}")
