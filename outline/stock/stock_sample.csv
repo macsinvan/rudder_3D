@@ -1,2 +1,11 @@
-length,diameter
-400,60
+meta,boat_name,version
+meta,MackenSea,1.0.0
+
+post,type,start,end,diameter_start,label
+post,cylinder,0,20,44,Rudder Sleeve
+
+post,type,start,end,diameter_start,diameter_end,label
+post,taper,20,604,44,20,Rudder Taper
+
+tine,wedge,start,width,length,plate_thickness,angle,label
+tine,wedge,119,40,90,5,90,Support 1

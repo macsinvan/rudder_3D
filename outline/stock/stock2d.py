@@ -1,7 +1,7 @@
-import csv
-import os
-from pathlib import Path
+# outline/stock/stock2d.py
 
+import os
+import csv
 import FreeCAD as App
 import FreeCADGui as Gui
 import Part
@@ -9,48 +9,150 @@ import TechDraw
 import TechDrawGui
 from FreeCAD import Vector
 
-def load_stock_csv():
+VERSION = "1.0.7"  # print-only update
+
+# ---------- Helpers ----------
+
+def make_wedge_debug_block(start: float, width: float, length_out: float, plate_thickness: float) -> Part.Shape:
+    """
+    Debug helper: simple rectangular block to validate tine Z placement.
+    - Top face at Z = -start (we build downwards)
+    - Extends downward by 'width'
+    - Extends outboard along +X by 'length_out'
+    - Visible thickness across Y = 2 * plate_thickness
+    """
+    box = Part.makeBox(length_out, 2.0 * plate_thickness, width)
+    # Place min corner so top face is at -start and block extends downward by 'width'
+    box.Placement.Base = Vector(0.0, -plate_thickness, -(start + width))
+    return box
+
+# ---------- Core build ----------
+
+def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
+    print(f"\n📄 build_stock_from_csv v{VERSION}")
+
     csv_path = os.path.join(os.path.dirname(__file__), 'stock_sample.csv')
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"❌ CSV file not found: {csv_path}")
+    print(f"📂 Reading CSV: {csv_path}")
+
+    body = doc.addObject("Part::Feature", "RudderStock")
+    compound_shapes = []
+
+    meta_info = {}
+    summaries = []
+
     with open(csv_path, newline='') as f:
-        reader = csv.DictReader(f)
+        current_header = []
+        reader = csv.reader(f, skipinitialspace=True)
+
         for row in reader:
-            length = float(row['length'])
-            diameter = float(row['diameter'])
-            return length, diameter
+            # skip blank or comment
+            if not row or all(not c.strip() for c in row) or row[0].strip().startswith('#'):
+                continue
 
-def draw_simple_stock_2d(length: float, diameter: float, center=App.Vector(0, 0, 0)):
-    radius = diameter / 2
-    circle_edge = Part.makeCircle(radius, center)
-    circle_wire = Part.Wire([circle_edge])
-    circle_face = Part.Face(circle_wire)
-    return circle_face
+            # meta rows
+            if row[0].strip().lower() == 'meta':
+                if len(row) >= 3:
+                    meta_info[row[1].strip().lower()] = row[2].strip()
+                continue
 
-def extrude_stock_3d(circle: Part.Shape, length: float) -> Part.Shape:
-    vec = Vector(0, 0, length)
-    return circle.extrude(vec)
+            # header rows (works for post/tine sections)
+            if 'start' in [c.strip().lower() for c in row]:
+                current_header = [c.strip().lower() for c in row]
+                print(f"ℹ️ Header set: {current_header}")
+                continue
+
+            if not current_header:
+                print(f"⚠️ Skipping row without header context: {row}")
+                continue
+
+            # map row -> dict
+            row_dict = {k: v.strip() for k, v in zip(current_header, row)}
+            # NOTE: do not change logic that was previously working
+            # shape_type comes from 'type' when present (post sections) or from the header name 'wedge' (tine section)
+            shape_type = row_dict.get('type', '').lower()
+            if not shape_type and 'wedge' in current_header:
+                shape_type = 'wedge'  # keep behavior that rendered tine previously
+
+            label = row_dict.get('label', '')
+
+            try:
+                if shape_type == 'cylinder':
+                    # build down in -Z
+                    z0 = -float(row_dict['start'])
+                    z1 = -float(row_dict['end'])
+                    base_z = min(z0, z1)
+                    height = abs(z1 - z0)
+                    d = float(row_dict['diameter_start'])
+                    cyl = Part.makeCylinder(d / 2.0, height, Vector(0, 0, base_z))
+                    compound_shapes.append(cyl)
+                    summaries.append(f"Cylinder '{label}' h={height} d={d}")
+                    print(f"  ✓ Cylinder: label='{label}', d={d}, z0={z0}, z1={z1}, base={base_z}, h={height}")
+
+                elif shape_type == 'taper':
+                    z0 = -float(row_dict['start'])
+                    z1 = -float(row_dict['end'])
+                    height = abs(z1 - z0)
+                    d1 = float(row_dict['diameter_start'])  # top
+                    d2 = float(row_dict['diameter_end'])    # bottom
+                    # place so it tapers as Z decreases
+                    cone = Part.makeCone(d2 / 2.0, d1 / 2.0, height, Vector(0, 0, z0 - height))
+                    compound_shapes.append(cone)
+                    summaries.append(f"Taper '{label}' h={height} d1={d1}→d2={d2}")
+                    print(f"  ✓ Taper:   label='{label}', d_top={d1}, d_bot={d2}, base={z0 - height}, h={height}")
+
+                elif shape_type == 'wedge':
+                    # tine wedge (debug block form)
+                    start = float(row_dict['start'])
+                    width = float(row_dict['width'])
+                    length_out = float(row_dict['length'])
+                    t = float(row_dict['plate_thickness'])
+                    wedge = make_wedge_debug_block(start, width, length_out, t)
+                    compound_shapes.append(wedge)
+                    summaries.append(f"Tine '{label}' start={start} w={width} len={length_out} t={t}")
+                    print(f"  ✓ Tine:    label='{label}', start={start}, width={width}, length={length_out}, t={t}")
+
+                else:
+                    print(f"  ❌ Unknown type in row: {row}")
+                    # do not change behavior (just skip)
+
+            except Exception as e:
+                print(f"  ❌ Error parsing row {row} → {e}")
+                # keep loop going without changing behavior
+
+    if meta_info:
+        print(f"📌 Meta: {meta_info}")
+    print(f"📊 Components: {', '.join(summaries) if summaries else 'none'}")
+
+    if not compound_shapes:
+        raise ValueError("❌ No valid stock geometry found in CSV.")
+
+    compound = Part.makeCompound(compound_shapes)
+    body.Shape = compound
+    doc.recompute()
+    return body
+
+# ---------- Drawing ----------
 
 def calculate_uniform_scale(length_mm, diameter_mm, page_width=180, page_height=257, buffer=10):
-    max_width = page_width - 2 * buffer
-    max_height = page_height - 2 * buffer
-    scale_x = max_width / diameter_mm
-    scale_y = max_height / length_mm
-    return min(scale_x, scale_y)
+    max_w = page_width - 2 * buffer
+    max_h = page_height - 2 * buffer
+    return min(max_w / diameter_mm, max_h / length_mm)
 
 def create_drawing_page(doc: App.Document, stock_obj: App.DocumentObject,
                         length: float, diameter: float,
                         title: str = "Rudder Stock Drawing"):
-
     page = doc.addObject('TechDraw::DrawPage', 'StockDrawing')
     template = doc.addObject("TechDraw::DrawSVGTemplate", "Template")
-    template_path = "/Applications/FreeCAD.app/Contents/Resources/share/Mod/TechDraw/Templates/A4_Portrait_blank.svg"
-    template.Template = template_path
+    template.Template = "/Applications/FreeCAD.app/Contents/Resources/share/Mod/TechDraw/Templates/A4_Portrait_blank.svg"
     page.Template = template
 
     scale = calculate_uniform_scale(length, diameter)
 
     side_view = doc.addObject('TechDraw::DrawViewPart', 'SideView')
     side_view.Source = [stock_obj]
-    side_view.Direction = (0, 1, 0)  # Front view
+    side_view.Direction = (0, 1, 0)
     side_view.ScaleType = "Custom"
     side_view.Scale = scale
     side_view.X = 90
@@ -62,10 +164,7 @@ def create_drawing_page(doc: App.Document, stock_obj: App.DocumentObject,
     doc.recompute()
     Gui.updateGui()
 
-    output_dir = Path.home() / "Rudder_Code" / "output"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    pdf_path = str(output_dir / "stock_drawing.pdf")
+    pdf_path = os.path.expanduser("~/Rudder_Code/output/stock_drawing.pdf")
     TechDrawGui.exportPageAsPdf(page, pdf_path)
     print(f"✅ Drawing exported to: {pdf_path}")
-
     return page

@@ -1,32 +1,29 @@
 import sys
 import os
-import importlib
 
-project_root = "/Users/andrewmackenzie/Rudder_Code"
+# Ensure the project root is in the path
+project_root = os.path.expanduser("~/Rudder_Code")
 if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
-import outline.stock.stock2d as stock2d
-importlib.reload(stock2d)
+    sys.path.append(project_root)
 
 import FreeCAD as App
-import Part
 import FreeCADGui as Gui
-from FreeCAD import Vector
+import outline.stock.stock2d as stock2d
 
-doc = App.ActiveDocument or App.newDocument("TestStock3D")
+# Create a new document
+doc = App.newDocument("TestStockDrawing")
 
-length, diameter = stock2d.load_stock_csv()
-center = Vector(0, 0, 0)
+# Build the 3D stock from the CSV
+part_obj = stock2d.build_stock_from_csv(doc)
 
-# Create 2D circle
-circle = stock2d.draw_simple_stock_2d(length, diameter, center)
+# Extract bounding box to get length and diameter
+bbox = part_obj.Shape.BoundBox
+length = bbox.ZLength
+diameter = max(bbox.XLength, bbox.YLength)
 
-# Extrude to 3D
-stock_cylinder = stock2d.extrude_stock_3d(circle, length)
+# Create the drawing page with correct dimensions
+stock2d.create_drawing_page(doc, part_obj, length, diameter)
 
-# Show 3D shape
-Part.show(stock_cylinder)
-
-doc.recompute()
-Gui.ActiveDocument.ActiveView.fitAll()
+# Show the result
+Gui.activeDocument().activeView().viewAxonometric()
+Gui.SendMsgToActiveView("ViewFit")
