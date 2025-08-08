@@ -9,7 +9,7 @@ import TechDraw
 import TechDrawGui
 from FreeCAD import Vector
 
-VERSION = "1.0.7"  # print-only update
+VERSION = "1.1.0"  # print-only update
 
 # ---------- Helpers ----------
 
@@ -131,6 +131,16 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
     compound = Part.makeCompound(compound_shapes)
     body.Shape = compound
     doc.recompute()
+    
+    # Summary line with counts and bbox
+    try:
+        bbox = body.Shape.BoundBox
+        print(f"📦 Solids: {len(compound_shapes)}  "
+              f"BBox: X[{bbox.XMin:.1f},{bbox.XMax:.1f}] "
+              f"Y[{bbox.YMin:.1f},{bbox.YMax:.1f}] "
+              f"Z[{bbox.ZMin:.1f},{bbox.ZMax:.1f}]")
+    except Exception as e:
+        print(f"⚠️ Could not compute bbox summary: {e}")
     return body
 
 # ---------- Drawing ----------
