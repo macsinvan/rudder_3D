@@ -15,3 +15,6 @@ venv/
 *.swp__pycache__/
 *.pyc
 .DS_Store
+outline/stock/mackensea_stock.csv
+output/
+__pycache__/

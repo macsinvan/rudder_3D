@@ -8,7 +8,7 @@ if project_root not in sys.path:
 
 import FreeCAD as App
 import FreeCADGui as Gui
-import outline.stock.stock2d as stock2d
+import stock.stock2d as stock2d
 
 # Create a new document
 doc = App.newDocument("TestStockDrawing")
