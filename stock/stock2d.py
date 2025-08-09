@@ -12,7 +12,7 @@ from FreeCAD import Vector
 from stock.io import read_stock_csv_sectioned  # use shared CSV reader
 from stock.geom import radius_at as _radius_at_core, append_post_segment_from_row  # NEW
 
-VERSION = "1.2.1"  # angled tine: true pivot rotation + safe trim; 90° unchanged
+VERSION = "1.2.2"  # angled tine: true pivot rotation + safe trim; 90° unchanged
 
 # ---------- Helpers ----------
 
