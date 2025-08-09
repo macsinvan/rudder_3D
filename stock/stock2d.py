@@ -8,9 +8,9 @@ import Part
 import TechDraw
 import TechDrawGui
 from FreeCAD import Vector
-from stock.io import read_stock_csv_sectioned  # NEW: use shared CSV reader
+from stock.io import read_stock_csv_sectioned  # use shared CSV reader
 
-VERSION = "1.1.1"  # print-only update
+VERSION = "1.1.2"  # Step 2: tine placed from post surface at Z=-start
 
 # ---------- Helpers ----------
 
@@ -40,23 +40,44 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
     body = doc.addObject("Part::Feature", "RudderStock")
     compound_shapes = []
 
-    # NEW: use the section-aware reader; keep the rest identical
+    # Collect post segments so we can query radius later
+    post_segments = []
+    _radius_at_debug_printed = {"done": False}
+
+    def radius_at(z_world: float) -> float:
+        """
+        Return post radius (mm) at given world Z (top ~ 0, down is negative).
+        Linear interpolation across cylinder/taper segments.
+        """
+        if not _radius_at_debug_printed["done"]:
+            print(f"🔎 radius_at(): {len(post_segments)} post segment(s) available")
+            for i, seg in enumerate(post_segments, 1):
+                print(f"   •[{i}] {seg['kind']}  Z[{seg['z_bot']:.1f},{seg['z_top']:.1f}]  "
+                      f"R[{seg['r_bot']:.2f},{seg['r_top']:.2f}]")
+            _radius_at_debug_printed["done"] = True
+
+        for seg in post_segments:
+            if seg["z_bot"] - 1e-9 <= z_world <= seg["z_top"] + 1e-9:
+                if seg["kind"] == "cyl":
+                    return seg["r_top"]
+                span = seg["z_top"] - seg["z_bot"]
+                t = 0.0 if abs(span) < 1e-12 else (z_world - seg["z_bot"]) / span
+                return seg["r_bot"] + t * (seg["r_top"] - seg["r_bot"])
+        raise ValueError(f"No post segment covers Z={z_world:.3f} mm")
+
+    # Read rows/meta (no behavior change)
     rows, meta_info = read_stock_csv_sectioned(csv_path)
     summaries = []
 
     for row_dict in rows:
-        # NOTE: do not change logic that was previously working
-        # shape_type comes from 'type' when present (post sections)
-        # or from the presence of the header name 'wedge' (tine section)
         shape_type = row_dict.get('type', '').lower()
         if not shape_type and 'wedge' in row_dict:
-            shape_type = 'wedge'  # keep behavior that rendered tine previously
+            shape_type = 'wedge'
 
         label = row_dict.get('label', '')
 
         try:
             if shape_type == 'cylinder':
-                # build down in -Z
                 z0 = -float(row_dict['start'])
                 z1 = -float(row_dict['end'])
                 base_z = min(z0, z1)
@@ -67,36 +88,65 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                 summaries.append(f"Cylinder '{label}' h={height} d={d}")
                 print(f"  ✓ Cylinder: label='{label}', d={d}, z0={z0}, z1={z1}, base={base_z}, h={height}")
 
+                post_segments.append({
+                    "kind": "cyl",
+                    "z_bot": base_z,
+                    "z_top": base_z + height,
+                    "r_bot": d / 2.0,
+                    "r_top": d / 2.0,
+                })
+
             elif shape_type == 'taper':
                 z0 = -float(row_dict['start'])
                 z1 = -float(row_dict['end'])
                 height = abs(z1 - z0)
                 d1 = float(row_dict['diameter_start'])  # top
                 d2 = float(row_dict['diameter_end'])    # bottom
-                # place so it tapers as Z decreases
                 cone = Part.makeCone(d2 / 2.0, d1 / 2.0, height, Vector(0, 0, z0 - height))
                 compound_shapes.append(cone)
                 summaries.append(f"Taper '{label}' h={height} d1={d1}→d2={d2}")
                 print(f"  ✓ Taper:   label='{label}', d_top={d1}, d_bot={d2}, base={z0 - height}, h={height}")
 
+                z_bot = min(z0, z1)
+                z_top = max(z0, z1)
+                post_segments.append({
+                    "kind": "taper",
+                    "z_bot": z_bot,
+                    "z_top": z_top,
+                    "r_bot": d2 / 2.0,
+                    "r_top": d1 / 2.0,
+                })
+
             elif shape_type == 'wedge':
-                # tine wedge (debug block form)
+                # 90° tine measured from *post surface* at Z = -start
                 start = float(row_dict['start'])
                 width = float(row_dict['width'])
                 length_out = float(row_dict['length'])
                 t = float(row_dict['plate_thickness'])
+
+                z_attach = -start
+                try:
+                    r = radius_at(z_attach)
+                except Exception as e:
+                    print(f"  ⚠️ radius_at({z_attach:.1f}) failed: {e}; default r=0")
+                    r = 0.0
+
                 wedge = make_wedge_debug_block(start, width, length_out, t)
+
+                # Shift outboard so the inner face sits on the post surface
+                base = wedge.Placement.Base
+                base.x = base.x + r
+                wedge.Placement.Base = base
+
                 compound_shapes.append(wedge)
-                summaries.append(f"Tine '{label}' start={start} w={width} len={length_out} t={t}")
-                print(f"  ✓ Tine:    label='{label}', start={start}, width={width}, length={length_out}, t={t}")
+                summaries.append(f"Tine '{label}' start={start} w={width} len={length_out} t={t} r_at={r:.2f}")
+                print(f"  ✓ Tine:    label='{label}', start={start}, width={width}, length={length_out}, t={t}, r_at={r:.2f}")
 
             else:
                 print(f"  ❌ Unknown type in row: {row_dict}")
-                # keep behavior (just skip)
 
         except Exception as e:
             print(f"  ❌ Error parsing row {row_dict} → {e}")
-            # keep loop going without changing behavior
 
     if meta_info:
         print(f"📌 Meta: {meta_info}")
@@ -108,8 +158,7 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
     compound = Part.makeCompound(compound_shapes)
     body.Shape = compound
     doc.recompute()
-    
-    # Summary line with counts and bbox
+
     try:
         bbox = body.Shape.BoundBox
         print(f"📦 Solids: {len(compound_shapes)}  "
