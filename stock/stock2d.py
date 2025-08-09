@@ -1,7 +1,8 @@
-# outline/stock/stock2d.py
+# stock/stock2d.py
 
 import os
 import csv
+import math
 import FreeCAD as App
 import FreeCADGui as Gui
 import Part
@@ -10,7 +11,7 @@ import TechDrawGui
 from FreeCAD import Vector
 from stock.io import read_stock_csv_sectioned  # use shared CSV reader
 
-VERSION = "1.2.0"  # Step 2: tine placed from post surface at Z=-start
+VERSION = "1.2.1"  # angled tine: true pivot rotation + safe trim; 90° unchanged
 
 # ---------- Helpers ----------
 
@@ -70,9 +71,13 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
     summaries = []
 
     for row_dict in rows:
+        # Resolve type: prefer explicit 'type', otherwise infer from section header key
         shape_type = row_dict.get('type', '').lower()
-        if not shape_type and 'wedge' in row_dict:
-            shape_type = 'wedge'
+        if not shape_type:
+            if 'plate' in row_dict:
+                shape_type = 'plate'
+            elif 'wedge' in row_dict:
+                shape_type = 'wedge'
 
         label = row_dict.get('label', '')
 
@@ -102,6 +107,7 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                 height = abs(z1 - z0)
                 d1 = float(row_dict['diameter_start'])  # top
                 d2 = float(row_dict['diameter_end'])    # bottom
+                # place so it tapers as Z decreases
                 cone = Part.makeCone(d2 / 2.0, d1 / 2.0, height, Vector(0, 0, z0 - height))
                 compound_shapes.append(cone)
                 summaries.append(f"Taper '{label}' h={height} d1={d1}→d2={d2}")
@@ -118,11 +124,12 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                 })
 
             elif shape_type == 'wedge':
-                # 90° tine measured from *post surface* at Z = -start
+                # 90° or angled tine, measured from *post surface* at Z = -start
                 start = float(row_dict['start'])
                 width = float(row_dict['width'])
                 length_out = float(row_dict['length'])
                 t = float(row_dict['plate_thickness'])
+                angle_deg = float(row_dict.get('angle', '90') or 90.0)
 
                 z_attach = -start
                 try:
@@ -131,16 +138,114 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                     print(f"  ⚠️ radius_at({z_attach:.1f}) failed: {e}; default r=0")
                     r = 0.0
 
-                wedge = make_wedge_debug_block(start, width, length_out, t)
+                if abs(angle_deg - 90.0) < 1e-9:
+                    # 90°: unchanged behavior
+                    wedge = make_wedge_debug_block(start, width, length_out, t)
+                    base = wedge.Placement.Base
+                    base.x = base.x + r
+                    wedge.Placement.Base = base
+                    compound_shapes.append(wedge)
+                    summaries.append(f"Tine '{label}' start={start} w={width} len={length_out} t={t} r_at={r:.2f}")
+                    print(f"  ✓ Tine:    label='{label}', start={start}, width={width}, length={length_out}, t={t}, r_at={r:.2f}")
+                else:
+                    # Angled tine:
+                    tilt = 90.0 - angle_deg
+                    rot_deg = -tilt  # rotate around +Y; angle<90 tips toward -Z
+                    rot_rad = math.radians(abs(tilt))
 
-                # Shift outboard so the inner face sits on the post surface
-                base = wedge.Placement.Base
-                base.x = base.x + r
-                wedge.Placement.Base = base
+                    # Extend so lower edge reaches after rotation
+                    extra = width * math.tan(rot_rad) if abs(tilt) > 1e-9 else 0.0
+                    eff_len = length_out + extra
 
-                compound_shapes.append(wedge)
-                summaries.append(f"Tine '{label}' start={start} w={width} len={length_out} t={t} r_at={r:.2f}")
-                print(f"  ✓ Tine:    label='{label}', start={start}, width={width}, length={length_out}, t={t}, r_at={r:.2f}")
+                    # Axis-aligned block seated at post surface
+                    wedge = make_wedge_debug_block(start, width, eff_len, t)
+                    base = wedge.Placement.Base
+                    base.x = base.x + r
+                    wedge.Placement.Base = base
+
+                    # Rotate around weld line (x=r, z=-start), axis +Y
+                    pivot = Vector(r, 0.0, -start)
+                    wedge = wedge.copy()
+                    wedge.rotate(pivot, Vector(0, 1, 0), rot_deg)
+
+                    # Trim to keep end face parallel to post (constant-X)
+                    x_cut = r + length_out * math.cos(math.radians(abs(tilt)))
+                    trim = Part.makeBox(
+                        x_cut + 10000.0,
+                        20000.0,
+                        20000.0,
+                        Vector(-10000.0, -10000.0, -10000.0)
+                    )
+                    wedge = wedge.common(trim)
+                    if wedge.isNull():
+                        print("  ⚠️ Tine became null after trim; check angle/length inputs and x_cut.")
+
+                    compound_shapes.append(wedge)
+                    summaries.append(
+                        f"Tine '{label}' start={start} w={width} len={length_out} t={t} "
+                        f"angle={angle_deg} r_at={r:.2f}"
+                    )
+                    print(f"  ✓ Tine*:   label='{label}', start={start}, width={width}, length={length_out}, "
+                          f"t={t}, angle={angle_deg:.2f}°, rot={rot_deg:.2f}°, extra={extra:.2f}, x_cut={x_cut:.2f}, r_at={r:.2f}")
+
+            elif shape_type == 'plate':
+                # IDENTICAL GEOMETRY to 'wedge' (separate handler, same method)
+                start = float(row_dict['start'])
+                width = float(row_dict['width'])
+                length_out = float(row_dict['length'])
+                t = float(row_dict['plate_thickness'])
+                angle_deg = float(row_dict.get('angle', '90') or 90.0)
+
+                z_attach = -start
+                try:
+                    r = radius_at(z_attach)
+                except Exception as e:
+                    print(f"  ⚠️ radius_at({z_attach:.1f}) failed: {e}; default r=0")
+                    r = 0.0
+
+                if abs(angle_deg - 90.0) < 1e-9:
+                    plate = make_wedge_debug_block(start, width, length_out, t)
+                    base = plate.Placement.Base
+                    base.x = base.x + r
+                    plate.Placement.Base = base
+                    compound_shapes.append(plate)
+                    summaries.append(f"Plate '{label}' start={start} w={width} len={length_out} t={t} r_at={r:.2f}")
+                    print(f"  ✓ Plate:   label='{label}', start={start}, width={width}, length={length_out}, t={t}, r_at={r:.2f}")
+                else:
+                    tilt = 90.0 - angle_deg
+                    rot_deg = -tilt
+                    rot_rad = math.radians(abs(tilt))
+
+                    extra = width * math.tan(rot_rad) if abs(tilt) > 1e-9 else 0.0
+                    eff_len = length_out + extra
+
+                    plate = make_wedge_debug_block(start, width, eff_len, t)
+                    base = plate.Placement.Base
+                    base.x = base.x + r
+                    plate.Placement.Base = base
+
+                    pivot = Vector(r, 0.0, -start)
+                    plate = plate.copy()
+                    plate.rotate(pivot, Vector(0, 1, 0), rot_deg)
+
+                    x_cut = r + length_out * math.cos(math.radians(abs(tilt)))
+                    trim = Part.makeBox(
+                        x_cut + 10000.0,
+                        20000.0,
+                        20000.0,
+                        Vector(-10000.0, -10000.0, -10000.0)
+                    )
+                    plate = plate.common(trim)
+                    if plate.isNull():
+                        print("  ⚠️ Plate became null after trim; check angle/length inputs and x_cut.")
+
+                    compound_shapes.append(plate)
+                    summaries.append(
+                        f"Plate '{label}' start={start} w={width} len={length_out} t={t} "
+                        f"angle={angle_deg} r_at={r:.2f}"
+                    )
+                    print(f"  ✓ Plate*:  label='{label}', start={start}, width={width}, length={length_out}, "
+                          f"t={t}, angle={angle_deg:.2f}°, rot={rot_deg:.2f}°, extra={extra:.2f}, x_cut={x_cut:.2f}, r_at={r:.2f}")
 
             else:
                 print(f"  ❌ Unknown type in row: {row_dict}")

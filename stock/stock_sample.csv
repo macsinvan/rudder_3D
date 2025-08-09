@@ -7,11 +7,11 @@ post,cylinder,0,20,44,Rudder Sleeve
 post,type,start,end,diameter_start,diameter_end,label
 post,taper,20,604,44,20,Rudder Taper
 
-tine,wedge,start,width,length,plate_thickness,angle,label
+tine,plate,start,width,length,plate_thickness,angle,label
 tine,wedge,120,40,90,5,90,Support 1
 
-tine,wedge,start,width,length,plate_thickness,angle,label
+tine,plate,start,width,length,plate_thickness,angle,label
 tine,wedge,370,40,90,5,90,Support 2
 
-tine,wedge,start,width,length,plate_thickness,angle,label
+tine,plate,start,width,length,plate_thickness,angle,label
 tine,wedge,560,40,190,5,120,Support 3
