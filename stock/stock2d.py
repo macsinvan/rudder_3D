@@ -10,7 +10,7 @@ import TechDrawGui
 from FreeCAD import Vector
 from stock.io import read_stock_csv_sectioned  # use shared CSV reader
 
-VERSION = "1.1.2"  # Step 2: tine placed from post surface at Z=-start
+VERSION = "1.2.0"  # Step 2: tine placed from post surface at Z=-start
 
 # ---------- Helpers ----------
 
