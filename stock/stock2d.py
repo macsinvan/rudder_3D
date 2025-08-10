@@ -9,17 +9,16 @@ import Part
 import TechDraw
 import TechDrawGui
 from FreeCAD import Vector
-from stock.io import read_stock_csv_sectioned  # use shared CSV reader
+from stock.io import read_stock_csv_sectioned
 from stock.geom import radius_at as _radius_at_core, append_post_segment_from_row
 
-VERSION = "1.2.3"  # tie-strap set via constant; no functional changes
-END_CAP_LEN_MM = 2.0  # fixed length for small tie-strap at free end of a wedge
+VERSION = "1.2.8"  # wedge(90°): fix post-end gap via correct pivot; alpha=atan((t/2)/length); no tip trim/strap
 
 # ---------- Helpers ----------
 
 def make_wedge_debug_block(start: float, width: float, length_out: float, plate_thickness: float) -> Part.Shape:
     """
-    Debug helper: simple rectangular block to validate tine Z placement.
+    Simple rectangular block to validate tine Z placement.
     - Top face at Z = -start (we build downwards)
     - Extends downward by 'width'
     - Extends outboard along +X by 'length_out'
@@ -62,7 +61,7 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
     summaries = []
 
     for row_dict in rows:
-        # --- TYPE DETECTION (supports 'plate' section and 'wedge' section) ---
+        # Decide handler from CSV: explicit 'type', or section header key (plate / wedge)
         shape_type = (row_dict.get('type') or '').strip().lower()
         if not shape_type:
             if 'plate' in row_dict:
@@ -84,7 +83,6 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                 summaries.append(f"Cylinder '{label}' h={height} d={d}")
                 print(f"  ✓ Cylinder: label='{label}', d={d}, z0={z0}, z1={z1}, base={base_z}, h={height}")
 
-                # record this segment for radius queries
                 append_post_segment_from_row(post_segments, row_dict)
 
             elif shape_type == 'taper':
@@ -93,17 +91,15 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                 height = abs(z1 - z0)
                 d1 = float(row_dict['diameter_start'])  # top
                 d2 = float(row_dict['diameter_end'])    # bottom
-                # place so it tapers as Z decreases
                 cone = Part.makeCone(d2 / 2.0, d1 / 2.0, height, Vector(0, 0, z0 - height))
                 compound_shapes.append(cone)
                 summaries.append(f"Taper '{label}' h={height} d1={d1}→d2={d2}")
                 print(f"  ✓ Taper:   label='{label}', d_top={d1}, d_bot={d2}, base={z0 - height}, h={height}")
 
-                # record this segment for radius queries
                 append_post_segment_from_row(post_segments, row_dict)
 
             elif shape_type == 'plate':
-                # 90° or angled plate, measured from *post surface* at Z = -start
+                # Solid plate tine (single plate), angle-aware
                 start = float(row_dict['start'])
                 width = float(row_dict['width'])
                 length_out = float(row_dict['length'])
@@ -118,43 +114,33 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                     r = 0.0
 
                 if abs(angle_deg - 90.0) < 1e-9:
-                    # 90°: axis-aligned block seated at post surface
-                    plate_blk = make_wedge_debug_block(start, width, length_out, t)
-                    base = plate_blk.Placement.Base
-                    base.x = base.x + r
-                    plate_blk.Placement.Base = base
-                    compound_shapes.append(plate_blk)
+                    p = Part.makeBox(length_out, t, width)
+                    p.Placement.Base = Vector(r, -t/2.0, -(start + width))
+                    compound_shapes.append(p)
                     summaries.append(f"Plate '{label}' start={start} w={width} len={length_out} t={t} r_at={r:.2f}")
                     print(f"  ✓ Plate:   label='{label}', start={start}, width={width}, length={length_out}, t={t}, r_at={r:.2f}")
                 else:
-                    # Angled plate:
                     tilt = 90.0 - angle_deg
-                    rot_deg = -tilt  # rotate around +Y; angle<90 tips toward -Z
+                    rot_deg = -tilt
                     rot_rad = math.radians(abs(tilt))
                     extra = width * math.tan(rot_rad) if abs(tilt) > 1e-9 else 0.0
                     eff_len = length_out + extra
 
-                    plate_blk = make_wedge_debug_block(start, width, eff_len, t)
-                    base = plate_blk.Placement.Base
-                    base.x = base.x + r
-                    plate_blk.Placement.Base = base
+                    p = Part.makeBox(eff_len, t, width)
+                    p.Placement.Base = Vector(r, -t/2.0, -(start + width))
 
-                    # True pivot rotation about the post contact line
                     pivot = Vector(r, 0.0, -start)
-                    plate_blk = plate_blk.copy()
-                    plate_blk.rotate(pivot, Vector(0, 1, 0), rot_deg)
+                    p = p.copy()
+                    p.rotate(pivot, Vector(0,1,0), rot_deg)
 
-                    # Constant-X trim so end is parallel to post; preserve user's top-edge length
                     x_cut = r + length_out * math.cos(math.radians(abs(tilt)))
-                    trim = Part.makeBox(
-                        x_cut + 10000.0, 20000.0, 20000.0,
-                        Vector(-10000.0, -10000.0, -10000.0)
-                    )
-                    plate_blk = plate_blk.common(trim)
-                    if plate_blk.isNull():
+                    trim = Part.makeBox(x_cut + 10000.0, 20000.0, 20000.0,
+                                        Vector(-10000.0, -10000.0, -10000.0))
+                    p = p.common(trim)
+                    if p.isNull():
                         print("  ⚠️ Plate became null after trim; check angle/length inputs and x_cut.")
 
-                    compound_shapes.append(plate_blk)
+                    compound_shapes.append(p)
                     summaries.append(
                         f"Plate '{label}' start={start} w={width} len={length_out} t={t} "
                         f"angle={angle_deg} r_at={r:.2f}"
@@ -163,48 +149,83 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                           f"t={t}, angle={angle_deg:.2f}°, rot={rot_deg:.2f}°")
 
             elif shape_type == 'wedge':
-                # Realistic two-plate wedge (currently 90° workflow, angle kept for future)
+                # Two steel strips (V)
                 start = float(row_dict['start'])
                 width = float(row_dict['width'])
                 length_out = float(row_dict['length'])
                 t = float(row_dict['plate_thickness'])
                 angle_deg = float(row_dict.get('angle', '90') or 90.0)
 
-                z_top = -start
-                z_bot = z_top - width
+                z_attach = -start
                 try:
-                    r_top = _radius_at(z_top)
-                    r_bot = _radius_at(z_bot)
+                    r = _radius_at(z_attach)
                 except Exception as e:
-                    print(f"  ⚠️ radius_at() failed: {e}; default radii=0")
-                    r_top = r_bot = 0.0
+                    print(f"  ⚠️ radius_at({z_attach:.1f}) failed: {e}; default r=0")
+                    r = 0.0
 
-                print(f"   🔎 Wedge check: label='{label}' angle={angle_deg:.2f}°")
-                print(f"      • attach Z_top={z_top:.2f} Z_bot={z_bot:.2f}  r_top={r_top:.2f} r_bot={r_bot:.2f}")
-                print(f"      • top-edge length(spec)={length_out:.2f}  ⇒ x_tip≈{(r_top + length_out):.2f}")
-                print(f"      • tip Z (top/bot) ≈ {z_top:.2f} / {z_bot:.2f}")
-                print(f"      • thin-end target thickness ≈ {2*t:.2f} (2× plate_thickness)")
+                if abs(angle_deg - 90.0) < 1e-9:
+                    # TEST: hard-code the opening angle to 20° and pivot at the TIP (x = r + length_out)
+                    alpha_deg = 20.0
 
-                # Build an axis-aligned block representing the welded pair footprint
-                wedge_blk = make_wedge_debug_block(start, width, length_out, t)
-                base = wedge_blk.Placement.Base
-                base.x = base.x + r_top  # seat on post surface at Z_top
-                wedge_blk.Placement.Base = base
+                    # Top strip
+                    p_top = Part.makeBox(length_out, t, width)
+                    p_top.Placement.Base = Vector(r, +0.5 * t, -(start + width))
+                    tip_pivot_top = Vector(r + length_out, +0.5 * t, -start)  # changed pivot (tip)
+                    p_top = p_top.copy()
+                    p_top.rotate(tip_pivot_top, Vector(0, 0, 1), -alpha_deg)
 
-                # Small tie-strap at the free end (fixed length)
-                x_tip = r_top + length_out
-                cap_len = END_CAP_LEN_MM
-                cap = Part.makeBox(
-                    cap_len,          # along +X
-                    2.0 * t,          # same Y span as plates
-                    width,            # full Z depth
-                    Vector(x_tip - cap_len, -t, z_top - width)  # ends at x_tip, spans [-t, +t], Z from z_top down
-                )
-                wedge_solid = wedge_blk.fuse(cap)
+                    # Bottom strip
+                    p_bot = Part.makeBox(length_out, t, width)
+                    p_bot.Placement.Base = Vector(r, -1.5 * t, -(start + width))
+                    tip_pivot_bot = Vector(r + length_out, -0.5 * t, -start)  # changed pivot (tip)
+                    p_bot = p_bot.copy()
+                    p_bot.rotate(tip_pivot_bot, Vector(0, 0, 1), +alpha_deg)
 
-                compound_shapes.append(wedge_solid)
-                summaries.append(f"Wedge '{label}' start={start} w={width} len={length_out} t={t} r_at={r_top:.2f}")
-                print(f"  ✓ Wedge:   label='{label}', start={start}, width={width}, length={length_out}, t={t}, r_at={r_top:.2f}")
+                    compound_shapes.extend([p_top, p_bot])  # no strap in this test
+                    summaries.append(
+                        f"Wedge90 '{label}' start={start} w={width} len(edge)={length_out} t={t} r_at={r:.2f} alphaTest={alpha_deg:.3f}° (tip pivot)"
+                    )
+                    print(
+                        f"  ✓ Wedge90: label='{label}', r={r:.2f}, t={t}, len={length_out}, alphaTest={alpha_deg:.3f}° (tip pivot)"
+                    )
+                else:
+                    # Keep existing angled behavior (unchanged)
+                    t_end = 2.0
+                    tilt   = 90.0 - angle_deg
+                    rot_deg = -tilt
+                    rot_rad = math.radians(abs(tilt))
+                    extra   = width * math.tan(rot_rad) if abs(tilt) > 1e-9 else 0.0
+                    eff_len = length_out + extra
+
+                    p_top = Part.makeBox(eff_len, t, width)
+                    p_bot = Part.makeBox(eff_len, t, width)
+                    p_top.Placement.Base = Vector(r,  +t/2.0, -(start + width))
+                    p_bot.Placement.Base = Vector(r,  -t - t/2.0, -(start + width))
+
+                    pivot = Vector(r, 0.0, -start)
+                    p_top = p_top.copy(); p_top.rotate(pivot, Vector(0,1,0), rot_deg)
+                    p_bot = p_bot.copy(); p_bot.rotate(pivot, Vector(0,1,0), rot_deg)
+
+                    x_cut = r + length_out * math.cos(math.radians(abs(tilt)))
+                    trim  = Part.makeBox(x_cut + 10000.0, 20000.0, 20000.0,
+                                         Vector(-10000.0, -10000.0, -10000.0))
+                    p_top = p_top.common(trim)
+                    p_bot = p_bot.common(trim)
+                    if p_top.isNull() or p_bot.isNull():
+                        print("  ⚠️ Wedge plates became null after trim; check angle/length inputs and x_cut.")
+
+                    strap = Part.makeBox(t_end, 3.0 * t, width)
+                    strap.Placement.Base = Vector(x_cut - t_end, -1.5 * t, -(start + width))
+
+                    compound_shapes.extend([p_top, p_bot, strap])
+                    summaries.append(
+                        f"Wedge '{label}' start={start} w={width} len={length_out} t={t} "
+                        f"angle={angle_deg} r_at={r:.2f}"
+                    )
+                    print(
+                        f"  ✓ Wedge*:  label='{label}', start={start}, width={width}, length={length_out}, "
+                        f"t={t}, angle={angle_deg:.2f}°, rot={rot_deg:.2f}°, x_cut={x_cut:.2f}, r_at={r:.2f}"
+                    )
 
             else:
                 print(f"  ❌ Unknown type in row: {row_dict}")
