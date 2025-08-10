@@ -8,4 +8,4 @@ post,type,start,end,diameter_start,diameter_end,label
 post,taper,20,604,44,20,Rudder Taper
 
 tine,wedge,start,width,length,plate_thickness,angle,label
-tine,wedge,120,40,90,5,90,Support 1
+tine,wedge,0,40,220,5,90,Support 1
