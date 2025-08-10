@@ -9,11 +9,10 @@ from stock.plate import compute_plate_angles
 def build_wedge(row_dict, radius_at_func):
     """
     Build a 'wedge' tine as two steel strips.
-    Behavior matches the wedge section in stock/stock2d.py v1.2.8 (no changes):
-      - If angle == 90°: compute half-angle and pivot each strip at the TIP point P
-        chosen to make the INSIDE edges tangent to the post at the attach Z.
-      - Else (angled tine): rotate both strips about the post contact line (Y-axis
-        rotation), trim to a constant-X plane, then add a small end strap.
+      - If angle == 90°: compute half-angle and pivot each strip at the common tip P
+        so the INSIDE edges (one from each strip) are tangent and meet at the tip.
+      - Else (angled tine): rotate both strips about the post contact line (Y-rotation),
+        trim to a constant-X plane, then add a small end strap.
     """
     # Inputs
     start = float(row_dict['start'])
@@ -40,23 +39,20 @@ def build_wedge(row_dict, radius_at_func):
             raise ValueError("wedge length must be > 0")
 
         # External point (common tip) distance from center
-        d = math.sqrt(r * r + length_out * length_out)  # ≈ 221.097 for r=22, L=220
-
-        # Place each strip so its RIGHT edge (tip) is at x = d before rotation.
-        # Base X = d - length_out (so right edge is d), pivot at that right edge.
+        d = math.sqrt(r * r + length_out * length_out)  # ~221.097 for r=22, L=220
         base_x = d - length_out
 
-        # Top strip (inside edge at y=+0.5t)
+        # Place both strips so their INSIDE edges lie on y = 0 and meet at the same tip (y = 0)
+        # Top strip spans y ∈ [0, t]; bottom strip spans y ∈ [-t, 0]
         p_top = Part.makeBox(length_out, t, width)
-        p_top.Placement.Base = Vector(base_x, +0.5 * t, -(start + width))
-        tip_pivot_top = Vector(d, +0.5 * t, -start)  # tip pivot
+        p_top.Placement.Base = Vector(base_x, 0.0, -(start + width))
+        tip_pivot_top = Vector(d, 0.0, -start)
 
-        # Bottom strip (inside edge at y=-0.5t)
         p_bot = Part.makeBox(length_out, t, width)
-        p_bot.Placement.Base = Vector(base_x, -1.5 * t, -(start + width))
-        tip_pivot_bot = Vector(d, -0.5 * t, -start)  # tip pivot
+        p_bot.Placement.Base = Vector(base_x, -t, -(start + width))
+        tip_pivot_bot = Vector(d, 0.0, -start)
 
-        # Rotate about Z so the V opens in plan view
+        # Rotate about Z so the V opens in plan view; inside edges share the same tip
         p_top = p_top.copy()
         p_top.rotate(tip_pivot_top, Vector(0, 0, 1), -alpha_deg)
 
@@ -67,11 +63,11 @@ def build_wedge(row_dict, radius_at_func):
 
         summary = (
             f"Wedge90 '{label}' start={start} w={width} len(edge)={length_out} "
-            f"t={t} r_at={r:.2f} alpha={alpha_deg:.3f}° (tip pivot, inside tangent)"
+            f"t={t} r_at={r:.2f} alpha={alpha_deg:.3f}° (tip pivot, inside tangent, y=0 meet)"
         )
         print(
             f"  ✓ Wedge90: label='{label}', r={r:.2f}, t={t}, len={length_out}, "
-            f"alpha={alpha_deg:.3f}°, tip_x={d:.3f} (inside tangent)"
+            f"alpha={alpha_deg:.3f}°, tip_x={d:.3f} (inside tangent, y=0 meet)"
         )
         return parts, summary
 
