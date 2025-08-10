@@ -3,30 +3,17 @@
 import math
 import Part
 from FreeCAD import Vector
+from stock.plate import compute_plate_angles
 
 
 def build_wedge(row_dict, radius_at_func):
     """
     Build a 'wedge' tine as two steel strips.
     Behavior matches the wedge section in stock/stock2d.py v1.2.8 (no changes):
-      - If angle == 90°: use hard-coded alpha_deg = 20.0 and rotate each strip
-        about the TIP pivot (x = r + length_out, y = ±0.5*t, z = -start). No strap.
+      - If angle == 90°: compute half-angle and pivot each strip at the TIP point P
+        chosen to make the INSIDE edges tangent to the post at the attach Z.
       - Else (angled tine): rotate both strips about the post contact line (Y-axis
         rotation), trim to a constant-X plane, then add a small end strap.
-
-    Parameters
-    ----------
-    row_dict : dict
-        CSV row mapped to dict (expects: start, width, length, plate_thickness, angle, label).
-    radius_at_func : Callable[[float], float]
-        Function that returns the post radius r at world Z (mm).
-
-    Returns
-    -------
-    parts : list[Part.Shape]
-        List of solids that make up the wedge.
-    summary : str
-        Human-readable summary string (same format as prior implementation).
     """
     # Inputs
     start = float(row_dict['start'])
@@ -47,35 +34,44 @@ def build_wedge(row_dict, radius_at_func):
     parts = []
 
     if abs(angle_deg - 90.0) < 1e-9:
-        # TEST: hard-code the opening angle to 20° and pivot at the TIP (x = r + length_out)
-        alpha_deg = 20.0
-
+        # Inside-edge tangent geometry using outside-edge length
+        _, alpha_deg, _, _ = compute_plate_angles(r, length_out, t, tangent="inside")
         if length_out <= 0:
             raise ValueError("wedge length must be > 0")
 
-        # Top strip
+        # External point (common tip) distance from center
+        d = math.sqrt(r * r + length_out * length_out)  # ≈ 221.097 for r=22, L=220
+
+        # Place each strip so its RIGHT edge (tip) is at x = d before rotation.
+        # Base X = d - length_out (so right edge is d), pivot at that right edge.
+        base_x = d - length_out
+
+        # Top strip (inside edge at y=+0.5t)
         p_top = Part.makeBox(length_out, t, width)
-        p_top.Placement.Base = Vector(r, +0.5 * t, -(start + width))
-        tip_pivot_top = Vector(r + length_out, +0.5 * t, -start)  # tip pivot
+        p_top.Placement.Base = Vector(base_x, +0.5 * t, -(start + width))
+        tip_pivot_top = Vector(d, +0.5 * t, -start)  # tip pivot
+
+        # Bottom strip (inside edge at y=-0.5t)
+        p_bot = Part.makeBox(length_out, t, width)
+        p_bot.Placement.Base = Vector(base_x, -1.5 * t, -(start + width))
+        tip_pivot_bot = Vector(d, -0.5 * t, -start)  # tip pivot
+
+        # Rotate about Z so the V opens in plan view
         p_top = p_top.copy()
         p_top.rotate(tip_pivot_top, Vector(0, 0, 1), -alpha_deg)
 
-        # Bottom strip
-        p_bot = Part.makeBox(length_out, t, width)
-        p_bot.Placement.Base = Vector(r, -1.5 * t, -(start + width))
-        tip_pivot_bot = Vector(r + length_out, -0.5 * t, -start)  # tip pivot
         p_bot = p_bot.copy()
         p_bot.rotate(tip_pivot_bot, Vector(0, 0, 1), +alpha_deg)
 
-        parts.extend([p_top, p_bot])  # no strap in this test case
+        parts.extend([p_top, p_bot])  # no strap in the 90° case
 
         summary = (
             f"Wedge90 '{label}' start={start} w={width} len(edge)={length_out} "
-            f"t={t} r_at={r:.2f} alphaTest={alpha_deg:.3f}° (tip pivot)"
+            f"t={t} r_at={r:.2f} alpha={alpha_deg:.3f}° (tip pivot, inside tangent)"
         )
         print(
-            f"  ✓ Wedge90: label='{label}', r={r:.2f}, t={t}, "
-            f"len={length_out}, alphaTest={alpha_deg:.3f}° (tip pivot)"
+            f"  ✓ Wedge90: label='{label}', r={r:.2f}, t={t}, len={length_out}, "
+            f"alpha={alpha_deg:.3f}°, tip_x={d:.3f} (inside tangent)"
         )
         return parts, summary
 
