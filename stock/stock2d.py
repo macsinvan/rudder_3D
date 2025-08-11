@@ -1,22 +1,20 @@
 # stock/stock2d.py
+# Working after refactoring plate out 5.13pm
 
 import os
-import csv
 import math
 import FreeCAD as App
-import FreeCADGui as Gui
 import Part
 from FreeCAD import Vector
 
-from stock.plate import make_wedge_debug_block, build_plate
-from stock.wedge import build_wedge
 from stock.io import read_stock_csv_sectioned
 from stock.geom import radius_at as _radius_at_core, append_post_segment_from_row
 from stock.draw import create_drawing_page, calculate_uniform_scale
+from stock.wedge import build_wedge
+from stock.plate import build_plate  # ← plate refactor (already wired)
+from stock.cylinder import build_cylinder  # ← ONLY NEW IMPORT
 
-VERSION = "1.2.8"  # wedge(90°): inside-edge tangent; plate 90° stays literal; refactors moved to modules
-
-# ---------- Core build ----------
+VERSION = "1.2.8"
 
 def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
     print(f"\n📄 build_stock_from_csv v{VERSION}")
@@ -29,7 +27,7 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
     body = doc.addObject("Part::Feature", "RudderStock")
     compound_shapes = []
 
-    # Collect post segments so we can query radius later
+    # Track post segments for radius queries
     post_segments = []
     _radius_debug_done = False
 
@@ -43,12 +41,10 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
             _radius_debug_done = True
         return _radius_at_core(z_world, post_segments)
 
-    # Read rows/meta
     rows, meta_info = read_stock_csv_sectioned(csv_path)
     summaries = []
 
     for row_dict in rows:
-        # Decide handler from CSV: explicit 'type', or section header key (plate / wedge)
         shape_type = (row_dict.get('type') or '').strip().lower()
         if not shape_type:
             if 'plate' in row_dict:
@@ -60,16 +56,10 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
 
         try:
             if shape_type == 'cylinder':
-                z0 = -float(row_dict['start'])
-                z1 = -float(row_dict['end'])
-                base_z = min(z0, z1)
-                height = abs(z1 - z0)
-                d = float(row_dict['diameter_start'])
-                cyl = Part.makeCylinder(d / 2.0, height, Vector(0, 0, base_z))
-                compound_shapes.append(cyl)
-                summaries.append(f"Cylinder '{label}' h={height} d={d}")
-                print(f"  ✓ Cylinder: label='{label}', d={d}, z0={z0}, z1={z1}, base={base_z}, h={height}")
-
+                # ✅ REFACTORED (only change): delegate to stock/cylinder.py
+                parts, summary = build_cylinder(row_dict)
+                compound_shapes.extend(parts)
+                summaries.append(summary)
                 append_post_segment_from_row(post_segments, row_dict)
 
             elif shape_type == 'taper':
@@ -82,11 +72,10 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                 compound_shapes.append(cone)
                 summaries.append(f"Taper '{label}' h={height} d1={d1}→d2={d2}")
                 print(f"  ✓ Taper:   label='{label}', d_top={d1}, d_bot={d2}, base={z0 - height}, h={height}")
-
                 append_post_segment_from_row(post_segments, row_dict)
 
             elif shape_type == 'plate':
-                # MOVE-ONLY: delegate to stock.plate.build_plate (behavior unchanged)
+                # 🔹 Refactored earlier: call build_plate from plate.py
                 plate_parts, plate_summary = build_plate(row_dict, _radius_at)
                 compound_shapes.extend(plate_parts)
                 summaries.append(plate_summary)
@@ -115,12 +104,10 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
 
     try:
         bbox = body.Shape.BoundBox
-        print(
-            f"📦 Solids: {len(compound_shapes)}  "
-            f"BBox: X[{bbox.XMin:.1f},{bbox.XMax:.1f}] "
-            f"Y[{bbox.YMin:.1f},{bbox.YMax:.1f}] "
-            f"Z[{bbox.ZMin:.1f},{bbox.ZMax:.1f}]"
-        )
+        print(f"📦 Solids: {len(compound_shapes)}  "
+              f"BBox: X[{bbox.XMin:.1f},{bbox.XMax:.1f}] "
+              f"Y[{bbox.YMin:.1f},{bbox.YMax:.1f}] "
+              f"Z[{bbox.ZMin:.1f},{bbox.ZMax:.1f}]")
     except Exception as e:
         print(f"⚠️ Could not compute bbox summary: {e}")
 
