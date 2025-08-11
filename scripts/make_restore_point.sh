@@ -28,7 +28,7 @@ cd "$REPO_ROOT"
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 STAMP_TAG="$(date +%Y%m%d-%H%M%S)"
-TAG_NAME="restore/${STAMP_TAG}"
+TAG_NAME="restore-${STAMP_TAG}"
 
 echo "▶ Restore on ${BRANCH}"
 git add -A

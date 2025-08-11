@@ -55,7 +55,6 @@ def build_plate(row_dict: Dict[str, Any], radius_at_func: Callable[[float], floa
     if abs(angle_deg_raw - 90.0) < 1e-9:
         # inside edge tangent, using outside-edge length as per current behavior
         _, alpha_deg, _, _ = compute_plate_angles(r, length_out, t, tangent="inside")
-        angle_deg = 90.0 - alpha_deg
 
     parts: List[Part.Shape] = []
     summary: str
