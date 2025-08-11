@@ -7,15 +7,14 @@ import FreeCAD as App
 import FreeCADGui as Gui
 import Part
 from FreeCAD import Vector
-from stock.plate import make_wedge_debug_block
+
+from stock.plate import make_wedge_debug_block, build_plate
 from stock.wedge import build_wedge
 from stock.io import read_stock_csv_sectioned
 from stock.geom import radius_at as _radius_at_core, append_post_segment_from_row
-from stock.draw import create_drawing_page, calculate_uniform_scale  # ← moved here
+from stock.draw import create_drawing_page, calculate_uniform_scale
 
-VERSION = "1.2.8"  # wedge(90°): fix post-end gap via correct pivot; alpha=atan((t/2)/length); no tip trim/strap
-
-# ---------- Helpers ----------
+VERSION = "1.2.8"  # wedge(90°): inside-edge tangent; plate 90° stays literal; refactors moved to modules
 
 # ---------- Core build ----------
 
@@ -87,57 +86,10 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                 append_post_segment_from_row(post_segments, row_dict)
 
             elif shape_type == 'plate':
-                # Solid plate tine (single plate), angle-aware
-                start = float(row_dict['start'])
-                width = float(row_dict['width'])
-                length_out = float(row_dict['length'])
-                t = float(row_dict['plate_thickness'])
-                angle_deg = float(row_dict.get('angle', '90') or 90.0)
-
-                z_attach = -start
-                try:
-                    r = _radius_at(z_attach)
-                except Exception as e:
-                    print(f"  ⚠️ radius_at({z_attach:.1f}) failed: {e}; default r=0")
-                    r = 0.0
-
-                # 90° remains the simple case (no auto adjustment)
-                if abs(angle_deg - 90.0) < 1e-9:
-                    # Flat/orthogonal plate
-                    p = Part.makeBox(length_out, t, width)
-                    p.Placement.Base = Vector(r, -t/2.0, -(start + width))
-                    compound_shapes.append(p)
-                    summaries.append(f"Plate '{label}' start={start} w={width} len={length_out} t={t} r_at={r:.2f}")
-                    print(f"  ✓ Plate:   label='{label}', start={start}, width={width}, length={length_out}, t={t}, r_at={r:.2f}")
-                else:
-                    # Rotated plate (angle-aware)
-                    tilt = 90.0 - angle_deg
-                    rot_deg = -tilt
-                    rot_rad = math.radians(abs(tilt))
-                    extra = width * math.tan(rot_rad) if abs(tilt) > 1e-9 else 0.0
-                    eff_len = length_out + extra
-
-                    p = Part.makeBox(eff_len, t, width)
-                    p.Placement.Base = Vector(r, -t/2.0, -(start + width))
-
-                    pivot = Vector(r, 0.0, -start)
-                    p = p.copy()
-                    p.rotate(pivot, Vector(0, 1, 0), rot_deg)
-
-                    x_cut = r + length_out * math.cos(math.radians(abs(tilt)))
-                    trim = Part.makeBox(x_cut + 10000.0, 20000.0, 20000.0,
-                                        Vector(-10000.0, -10000.0, -10000.0))
-                    p = p.common(trim)
-                    if p.isNull():
-                        print("  ⚠️ Plate became null after trim; check angle/length inputs and x_cut.")
-
-                    compound_shapes.append(p)
-                    summaries.append(
-                        f"Plate '{label}' start={start} w={width} len={length_out} t={t} "
-                        f"angle={angle_deg} r_at={r:.2f}"
-                    )
-                    print(f"  ✓ Plate*:  label='{label}', start={start}, width={width}, length={length_out}, "
-                          f"t={t}, angle={angle_deg:.2f}°, rot={rot_deg:.2f}°")
+                # MOVE-ONLY: delegate to stock.plate.build_plate (behavior unchanged)
+                plate_parts, plate_summary = build_plate(row_dict, _radius_at)
+                compound_shapes.extend(plate_parts)
+                summaries.append(plate_summary)
 
             elif shape_type == 'wedge':
                 wedge_parts, wedge_summary = build_wedge(row_dict, _radius_at)
@@ -163,10 +115,13 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
 
     try:
         bbox = body.Shape.BoundBox
-        print(f"📦 Solids: {len(compound_shapes)}  "
-              f"BBox: X[{bbox.XMin:.1f},{bbox.XMax:.1f}] "
-              f"Y[{bbox.YMin:.1f},{bbox.YMax:.1f}] "
-              f"Z[{bbox.ZMin:.1f},{bbox.ZMax:.1f}]")
+        print(
+            f"📦 Solids: {len(compound_shapes)}  "
+            f"BBox: X[{bbox.XMin:.1f},{bbox.XMax:.1f}] "
+            f"Y[{bbox.YMin:.1f},{bbox.YMax:.1f}] "
+            f"Z[{bbox.ZMin:.1f},{bbox.ZMax:.1f}]"
+        )
     except Exception as e:
         print(f"⚠️ Could not compute bbox summary: {e}")
+
     return body
