@@ -27,3 +27,38 @@ stock2d.create_drawing_page(doc, part_obj, length, diameter)
 # Show the result
 Gui.activeDocument().activeView().viewAxonometric()
 Gui.SendMsgToActiveView("ViewFit")
+
+# ...everything above unchanged...
+
+# Build the 3D stock from the CSV
+part_obj = stock2d.build_stock_from_csv(doc)
+doc.recompute()  # good practice before styling
+
+# Create the drawing page (optional, doesn't affect 3D styling)
+stock2d.create_drawing_page(doc, part_obj, length, diameter)
+
+# Stainless look
+obj = App.ActiveDocument.getObject("Rudder_Stock")  # change name if different
+if obj:
+    vobj = obj.ViewObject
+    # Slightly bluish-silver stainless steel look
+    stainless_color = (0.75, 0.75, 0.78)  
+    vobj.ShapeColor = stainless_color
+    vobj.DiffuseColor = [stainless_color]  # keep it consistent across faces
+    vobj.Transparency = 0
+    vobj.DisplayMode = "Shaded"
+    # Increase shininess
+    vobj.LineWidth = 1
+
+Gui.activeDocument().activeView().viewAxonometric()
+Gui.SendMsgToActiveView("ViewFit")
+"""
+obj = App.ActiveDocument.getObject("Rudder_Stock")  # change name if different
+if obj:
+    vobj = obj.ViewObject
+    vobj.ShapeColor = (0.85, 0.85, 0.85)   # light silver
+    vobj.SpecularColor = (1.0, 1.0, 1.0)   # white highlights
+    vobj.DiffuseColor = [(0.85, 0.85, 0.85)]
+    vobj.Transparency = 0
+    vobj.DisplayMode = "Shaded"
+"""

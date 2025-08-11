@@ -33,22 +33,27 @@ def build_wedge(row_dict, radius_at_func):
     parts = []
 
     if abs(angle_deg - 90.0) < 1e-9:
-        # Inside-edge tangent geometry using outside-edge length
-        _, alpha_deg, _, _ = compute_plate_angles(r, length_out, t, tangent="inside")
-        if length_out <= 0:
-            raise ValueError("wedge length must be > 0")
+        # ---- Inside-edge tangent geometry using INSIDE edge length (L_in) ----
+        # Effective radius at the inside edge: R_eff = R - t  (Option B)
+        L_in = length_out
+        R_eff = r - t
+        if L_in <= 0 or R_eff <= 0:
+            raise ValueError(f"invalid inside geometry: L_in={L_in}, R_eff={R_eff} (r={r}, t={t})")
 
-        # External point (common tip) distance from center
-        d = math.sqrt(r * r + length_out * length_out)  # ~221.097 for r=22, L=220
-        base_x = d - length_out
+        alpha_rad = math.atan2(R_eff, L_in)
+        alpha_deg = math.degrees(alpha_rad)
+
+        # External tip point distance from center for inside-edge tangent
+        d = math.hypot(R_eff, L_in)  # sqrt(R_eff^2 + L_in^2)
+        base_x = d - L_in
 
         # Place both strips so their INSIDE edges lie on y = 0 and meet at the same tip (y = 0)
         # Top strip spans y ∈ [0, t]; bottom strip spans y ∈ [-t, 0]
-        p_top = Part.makeBox(length_out, t, width)
+        p_top = Part.makeBox(L_in, t, width)
         p_top.Placement.Base = Vector(base_x, 0.0, -(start + width))
         tip_pivot_top = Vector(d, 0.0, -start)
 
-        p_bot = Part.makeBox(length_out, t, width)
+        p_bot = Part.makeBox(L_in, t, width)
         p_bot.Placement.Base = Vector(base_x, -t, -(start + width))
         tip_pivot_bot = Vector(d, 0.0, -start)
 
@@ -62,12 +67,12 @@ def build_wedge(row_dict, radius_at_func):
         parts.extend([p_top, p_bot])  # no strap in the 90° case
 
         summary = (
-            f"Wedge90 '{label}' start={start} w={width} len(edge)={length_out} "
-            f"t={t} r_at={r:.2f} alpha={alpha_deg:.3f}° (tip pivot, inside tangent, y=0 meet)"
+            f"Wedge90 '{label}' start={start} w={width} L_in={L_in} "
+            f"t={t} r_at={r:.2f} R_eff={R_eff:.2f} alpha={alpha_deg:.3f}° tip_x={d:.3f} (inside tangent, y=0 meet)"
         )
         print(
-            f"  ✓ Wedge90: label='{label}', r={r:.2f}, t={t}, len={length_out}, "
-            f"alpha={alpha_deg:.3f}°, tip_x={d:.3f} (inside tangent, y=0 meet)"
+            f"  ✓ Wedge90: label='{label}', r={r:.2f}, t={t}, L_in={L_in}, "
+            f"R_eff={R_eff:.2f}, alpha={alpha_deg:.3f}°, tip_x={d:.3f} (inside tangent, y=0 meet)"
         )
         return parts, summary
 

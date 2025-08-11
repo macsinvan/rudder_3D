@@ -12,7 +12,6 @@ from stock.wedge import build_wedge
 from stock.io import read_stock_csv_sectioned
 from stock.geom import radius_at as _radius_at_core, append_post_segment_from_row
 from stock.draw import create_drawing_page, calculate_uniform_scale  # ← moved here
-from stock.plate_math import compute_plate_angles  # ← present but unused in this pass
 
 VERSION = "1.2.8"  # wedge(90°): fix post-end gap via correct pivot; alpha=atan((t/2)/length); no tip trim/strap
 
@@ -102,9 +101,7 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                     print(f"  ⚠️ radius_at({z_attach:.1f}) failed: {e}; default r=0")
                     r = 0.0
 
-                # NOTE: Regression fix — leave 90° as literal 90°, do not auto-adjust to 90−α here.
-                # (If we later want an explicit 'auto' mode, we can add it in a separate step.)
-
+                # 90° remains the simple case (no auto adjustment)
                 if abs(angle_deg - 90.0) < 1e-9:
                     # Flat/orthogonal plate
                     p = Part.makeBox(length_out, t, width)
