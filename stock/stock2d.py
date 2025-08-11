@@ -12,7 +12,8 @@ from stock.geom import radius_at as _radius_at_core, append_post_segment_from_ro
 from stock.draw import create_drawing_page, calculate_uniform_scale
 from stock.wedge import build_wedge
 from stock.plate import build_plate  # ← plate refactor (already wired)
-from stock.cylinder import build_cylinder  # ← ONLY NEW IMPORT
+from stock.cylinder import build_cylinder  # ← cylinder refactor
+from stock.taper import build_taper        # ← NEW: taper refactor
 
 VERSION = "1.2.8"
 
@@ -56,22 +57,17 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
 
         try:
             if shape_type == 'cylinder':
-                # ✅ REFACTORED (only change): delegate to stock/cylinder.py
+                # ✅ REFACTORED: delegate to stock/cylinder.py
                 parts, summary = build_cylinder(row_dict)
                 compound_shapes.extend(parts)
                 summaries.append(summary)
                 append_post_segment_from_row(post_segments, row_dict)
 
             elif shape_type == 'taper':
-                z0 = -float(row_dict['start'])
-                z1 = -float(row_dict['end'])
-                height = abs(z1 - z0)
-                d1 = float(row_dict['diameter_start'])  # top
-                d2 = float(row_dict['diameter_end'])    # bottom
-                cone = Part.makeCone(d2 / 2.0, d1 / 2.0, height, Vector(0, 0, z0 - height))
-                compound_shapes.append(cone)
-                summaries.append(f"Taper '{label}' h={height} d1={d1}→d2={d2}")
-                print(f"  ✓ Taper:   label='{label}', d_top={d1}, d_bot={d2}, base={z0 - height}, h={height}")
+                # ✅ REFACTORED: delegate to stock/taper.py
+                parts, summary = build_taper(row_dict)
+                compound_shapes.extend(parts)
+                summaries.append(summary)
                 append_post_segment_from_row(post_segments, row_dict)
 
             elif shape_type == 'plate':
