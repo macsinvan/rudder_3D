@@ -6,7 +6,7 @@ from FreeCAD import Vector
 
 def build_wedge(row_dict, radius_at_func):
     """
-    Angled wedge tine — Baby Step 3 + Step 2 (apply extensions in geometry)
+    Angled wedge tine — Baby Step 3 + Step 2 + Tip Cut (YZ at x = r + L_csv)
 
     What this step does
     -------------------
@@ -20,9 +20,10 @@ def build_wedge(row_dict, radius_at_func):
          x_pivot_local = d - (L_csv + E_trail)
        Translate so pivot sits on the post at x = r.
     4) Rotate the V by rotY = -(90° - angle) about +Y through that pivot.
-       (No vertical tip cut yet.)
+    5) TIP CUT (new): trim with a YZ plane at x = r + L_csv to make the tip
+       face parallel to the post while preserving the CSV top-edge length.
 
-    90° case is unchanged.
+    90° case is unchanged (no extensions, no cut).
     """
 
     # Inputs
@@ -142,7 +143,7 @@ def build_wedge(row_dict, radius_at_func):
         p_top.translate(Vector(dx, 0.0, 0.0))
         p_bot.translate(Vector(dx, 0.0, 0.0))
 
-    # --- Step 4: rotate about +Y through that pivot (no tip trim yet) ---
+    # --- Step 4: rotate about +Y through that pivot ---
     tilt = 90.0 - angle_deg
     rot_deg = -tilt
     pivot = Vector(r, 0.0, -start)  # pivot is exactly where we placed the rotation point
@@ -151,18 +152,47 @@ def build_wedge(row_dict, radius_at_func):
     p_top.rotate(pivot, Vector(0, 1, 0), rot_deg)
     p_bot.rotate(pivot, Vector(0, 1, 0), rot_deg)
 
+    # --- Step 5: TIP CUT (YZ plane at x = r + L_csv) ---
+    x_cut = r + length_out
+    # Build a big cutting prism that keeps the side x <= x_cut
+    # Use bounding boxes to size generously.
+    bb = p_top.BoundBox
+    bb.add(p_bot.BoundBox)
+    margin = max(10.0, 5.0 * max(1.0, r, length_out, width, t))
+
+    x_min = bb.XMin - margin      # far enough negative
+    x_max = x_cut                 # plane location
+    y_min = bb.YMin - margin
+    y_max = bb.YMax + margin
+    z_min = min(bb.ZMin, -start - width) - margin
+    z_max = max(bb.ZMax, -start) + margin
+
+    size_x = x_max - x_min
+    size_y = y_max - y_min
+    size_z = z_max - z_min
+    trim = Part.makeBox(size_x, size_y, size_z)
+    trim.Placement.Base = Vector(x_min, y_min, z_min)
+
+    print(f"  ✂ TipCut: plane x = r + L_csv = {x_cut:.3f} (keep x ≤ plane)")
+
+    p_top = p_top.common(trim)
+    p_bot = p_bot.common(trim)
+
+    if p_top.isNull() or p_bot.isNull():
+        print("  ⚠️ Tip cut produced a null plate; check x_cut and extensions.")
+
     parts.extend([p_top, p_bot])
 
     summary = (
-        f"WedgeAngled-Rotate '{label}' start={start} w={width} "
+        f"WedgeAngled-TipCut '{label}' start={start} w={width} "
         f"L_csv={length_out} L_total={L_total} t={t} r_at={r:.2f} "
-        f"alpha={alpha_deg:.3f}° rotY={rot_deg:.2f}° (pivot at x=r; no trim) "
+        f"alpha={alpha_deg:.3f}° rotY={rot_deg:.2f}° x_cut={x_cut:.3f} "
         f"[E_lead={E_lead:.3f}, E_trail={E_trail:.3f}, θ={theta_deg:.1f}°]"
     )
     print(
-        f"  ✓ WedgeAngled Rotate: label='{label}', r={r:.2f}, t={t}, "
+        f"  ✓ WedgeAngled TipCut: label='{label}', r={r:.2f}, t={t}, "
         f"L_csv={length_out}, L_total={L_total}, alpha={alpha_deg:.3f}°, "
-        f"x_pivot_local={x_pivot_local:.3f}, dx={dx:.3f}, rotY={rot_deg:.2f}° (no trim) "
-        f"[E_lead={E_lead:.3f}, E_trail={E_trail:.3f}, θ={theta_deg:.1f}°]"
+        f"x_pivot_local={x_pivot_local:.3f}, dx={dx:.3f}, rotY={rot_deg:.2f}°, "
+        f"x_cut={x_cut:.3f} [E_lead={E_lead:.3f}, E_trail={E_trail:.3f}, θ={theta_deg:.1f}°]"
     )
     return parts, summary
