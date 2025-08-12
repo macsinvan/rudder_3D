@@ -14,4 +14,4 @@ tine,plate,start,width,length,plate_thickness,angle,label
 tine,wedge,370,40,90,5,90,Support 2
 
 tine,wedge,start,width,length,plate_thickness,angle,label
-tine,wedge,560,40,190,5,120,Support 3
+tine,wedge,560,40,220,5,120,Support 3
