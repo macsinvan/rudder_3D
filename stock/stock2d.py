@@ -14,6 +14,7 @@ from stock.wedge import build_wedge
 from stock.plate import build_plate  # ← plate refactor (already wired)
 from stock.cylinder import build_cylinder  # ← cylinder refactor
 from stock.taper import build_taper        # ← NEW: taper refactor
+from stock.wedge_angled import build_wedge as build_wedge_angled  # ← NEW: angled wedge
 
 VERSION = "1.2.8"
 
@@ -77,7 +78,15 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                 summaries.append(plate_summary)
 
             elif shape_type == 'wedge':
-                wedge_parts, wedge_summary = build_wedge(row_dict, _radius_at)
+                # NEW: route non-90° wedges to wedge_angled; keep 90° on existing path
+                try:
+                    angle_val = float(row_dict.get('angle', '90') or 90.0)
+                except Exception:
+                    angle_val = 90.0
+                if abs(angle_val - 90.0) < 1e-9:
+                    wedge_parts, wedge_summary = build_wedge(row_dict, _radius_at)
+                else:
+                    wedge_parts, wedge_summary = build_wedge_angled(row_dict, _radius_at)
                 compound_shapes.extend(wedge_parts)
                 summaries.append(wedge_summary)
 
