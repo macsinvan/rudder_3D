@@ -3,17 +3,21 @@
 import math
 import Part
 from FreeCAD import Vector
-from stock.plate import compute_plate_angles
-
 
 def build_wedge(row_dict, radius_at_func):
     """
-    Build a 'wedge' tine as two steel strips.
-      - If angle == 90°: compute half-angle and pivot each strip at the common tip P
-        so the INSIDE edges (one from each strip) are tangent and meet at the tip.
-      - Else (angled tine): rotate both strips about the post contact line (Y-rotation),
-        trim to a constant-X plane, then add a small end strap.
+    Angled wedge tine geometry — visual description:
+
+    Imagine standing in front of the rudder stock and looking straight down at it from above:
+    - Two flat plates extend from opposite sides of the post, meeting at an angle to form a wedge.
+    - The inside edges of the plates curve gently around the post where they’re welded.
+    - The outside tip of the wedge has a straight cut that is perfectly parallel to the post —
+      like slicing the wedge with a vertical guillotine.
+    - This tip face is where the two angled plates meet and are welded together.
+    - From above, the wedge looks like an open “V” with the point cut off square so the open ends
+      line up parallel to the post.
     """
+
     # Inputs
     start = float(row_dict['start'])
     width = float(row_dict['width'])
@@ -34,7 +38,6 @@ def build_wedge(row_dict, radius_at_func):
 
     if abs(angle_deg - 90.0) < 1e-9:
         # ---- Inside-edge tangent geometry using INSIDE edge length (L_in) ----
-        # Effective radius at the inside edge: R_eff = R - t  (Option B)
         L_in = length_out
         R_eff = r - t
         if L_in <= 0 or R_eff <= 0:
@@ -44,11 +47,9 @@ def build_wedge(row_dict, radius_at_func):
         alpha_deg = math.degrees(alpha_rad)
 
         # External tip point distance from center for inside-edge tangent
-        d = math.hypot(R_eff, L_in)  # sqrt(R_eff^2 + L_in^2)
+        d = math.hypot(R_eff, L_in)
         base_x = d - L_in
 
-        # Place both strips so their INSIDE edges lie on y = 0 and meet at the same tip (y = 0)
-        # Top strip spans y ∈ [0, t]; bottom strip spans y ∈ [-t, 0]
         p_top = Part.makeBox(L_in, t, width)
         p_top.Placement.Base = Vector(base_x, 0.0, -(start + width))
         tip_pivot_top = Vector(d, 0.0, -start)
@@ -57,14 +58,13 @@ def build_wedge(row_dict, radius_at_func):
         p_bot.Placement.Base = Vector(base_x, -t, -(start + width))
         tip_pivot_bot = Vector(d, 0.0, -start)
 
-        # Rotate about Z so the V opens in plan view; inside edges share the same tip
         p_top = p_top.copy()
         p_top.rotate(tip_pivot_top, Vector(0, 0, 1), -alpha_deg)
 
         p_bot = p_bot.copy()
         p_bot.rotate(tip_pivot_bot, Vector(0, 0, 1), +alpha_deg)
 
-        parts.extend([p_top, p_bot])  # no strap in the 90° case
+        parts.extend([p_top, p_bot])
 
         summary = (
             f"Wedge90 '{label}' start={start} w={width} L_in={L_in} "
@@ -76,48 +76,48 @@ def build_wedge(row_dict, radius_at_func):
         )
         return parts, summary
 
-    # ----- Angled (≠ 90°): existing behavior with Y-rotation, trim, and small strap -----
-    t_end = 2.0
+    # ----- Angled (≠ 90°): rotated about post and vertically trimmed -----
     tilt = 90.0 - angle_deg
     rot_deg = -tilt
     rot_rad = math.radians(abs(tilt))
     extra = width * math.tan(rot_rad) if abs(tilt) > 1e-9 else 0.0
     eff_len = length_out + extra
 
+    # Place so INSIDE edges coincide at y=0 (top [0,t], bottom [-t,0])
     p_top = Part.makeBox(eff_len, t, width)
     p_bot = Part.makeBox(eff_len, t, width)
-    p_top.Placement.Base = Vector(r, +t / 2.0, -(start + width))
-    p_bot.Placement.Base = Vector(r, -t - t / 2.0, -(start + width))
+    p_top.Placement.Base = Vector(r, 0.0, -(start + width))   # spans y ∈ [0, t]
+    p_bot.Placement.Base = Vector(r, -t,  -(start + width))   # spans y ∈ [-t, 0]
 
+    # Rotate both about the post contact line (x=r, y=0, z=-start)
     pivot = Vector(r, 0.0, -start)
     p_top = p_top.copy()
     p_bot = p_bot.copy()
     p_top.rotate(pivot, Vector(0, 1, 0), rot_deg)
     p_bot.rotate(pivot, Vector(0, 1, 0), rot_deg)
 
-    x_cut = r + length_out * math.cos(math.radians(abs(tilt)))
+    # Vertical tip plane parallel to post; keep x <= x_cut (inside portion).
+    x_cut = r + length_out * math.cos(abs(rot_rad))
     trim = Part.makeBox(
-        x_cut + 10000.0,
+        x_cut + 10000.0,            # from large negative X up to x_cut
         20000.0,
         20000.0,
         Vector(-10000.0, -10000.0, -10000.0),
     )
+
     p_top = p_top.common(trim)
     p_bot = p_bot.common(trim)
     if p_top.isNull() or p_bot.isNull():
-        print("  ⚠️ Wedge plates became null after trim; check angle/length inputs and x_cut.")
+        print("  ⚠️ Wedge plates became null after vertical trim; check angle/length inputs and x_cut.")
 
-    strap = Part.makeBox(t_end, 3.0 * t, width)
-    strap.Placement.Base = Vector(x_cut - t_end, -1.5 * t, -(start + width))
-
-    parts.extend([p_top, p_bot, strap])
+    parts.extend([p_top, p_bot])
 
     summary = (
         f"Wedge '{label}' start={start} w={width} len={length_out} t={t} "
-        f"angle={angle_deg} r_at={r:.2f}"
+        f"angle={angle_deg} r_at={r:.2f} vertical_tip_cut"
     )
     print(
         f"  ✓ Wedge*:  label='{label}', start={start}, width={width}, length={length_out}, "
-        f"t={t}, angle={angle_deg:.2f}°, rot={rot_deg:.2f}°, x_cut={x_cut:.2f}, r_at={r:.2f}"
+        f"t={t}, angle={angle_deg:.2f}°, rot={rot_deg:.2f}°, vertical tip cut at x={x_cut:.2f}, r_at={r:.2f}"
     )
     return parts, summary
