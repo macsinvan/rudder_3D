@@ -51,8 +51,7 @@ def build_plate(row_dict: Dict[str, Any], radius_at_func: Callable[[float], floa
     z_attach = -start
     try:
         r = radius_at_func(z_attach)
-    except Exception as e:
-        print(f"  ⚠️ radius_at({z_attach:.1f}) failed: {e}; default r=0")
+    except Exception:
         r = 0.0
 
     # Working angle
@@ -69,7 +68,7 @@ def build_plate(row_dict: Dict[str, Any], radius_at_func: Callable[[float], floa
         # Extend into the post by a fixed penetration, but keep the user-specified
         # visible length (top edge) outside the post equal to 'length_out'.
         pen = _PENETRATION_90 if _PENETRATION_90 > 0.0 else 0.0
-        eff_len = length_out + pen
+        eff_len = length_out
 
         p = Part.makeBox(eff_len, t, width)
         # Shift base X by -pen so that the segment from x=r to x=r+length_out is preserved.
@@ -79,10 +78,6 @@ def build_plate(row_dict: Dict[str, Any], radius_at_func: Callable[[float], floa
         summary = (
             f"Plate '{label}' start={start} w={width} len={length_out} t={t} "
             f"r_at={r:.2f} pen90={pen:.2f}"
-        )
-        print(
-            f"  ✓ Plate90: label='{label}', start={start}, width={width}, length={length_out}, "
-            f"t={t}, r_at={r:.2f}, pen={pen:.2f}"
         )
         return parts, summary
 
@@ -108,16 +103,10 @@ def build_plate(row_dict: Dict[str, Any], radius_at_func: Callable[[float], floa
         Vector(-10000.0, -10000.0, -10000.0),
     )
     p = p.common(trim)
-    if p.isNull():
-        print("  ⚠️ Plate became null after trim; check angle/length inputs and x_cut.")
 
     parts.append(p)
     summary = (
         f"Plate '{label}' start={start} w={width} len={length_out} t={t} "
         f"angle={angle_deg} r_at={r:.2f}"
-    )
-    print(
-        f"  ✓ Plate*:  label='{label}', start={start}, width={width}, length={length_out}, "
-        f"t={t}, angle={angle_deg:.2f}°, rot={rot_deg:.2f}°"
     )
     return parts, summary

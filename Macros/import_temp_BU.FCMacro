@@ -12,7 +12,6 @@ import stock.stock2d as stock2d
 
 # Create a new document
 doc = App.newDocument("TestStockDrawing")
-doc.recompute()  # good practice before styling
 
 # Build the 3D stock from the CSV
 part_obj = stock2d.build_stock_from_csv(doc)
@@ -22,11 +21,18 @@ bbox = part_obj.Shape.BoundBox
 length = bbox.ZLength
 diameter = max(bbox.XLength, bbox.YLength)
 
+# Create the drawing page with correct dimensions
+stock2d.create_drawing_page(doc, part_obj, length, diameter)
+
 # Show the result
 Gui.activeDocument().activeView().viewAxonometric()
 Gui.SendMsgToActiveView("ViewFit")
 
+# ...everything above unchanged...
 
+# Build the 3D stock from the CSV
+part_obj = stock2d.build_stock_from_csv(doc)
+doc.recompute()  # good practice before styling
 
 # Create the drawing page (optional, doesn't affect 3D styling)
 stock2d.create_drawing_page(doc, part_obj, length, diameter)
