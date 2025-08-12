@@ -1,4 +1,4 @@
- # stock/wedge_angled.py
+# stock/wedge_angled.py
 
 import math
 import Part
@@ -6,25 +6,23 @@ from FreeCAD import Vector
 
 def build_wedge(row_dict, radius_at_func):
     """
-    Angled wedge tine — Baby Step 3
+    Angled wedge tine — Baby Step 3 + Step 2 (apply extensions in geometry)
 
     What this step does
     -------------------
-    1) Build the two plates as a V in plan using an **over‑length**:
-         L_total = CSV_length + 2*r   (r = radius at attach Z)
-    2) Compute the **pivot point** along the plate: exactly `CSV_length`
-       back from the far (square) end of the over‑length V. In local X:
-         x_pivot_local = d - CSV_length
-       where d = hypot(R_eff, L_total) is the V’s tip X (inside-edge tangent).
-    3) **Place** the V so this pivot lies on the post surface at x = r.
-    4) **Rotate** the V by the requested departure angle about the **Y‑axis
-       through that pivot**.  (No vertical tip cut yet.)
+    1) Compute leading/trailing extensions:
+         - E_lead  = 2*r                      (leading edge toward post)
+         - E_trail = L_csv*(secθ-1) + w*tanθ  (trailing edge toward tip)
+       where θ = |90° - angle| is the +Y tilt from vertical, w = plate width.
+    2) Build the two plates as a V with over-length:
+         L_total = L_csv + E_lead + E_trail
+    3) Place the rotation pivot exactly (CSV + E_trail) back from the far end:
+         x_pivot_local = d - (L_csv + E_trail)
+       Translate so pivot sits on the post at x = r.
+    4) Rotate the V by rotY = -(90° - angle) about +Y through that pivot.
+       (No vertical tip cut yet.)
 
-    Notes
-    -----
-    – 90° case is unchanged.
-    – No trims/straps yet. The customer top‑edge length will be enforced
-      in the next step by a vertical tip cut at the appropriate X plane.
+    90° case is unchanged.
     """
 
     # Inputs
@@ -35,10 +33,13 @@ def build_wedge(row_dict, radius_at_func):
     angle_deg = float(row_dict.get('angle', '90') or 90.0)
     label = row_dict.get('label', '')
 
-    # Radius at attach Z (used for L_total and placement)
+    # Quick heartbeat print
+    print(f"  🟩 wedge_angled.py hit: start={start}, width={width}, L_csv={length_out}, t={t}, angle={angle_deg}")
+
+    # Radius at attach Z (used for placement/seat math)
     z_attach = -start
     try:
-        r = radius_at_func(z_attach)
+        r = float(radius_at_func(z_attach))
     except Exception as e:
         print(f"  ⚠️ radius_at({z_attach:.1f}) failed: {e}; default r=0")
         r = 0.0
@@ -87,11 +88,27 @@ def build_wedge(row_dict, radius_at_func):
         return parts, summary
 
     # ======================================================
-    # ANGLED (≠90°): Baby Step 3 — V-only, place pivot, rotate about Y
+    # ANGLED (≠90°): Apply extensions in geometry
     # ======================================================
 
-    # 1) Over‑length then V construction in plan
-    L_total = length_out + 2.0 * r
+    # --- Step 1: compute extensions ---
+    theta_deg = abs(90.0 - angle_deg)             # tilt from vertical
+    theta_rad = math.radians(theta_deg)
+
+    # Leading-edge extension (toward post)
+    E_lead = 2.0 * r
+
+    # Trailing-edge extension (toward tip) = foreshortening + bottom-corner swing
+    # ΔL = L_csv*(secθ - 1) + width*tanθ
+    E_trail = length_out * (1.0 / math.cos(theta_rad) - 1.0) + width * math.tan(theta_rad)
+
+    print(
+        f"  ➜ Extensions: lead={E_lead:.3f}, trail={E_trail:.3f} "
+        f"(θ={theta_deg:.1f}°, L_csv={length_out}, width={width})"
+    )
+
+    # --- Step 2: build V with both extensions ---
+    L_total = length_out + E_lead + E_trail
     L_in = L_total
     R_eff = r - t
     if L_in <= 0 or R_eff <= 0:
@@ -117,16 +134,15 @@ def build_wedge(row_dict, radius_at_func):
     p_bot = p_bot.copy()
     p_bot.rotate(tip_pivot_bot, Vector(0, 0, 1), +alpha_deg)
 
-    # 2) Compute pivot (CSV_length back from the far end) in local X
-    x_pivot_local = d - length_out  # inside coordinate of the rotation point
+    # --- Step 3: place pivot (CSV + E_trail back from far end), then translate to x=r ---
+    x_pivot_local = d - (length_out + E_trail)  # pivot distance from far tip inside the V
 
-    # 3) Translate in X so the pivot sits on the post surface at x = r
     dx = r - x_pivot_local
     if abs(dx) > 1e-12:
         p_top.translate(Vector(dx, 0.0, 0.0))
         p_bot.translate(Vector(dx, 0.0, 0.0))
 
-    # 4) Rotate about Y through that pivot (no tip trim yet)
+    # --- Step 4: rotate about +Y through that pivot (no tip trim yet) ---
     tilt = 90.0 - angle_deg
     rot_deg = -tilt
     pivot = Vector(r, 0.0, -start)  # pivot is exactly where we placed the rotation point
@@ -135,17 +151,18 @@ def build_wedge(row_dict, radius_at_func):
     p_top.rotate(pivot, Vector(0, 1, 0), rot_deg)
     p_bot.rotate(pivot, Vector(0, 1, 0), rot_deg)
 
-    # Done (no vertical cut yet)
     parts.extend([p_top, p_bot])
 
     summary = (
         f"WedgeAngled-Rotate '{label}' start={start} w={width} "
         f"L_csv={length_out} L_total={L_total} t={t} r_at={r:.2f} "
-        f"alpha={alpha_deg:.3f}° rotY={rot_deg:.2f}° (pivot at x=r; no trim)"
+        f"alpha={alpha_deg:.3f}° rotY={rot_deg:.2f}° (pivot at x=r; no trim) "
+        f"[E_lead={E_lead:.3f}, E_trail={E_trail:.3f}, θ={theta_deg:.1f}°]"
     )
     print(
         f"  ✓ WedgeAngled Rotate: label='{label}', r={r:.2f}, t={t}, "
         f"L_csv={length_out}, L_total={L_total}, alpha={alpha_deg:.3f}°, "
-        f"x_pivot_local={x_pivot_local:.3f}, dx={dx:.3f}, rotY={rot_deg:.2f}° (no trim)"
+        f"x_pivot_local={x_pivot_local:.3f}, dx={dx:.3f}, rotY={rot_deg:.2f}° (no trim) "
+        f"[E_lead={E_lead:.3f}, E_trail={E_trail:.3f}, θ={theta_deg:.1f}°]"
     )
     return parts, summary
