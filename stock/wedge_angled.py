@@ -101,7 +101,7 @@ def build_wedge(row_dict, radius_at_func):
 
     # Trailing-edge extension (toward tip) = foreshortening + bottom-corner swing
     # ΔL = L_csv*(secθ - 1) + width*tanθ
-    E_trail = length_out * (1.0 / math.cos(theta_rad) - 1.0) + width * math.tan(theta_rad)
+    E_trail = max(0.0, width * math.tan(theta_rad))
 
     print(
         f"  ➜ Extensions: lead={E_lead:.3f}, trail={E_trail:.3f} "
