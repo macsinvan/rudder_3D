@@ -30,6 +30,9 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 STAMP_TAG="$(date +%Y%m%d-%H%M%S)"
 TAG_NAME="restore-${STAMP_TAG}"
 
+echo "▶ Git status before restore point:"
+git status -sb
+
 echo "▶ Restore on ${BRANCH}"
 git add -A
 if git diff --cached --quiet; then
