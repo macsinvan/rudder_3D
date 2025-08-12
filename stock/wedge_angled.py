@@ -76,8 +76,8 @@ def build_wedge(row_dict, radius_at_func):
         )
         return parts, summary
 
-    # ----- Angled (≠ 90°): STEP 1 ONLY — form the V exactly like the 90° case -----
-    # (No Y-tilt, no vertical tip slice yet.)
+    # ----- Angled (≠ 90°): STEP 1 — form the V exactly like the 90° case -----
+    # Then STEP 2 — seat the V on the post by translating to x = r. (No tilt, no trim yet.)
     L_in = length_out
     R_eff = r - t
     if L_in <= 0 or R_eff <= 0:
@@ -103,14 +103,22 @@ def build_wedge(row_dict, radius_at_func):
     p_bot = p_bot.copy()
     p_bot.rotate(tip_pivot_bot, Vector(0, 0, 1), +alpha_deg)
 
+    # STEP 2: translate the V so the inside edge sits at x = r
+    dx = r - base_x
+    if abs(dx) > 1e-12:
+        p_top.translate(Vector(dx, 0.0, 0.0))
+        p_bot.translate(Vector(dx, 0.0, 0.0))
+
     parts.extend([p_top, p_bot])
 
     summary = (
-        f"WedgeVOnly '{label}' start={start} w={width} L_in={L_in} "
-        f"t={t} r_at={r:.2f} R_eff={R_eff:.2f} alpha={alpha_deg:.3f}° tip_x={d:.3f} (V formed; no tilt, no trim)"
+        f"WedgeV+Seat '{label}' start={start} w={width} L_in={L_in} "
+        f"t={t} r_at={r:.2f} R_eff={R_eff:.2f} alpha={alpha_deg:.3f}° tip_x={d:.3f} "
+        f"(V formed, seated at post; no tilt, no trim)"
     )
     print(
-        f"  ✓ Wedge V-only: label='{label}', r={r:.2f}, t={t}, L_in={L_in}, "
-        f"R_eff={R_eff:.2f}, alpha={alpha_deg:.3f}°, tip_x={d:.3f} (V formed; no tilt, no trim)"
+        f"  ✓ Wedge V+Seat: label='{label}', r={r:.2f}, t={t}, L_in={L_in}, "
+        f"R_eff={R_eff:.2f}, alpha={alpha_deg:.3f}°, tip_x={d:.3f} "
+        f"(V formed, translated by dx={dx:.3f}; no tilt, no trim)"
     )
     return parts, summary
