@@ -153,7 +153,7 @@ def build_wedge(row_dict, radius_at_func):
     p_bot.rotate(pivot, Vector(0, 1, 0), rot_deg)
 
     # --- Step 5: TIP CUT (YZ plane at x = r + L_csv) ---
-    x_cut = r + length_out
+    x_cut = r + length_out * math.cos(theta_rad)
     # Build a big cutting prism that keeps the side x <= x_cut
     # Use bounding boxes to size generously.
     bb = p_top.BoundBox
