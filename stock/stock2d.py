@@ -11,10 +11,11 @@ from stock.io import read_stock_csv_sectioned
 from stock.geom import radius_at as _radius_at_core, append_post_segment_from_row
 from stock.draw import create_drawing_page, calculate_uniform_scale
 from stock.wedge import build_wedge
-from stock.plate import build_plate  # ← plate refactor (already wired)
-from stock.cylinder import build_cylinder  # ← cylinder refactor
-from stock.taper import build_taper        # ← NEW: taper refactor
-from stock.wedge_angled import build_wedge as build_wedge_angled  # ← NEW: angled wedge
+from stock.plate import build_plate
+from stock.cylinder import build_cylinder
+from stock.taper import build_taper
+from stock.wedge_angled import build_wedge as build_wedge_angled
+from stock.heel_cutter import add_post_half_box_from_segments   # ← NEW
 
 VERSION = "1.2.8"
 
@@ -58,27 +59,23 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
 
         try:
             if shape_type == 'cylinder':
-                # ✅ REFACTORED: delegate to stock/cylinder.py
                 parts, summary = build_cylinder(row_dict)
                 compound_shapes.extend(parts)
                 summaries.append(summary)
                 append_post_segment_from_row(post_segments, row_dict)
 
             elif shape_type == 'taper':
-                # ✅ REFACTORED: delegate to stock/taper.py
                 parts, summary = build_taper(row_dict)
                 compound_shapes.extend(parts)
                 summaries.append(summary)
                 append_post_segment_from_row(post_segments, row_dict)
 
             elif shape_type == 'plate':
-                # 🔹 Refactored earlier: call build_plate from plate.py
                 plate_parts, plate_summary = build_plate(row_dict, _radius_at)
                 compound_shapes.extend(plate_parts)
                 summaries.append(plate_summary)
 
             elif shape_type == 'wedge':
-                # NEW: route non-90° wedges to wedge_angled; keep 90° on existing path
                 try:
                     angle_val = float(row_dict.get('angle', '90') or 90.0)
                 except Exception:
@@ -95,6 +92,19 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
 
         except Exception as e:
             print(f"  ❌ Error parsing row {row_dict} → {e}")
+
+    # ▼ Add the visual half‑box cutter AFTER the post segments exist
+    try:
+        _, cutter_obj = add_post_half_box_from_segments(
+            doc,
+            post_segments,
+            side="negX",          # positive X half (in front)
+            oversize=2.0,         # a little extra clearance
+            name="HeelCutterHalfBox"
+        )
+        summaries.append(f"HeelCutterHalfBox z[{cutter_obj.Shape.BoundBox.ZMin:.1f},{cutter_obj.Shape.BoundBox.ZMax:.1f}]")
+    except Exception as e:
+        print(f"  ⚠️ HeelCutterHalfBox skipped: {e}")
 
     if meta_info:
         print(f"📌 Meta: {meta_info}")

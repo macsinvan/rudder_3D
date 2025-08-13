@@ -5,21 +5,6 @@ import Part
 from FreeCAD import Vector
 
 def build_wedge(row_dict, radius_at_func):
-    """
-    Angled wedge tine — V build, pivoted Y-rotation, and tip cut
-
-    Summary:
-      • Leading extension: E_lead = 2*r (toward post)
-      • Trailing extension: E_trail = width * tan(θ)  (θ = |90° - angle|)
-      • V-opening (α) for ANGLED case uses bottom radius r_bot to ensure bottom-edge embed
-      • Pivot placed at x = r (top radius), rotation about +Y
-      • Tip cut plane: x_cut = r + L_csv * cos(θ)  (preserves CSV top-edge length)
-
-    90° case:
-      • Unchanged behavior; uses top radius r for the V in plan (no Y-tilt)
-    """
-
-    # ---- inputs ----
     start = float(row_dict['start'])
     width = float(row_dict['width'])
     length_out = float(row_dict['length'])      # CSV top-edge length
@@ -29,152 +14,86 @@ def build_wedge(row_dict, radius_at_func):
 
     print(f"  🟩 wedge_angled.py hit: start={start}, width={width}, L_csv={length_out}, t={t}, angle={angle_deg}")
 
-    # ---- radii at top/bottom attach Z ----
-    z_attach = -start                  # top inside edge Z
+    z_attach = -start
     try:
-        r = float(radius_at_func(z_attach))                  # top radius
-        r_bot = float(radius_at_func(z_attach - width))      # bottom radius (z = -start - width)
+        r = float(radius_at_func(z_attach))
+        r_bot = float(radius_at_func(z_attach - width))
     except Exception as e:
-        print(f"  ⚠️ radius_at() failed at z={z_attach:.1f}/{z_attach - width:.1f}: {e}; default r=r_bot=0")
+        print(f"  ⚠️ radius_at() failed: {e}")
         r = 0.0
         r_bot = 0.0
 
     parts = []
 
-    # =========================
-    # 90° WEDGE (unchanged)
-    # =========================
     if abs(angle_deg - 90.0) < 1e-9:
         L_in = length_out
-        R_eff = r - t                                  # use TOP radius for 90° case
-        if L_in <= 0 or R_eff <= 0:
-            raise ValueError(f"invalid inside geometry: L_in={L_in}, R_eff={R_eff} (r={r}, t={t})")
-
+        R_eff = r - t
         alpha_rad = math.atan2(R_eff, L_in)
         alpha_deg = math.degrees(alpha_rad)
-
         d = math.hypot(R_eff, L_in)
         base_x = d - L_in
 
         p_top = Part.makeBox(L_in, t, width)
-        p_top.Placement.Base = Vector(base_x, 0.0,  -(start + width))
-        tip_pivot_top = Vector(d, 0.0, -start)
-
+        p_top.Placement.Base = Vector(base_x, 0.0, -(start + width))
         p_bot = Part.makeBox(L_in, t, width)
-        p_bot.Placement.Base = Vector(base_x, -t,   -(start + width))
-        tip_pivot_bot = Vector(d, 0.0, -start)
+        p_bot.Placement.Base = Vector(base_x, -t, -(start + width))
 
-        p_top = p_top.copy(); p_top.rotate(tip_pivot_top, Vector(0, 0, 1), -alpha_deg)
-        p_bot = p_bot.copy(); p_bot.rotate(tip_pivot_bot, Vector(0, 0, 1), +alpha_deg)
+        p_top = p_top.copy(); p_top.rotate(Vector(d, 0, -start), Vector(0, 0, 1), -alpha_deg)
+        p_bot = p_bot.copy(); p_bot.rotate(Vector(d, 0, -start), Vector(0, 0, 1), +alpha_deg)
 
         parts.extend([p_top, p_bot])
+        return parts, f"Wedge90 '{label}'"
 
-        summary = (
-            f"Wedge90 '{label}' start={start} w={width} L_in={L_in} "
-            f"t={t} r_at={r:.2f} alpha={alpha_deg:.3f}° tip_x={d:.3f}"
-        )
-        print(
-            f"  ✓ Wedge90: label='{label}', r={r:.2f}, t={t}, L_in={L_in}, "
-            f"alpha={alpha_deg:.3f}°, tip_x={d:.3f}"
-        )
-        return parts, summary
-
-    # ======================================================
-    # ANGLED (≠90°): apply extensions, build V, rotate, tip cut
-    # ======================================================
-
-    # --- Step 1: extensions ---
-    theta_deg = abs(90.0 - angle_deg)             # tilt from vertical
+    theta_deg = abs(90.0 - angle_deg)
     theta_rad = math.radians(theta_deg)
 
-    E_lead = 2.0 * r                               # toward post (seat)
-    E_trail = max(0.0, width * math.tan(theta_rad))# toward tip (bottom-corner swing only)
+    E_lead  = 2.0 * r
+    E_trail = max(0.0, width * math.tan(theta_rad))
 
-    print(
-        f"  ➜ Extensions: lead={E_lead:.3f}, trail={E_trail:.3f} "
-        f"(θ={theta_deg:.1f}°, L_csv={length_out}, width={width})"
-    )
-
-    # --- Step 2: build V (plan) with both extensions ---
     L_total = length_out + E_lead + E_trail
     L_in = L_total
-
-    # Use BOTTOM radius to compute in-plane V-opening so the lower inside edge embeds correctly
     R_eff = r_bot - t
-    if L_in <= 0 or R_eff <= 0:
-        raise ValueError(f"invalid inside geometry: L_in={L_in}, R_eff={R_eff} (r_bot={r_bot}, t={t})")
 
     alpha_rad = math.atan2(R_eff, L_in)
     alpha_deg = math.degrees(alpha_rad)
 
-    d = math.hypot(R_eff, L_in)     # X position of far tip of the over-length V
-    base_x = d - L_in               # box base X before any translation
+    d = math.hypot(R_eff, L_in)
+    base_x = d - L_in
 
     p_top = Part.makeBox(L_in, t, width)
-    p_top.Placement.Base = Vector(base_x, 0.0,  -(start + width))
-    tip_pivot_top = Vector(d, 0.0, -start)
-
+    p_top.Placement.Base = Vector(base_x, 0.0, -(start + width))
     p_bot = Part.makeBox(L_in, t, width)
-    p_bot.Placement.Base = Vector(base_x, -t,   -(start + width))
-    tip_pivot_bot = Vector(d, 0.0, -start)
+    p_bot.Placement.Base = Vector(base_x, -t, -(start + width))
 
-    p_top = p_top.copy(); p_top.rotate(tip_pivot_top, Vector(0, 0, 1), -alpha_deg)
-    p_bot = p_bot.copy(); p_bot.rotate(tip_pivot_bot, Vector(0, 0, 1), +alpha_deg)
+    p_top = p_top.copy(); p_top.rotate(Vector(d, 0, -start), Vector(0, 0, 1), -alpha_deg)
+    p_bot = p_bot.copy(); p_bot.rotate(Vector(d, 0, -start), Vector(0, 0, 1), +alpha_deg)
 
-    # --- Step 3: place pivot (CSV + E_trail back from far end), then translate to x=r (TOP radius) ---
-    x_pivot_local = d - (length_out + E_trail)     # pivot position inside the V from far tip
+    x_pivot_local = d - (length_out + E_trail)
     dx = r - x_pivot_local
     if abs(dx) > 1e-12:
         p_top.translate(Vector(dx, 0.0, 0.0))
         p_bot.translate(Vector(dx, 0.0, 0.0))
 
-    # --- Step 4: rotate about +Y through that pivot ---
     tilt = 90.0 - angle_deg
-    rot_deg = -tilt
-    pivot = Vector(r, 0.0, -start)  # pivot at top radius/contact line
-    p_top = p_top.copy(); p_top.rotate(pivot, Vector(0, 1, 0), rot_deg)
-    p_bot = p_bot.copy(); p_bot.rotate(pivot, Vector(0, 1, 0), rot_deg)
+    pivot = Vector(r, 0.0, -start)
+    p_top = p_top.copy(); p_top.rotate(pivot, Vector(0, 1, 0), -tilt)
+    p_bot = p_bot.copy(); p_bot.rotate(pivot, Vector(0, 1, 0), -tilt)
 
-    # --- Step 5: TIP CUT (YZ plane at x = r + L_csv * cosθ) ---
+    # Tip cut
     x_cut = r + length_out * math.cos(theta_rad)
-
-    # Cutting prism: keep side x <= x_cut
     bb = p_top.BoundBox; bb.add(p_bot.BoundBox)
     margin = max(10.0, 5.0 * max(1.0, r, length_out, width, t))
 
-    x_min = bb.XMin - margin
-    x_max = x_cut
-    y_min = bb.YMin - margin
-    y_max = bb.YMax + margin
-    z_min = min(bb.ZMin, -start - width) - margin
-    z_max = max(bb.ZMax, -start) + margin
-
-    size_x = x_max - x_min
-    size_y = y_max - y_min
-    size_z = z_max - z_min
-    trim = Part.makeBox(size_x, size_y, size_z)
-    trim.Placement.Base = Vector(x_min, y_min, z_min)
-
-    print(f"  ✂ TipCut: plane x = r + L_csv*cosθ = {x_cut:.3f} (keep x ≤ plane)")
+    trim = Part.makeBox(
+        x_cut - (bb.XMin - margin),
+        (bb.YMax + margin) - (bb.YMin - margin),
+        (max(bb.ZMax, -start) + margin) - (min(bb.ZMin, -start - width) - margin)
+    )
+    trim.Placement.Base = Vector(bb.XMin - margin, bb.YMin - margin, min(bb.ZMin, -start - width) - margin)
 
     p_top = p_top.common(trim)
     p_bot = p_bot.common(trim)
 
-    if p_top.isNull() or p_bot.isNull():
-        print("  ⚠️ Tip cut produced a null plate; check x_cut and extensions.")
-
     parts.extend([p_top, p_bot])
 
-    summary = (
-        f"WedgeAngled-TipCut '{label}' start={start} w={width} "
-        f"L_csv={length_out} L_total={L_total} t={t} r_at_top={r:.2f} r_at_bot={r_bot:.2f} "
-        f"alpha(plan)={alpha_deg:.3f}° rotY={rot_deg:.2f}° x_cut={x_cut:.3f} "
-        f"[E_lead={E_lead:.3f}, E_trail={E_trail:.3f}, θ={theta_deg:.1f}°]"
-    )
-    print(
-        f"  ✓ WedgeAngled TipCut: label='{label}', r_top={r:.2f}, r_bot={r_bot:.2f}, t={t}, "
-        f"L_csv={length_out}, L_total={L_total}, alpha(plan)={alpha_deg:.3f}°, "
-        f"x_pivot_local={x_pivot_local:.3f}, dx={dx:.3f}, rotY={rot_deg:.2f}°, "
-        f"x_cut={x_cut:.3f} [E_lead={E_lead:.3f}, E_trail={E_trail:.3f}, θ={theta_deg:.1f}°]"
-    )
-    return parts, summary
+    return parts, f"WedgeAngled-TipCut '{label}'"
