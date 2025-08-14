@@ -47,14 +47,35 @@ def run():
     doc = App.newDocument(doc_name)
     Gui.activateWorkbench("PartWorkbench")
 
-    # 3) Read outline & shrunk profile
-    compound = Part.read(step_path)
-    subs = getattr(compound, 'SubShapes', [compound])
-    if len(subs) < 2:
-        print("STEP must include outline and shrunk profile.")
+    # 3) Read outline & shrunk profile with validation
+    try:
+        compound = Part.read(step_path)
+        subs = getattr(compound, 'SubShapes', [compound])
+        if len(subs) < 2:
+            print("❌ STEP must include outline and shrunk profile.")
+            return
+        
+        # Validate we can create wires
+        if not subs[0].Edges or not subs[1].Edges:
+            print("❌ STEP shapes must contain edges to form wires.")
+            return
+            
+        orig_wire = Part.Wire(subs[0].Edges)
+        shrunk_wire = Part.Wire(subs[1].Edges)
+        
+        # Validate wires are reasonable
+        if orig_wire.BoundBox.DiagonalLength < 1.0:
+            print("❌ Original wire too small - check STEP file units.")
+            return
+        if shrunk_wire.BoundBox.DiagonalLength < 1.0:
+            print("❌ Shrunk wire too small - check STEP file units.")
+            return
+            
+        print(f"✅ Loaded wires: Orig={len(orig_wire.Edges)} edges, Shrunk={len(shrunk_wire.Edges)} edges")
+        
+    except Exception as e:
+        print(f"❌ Failed to read STEP file: {e}")
         return
-    orig_wire = Part.Wire(subs[0].Edges)
-    shrunk_wire = Part.Wire(subs[1].Edges)
 
     # Draw original & shrunk wires
     for name, wire, color in [("Orig", orig_wire, (1.0, 0.6, 0.6)),
@@ -64,18 +85,31 @@ def run():
         feat.ViewObject.ShapeColor = color
         feat.ViewObject.LineWidth = 2
 
-    # 4) Slice chords via Part.section for exact outline intersections
+    # 4) Slice chords via Part.section with validation
     chords = []
     bb = shrunk_wire.BoundBox
-    levels = [bb.ZMin + i * SLICE_SPACING for i in range(int((bb.ZMax - bb.ZMin) / SLICE_SPACING) + 1)]
+    total_height = bb.ZMax - bb.ZMin
+    if total_height < SLICE_SPACING:
+        print(f"❌ Wire height ({total_height:.1f}mm) too small for slicing at {SLICE_SPACING}mm intervals.")
+        return
+        
+    levels = [bb.ZMin + i * SLICE_SPACING for i in range(int(total_height / SLICE_SPACING) + 1)]
+    print(f"🔪 Slicing {len(levels)} levels from Z={bb.ZMin:.1f} to Z={bb.ZMax:.1f}")
+    
     for z in levels:
         plane = Part.makePlane(PLANE_SIZE, PLANE_SIZE, Vector(0, 0, z), Vector(0, 0, 1))
         section = shrunk_wire.section(plane)
         verts = section.Vertexes
         if len(verts) >= 2:
             pts = sorted([v.Point for v in verts], key=lambda p: p.x)
-            chords.append(((pts[0].x, z), (pts[-1].x, z)))
-    print(f"Sliced {len(chords)} chords via Part.section.")
+            chord_length = pts[-1].x - pts[0].x
+            if chord_length > 1.0:  # Minimum reasonable chord length
+                chords.append(((pts[0].x, z), (pts[-1].x, z)))
+    
+    if not chords:
+        print("❌ No valid chords found - check wire geometry.")
+        return
+    print(f"✅ Found {len(chords)} valid chords for sections.")
 
     # 5) Generate NACA sections
     sections = []
