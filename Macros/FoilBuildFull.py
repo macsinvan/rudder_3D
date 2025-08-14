@@ -18,12 +18,15 @@ from rudderlib_foil.naca import naca4_coordinates
 
 # Configuration - Simplified and Essential Parameters Only
 CONFIG = {
-    # NACA Profile Settings
-    'naca_profile': '0012',      # NACA 4-digit code (0012 = 12% thick, symmetric)
+    # NACA Profile Settings - Flexible Thickness Specification
+    'naca_camber': '00',         # NACA camber digits (00 = symmetric, 23 = cambered)
+    'thickness_percent': 12.0,   # % thickness if no apex measurement (fallback)
+    'apex_at_top': None,         # mm actual measured thickness at top (overrides %)
+    'thickness_tolerance': 2.0,  # mm tolerance for contradiction warning
     'naca_points': 50,           # Number of points in airfoil cross-section
     
     # Slicing Settings - Keep It Simple
-    'slice_spacing': 4.0,        # mm uniform spacing - captures all detail
+    'slice_spacing': 4.0,        # mm uniform spacing - fast execution with good quality
     'min_chord_length': 10.0,    # mm minimum chord length to include
     
     # Geometry Settings
@@ -38,109 +41,75 @@ CONFIG = {
 }
 
 # Constants (derived from config)
-VERSION = "1.0.3"
+VERSION = "1.1.0"
 SLICE_SPACING = CONFIG['slice_spacing']
 PLANE_SIZE = CONFIG['plane_size'] 
-NACA_PROFILE = CONFIG['naca_profile']
 NACA_POINTS = CONFIG['naca_points']
 
-def calculate_adaptive_levels(wire, config):
+def calculate_naca_thickness(chords, config):
     """
-    Calculate adaptive slice levels based on wire curvature.
-    Returns list of Z levels with fine spacing in curved areas, coarse in straight areas.
-    """
-    bb = wire.BoundBox
-    total_height = bb.ZMax - bb.ZMin
+    Calculate NACA thickness percentage based on config and chord data.
+    Handles both percentage specification and measured apex thickness.
     
-    if not config['adaptive_slicing']:
-        # Fall back to uniform spacing
-        num_levels = int(total_height / config['slice_spacing']) + 1
-        return [bb.ZMin + i * config['slice_spacing'] for i in range(num_levels)]
-    
-    # Improved adaptive algorithm with minimum spacing enforcement
-    levels = []
-    current_z = bb.ZMin
-    
-    # Always include start
-    levels.append(current_z)
-    
-    # Generate levels with adaptive spacing but enforce minimum distance
-    min_spacing = config['fine_spacing']  # Never go below fine spacing
-    max_spacing = config['coarse_spacing']
-    
-    while current_z < bb.ZMax and len(levels) < config['max_sections']:
-        # Sample local geometry to estimate spacing needed
-        try:
-            # Create planes at small intervals to check local variation
-            test_spacing = min_spacing * 2  # Test spacing
-            if current_z + test_spacing < bb.ZMax:
-                plane1 = Part.makePlane(config['plane_size'], config['plane_size'], 
-                                       Vector(0, 0, current_z), Vector(0, 0, 1))
-                plane2 = Part.makePlane(config['plane_size'], config['plane_size'], 
-                                       Vector(0, 0, current_z + test_spacing), Vector(0, 0, 1))
-                
-                section1 = wire.section(plane1)
-                section2 = wire.section(plane2)
-                
-                # Check if chord length changes significantly
-                if (len(section1.Vertexes) >= 2 and len(section2.Vertexes) >= 2):
-                    pts1 = sorted([v.Point for v in section1.Vertexes], key=lambda p: p.x)
-                    pts2 = sorted([v.Point for v in section2.Vertexes], key=lambda p: p.x)
-                    
-                    chord1 = pts1[-1].x - pts1[0].x
-                    chord2 = pts2[-1].x - pts2[0].x
-                    
-                    # If chord changes rapidly, use fine spacing
-                    chord_change = abs(chord2 - chord1) / chord1 if chord1 > 0 else 0
-                    
-                    if chord_change > config['curvature_threshold']:
-                        spacing = min_spacing
-                    else:
-                        spacing = max_spacing
-                else:
-                    spacing = config['slice_spacing']  # Default spacing if no intersection
-            else:
-                spacing = min_spacing  # Near end, use fine spacing
-                
-        except:
-            spacing = config['slice_spacing']  # Fallback to default
+    Args:
+        chords: List of ((x1, z1), (x2, z2)) chord endpoints
+        config: Configuration dictionary
         
-        # Advance by chosen spacing, but don't exceed max Z
-        current_z += spacing
-        if current_z < bb.ZMax:
-            levels.append(current_z)
+    Returns:
+        (thickness_percent, naca_profile_code)
+    """
+    apex_measured = config.get('apex_at_top')
+    thickness_percent = config.get('thickness_percent', 12.0)
+    tolerance = config.get('thickness_tolerance', 2.0)
     
-    # Always include end
-    if levels[-1] != bb.ZMax:
-        levels.append(bb.ZMax)
+    if apex_measured is not None:
+        # Find the top chord (maximum Z) to calculate percentage
+        if not chords:
+            print(f"❌ No chords available for apex calculation, using fallback {thickness_percent}%")
+            calculated_percent = thickness_percent
+        else:
+            top_chord = max(chords, key=lambda chord: chord[0][1])  # Max Z value
+            top_chord_length = top_chord[1][0] - top_chord[0][0]  # x2 - x1
+            
+            if top_chord_length <= 0:
+                print(f"❌ Invalid top chord length, using fallback {thickness_percent}%")
+                calculated_percent = thickness_percent
+            else:
+                calculated_percent = (apex_measured / top_chord_length) * 100.0
+                print(f"📏 Apex measurement: {apex_measured:.1f}mm on {top_chord_length:.1f}mm chord = {calculated_percent:.1f}%")
+                
+                # Check for contradiction if both values provided
+                if thickness_percent != 12.0:  # 12.0 is our default, so not user-specified
+                    expected_apex = (thickness_percent / 100.0) * top_chord_length
+                    difference = abs(apex_measured - expected_apex)
+                    
+                    if difference > tolerance:
+                        print(f"⚠️  WARNING: Apex measurement ({apex_measured:.1f}mm) contradicts thickness % ({thickness_percent:.1f}%)")
+                        print(f"    Expected apex for {thickness_percent:.1f}%: {expected_apex:.1f}mm (difference: {difference:.1f}mm > {tolerance:.1f}mm tolerance)")
+                        print(f"    Using measured apex value ({calculated_percent:.1f}%)")
+    else:
+        calculated_percent = thickness_percent
+        print(f"📐 Using specified thickness: {thickness_percent:.1f}%")
     
-    # Ensure minimum sections by adding intermediate levels if needed
-    while len(levels) < config['min_sections'] and len(levels) > 1:
-        new_levels = [levels[0]]
-        for i in range(len(levels) - 1):
-            new_levels.append(levels[i])
-            # Only add intermediate if gap is large enough
-            gap = levels[i+1] - levels[i]
-            if gap > min_spacing * 2:
-                mid_z = (levels[i] + levels[i+1]) / 2
-                new_levels.append(mid_z)
-        new_levels.append(levels[-1])
-        levels = new_levels
+    # Ensure reasonable bounds
+    if calculated_percent < 5.0:
+        print(f"⚠️  WARNING: Thickness {calculated_percent:.1f}% is very thin, clamping to 5%")
+        calculated_percent = 5.0
+    elif calculated_percent > 25.0:
+        print(f"⚠️  WARNING: Thickness {calculated_percent:.1f}% is very thick, clamping to 25%")
+        calculated_percent = 25.0
     
-    # Ensure no levels are too close together (minimum spacing enforcement)
-    filtered_levels = [levels[0]]
-    for level in levels[1:]:
-        if level - filtered_levels[-1] >= min_spacing * 0.9:  # Small tolerance
-            filtered_levels.append(level)
+    # Build NACA profile code
+    naca_profile = f"{config.get('naca_camber', '00')}{int(calculated_percent):02d}"
     
-    return sorted(filtered_levels)
+    return calculated_percent, naca_profile
 
 def run():
     """
     Single full-pipeline macro: outline → chords → NACA sections → loft
     """
     print(f"FoilBuildFull v{VERSION}")
-    print(f"Config: NACA {CONFIG['naca_profile']}, {CONFIG['slice_spacing']}mm uniform spacing, {CONFIG['naca_points']} pts/section")
+    print(f"Config: {CONFIG['slice_spacing']}mm uniform spacing, {CONFIG['naca_points']} pts/section")
     
     # 1) STEP file selection
     dlg = QtWidgets.QFileDialog()
@@ -231,7 +200,11 @@ def run():
         return
     print(f"✅ Found {len(chords)} valid chords for sections (chords > {CONFIG['min_chord_length']}mm).")
 
-    # 6) Generate NACA sections
+    # 6) Calculate NACA thickness based on config
+    thickness_percent, naca_profile = calculate_naca_thickness(chords, CONFIG)
+    print(f"🎯 Using NACA {naca_profile} ({thickness_percent:.1f}% thick)")
+
+    # 7) Generate NACA sections
     sections = []
     for idx, ((x1, z1), (x2, z2)) in enumerate(chords):       
         p_le = Vector(x1, 0.0, z1)  # leading edge (minimum x)
@@ -241,7 +214,7 @@ def run():
         ux = vec.normalize()
         uy = ux.cross(Vector(0.0, 0.0, 1.0)).normalize()
 
-        coords = naca4_coordinates(length, float(CONFIG['naca_profile'][2:]), num_pts=CONFIG['naca_points'])
+        coords = naca4_coordinates(length, thickness_percent, num_pts=CONFIG['naca_points'])
         pts3 = [p_le + ux * x + uy * z for x, z in coords]
         wire = Part.makePolygon(pts3)
         feat = doc.addObject("Part::Feature", f"Section_{idx}")
@@ -252,7 +225,7 @@ def run():
     
     print(f"Built {len(sections)} NACA sections.")
 
-    # 7) Loft sections with validation
+    # 8) Loft sections with validation
     shapes = [o.Shape for o in sections]
     
     # Validate shapes before lofting
@@ -291,7 +264,7 @@ def run():
             print(f"❌ Ruled loft also failed: {e2}")
             return
 
-    # 8) Finalize view
+    # 9) Finalize view
     doc.recompute()
     Gui.SendMsgToActiveView("ViewFit")
     Gui.activeDocument().activeView().viewFront()
