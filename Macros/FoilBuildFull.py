@@ -16,21 +16,15 @@ from FreeCAD import Vector
 from outline.geometry import slice_chords
 from rudderlib_foil.naca import naca4_coordinates
 
-# Configuration - Easily adjustable parameters
+# Configuration - Simplified and Essential Parameters Only
 CONFIG = {
     # NACA Profile Settings
     'naca_profile': '0012',      # NACA 4-digit code (0012 = 12% thick, symmetric)
     'naca_points': 50,           # Number of points in airfoil cross-section
     
-    # Slicing Settings  
-    'slice_spacing': 10.0,       # mm default spacing between chord slices
-    'adaptive_slicing': False,   # Disable broken adaptive slicing - revert to working uniform
-    'fine_spacing': 5.0,         # mm spacing in high-curvature areas
-    'coarse_spacing': 20.0,      # mm spacing in straight areas
-    'curvature_threshold': 0.01, # Curvature threshold for fine vs coarse spacing
-    'min_sections': 5,           # Minimum number of sections to generate
-    'max_sections': 50,          # Maximum number of sections to generate
-    'min_chord_length': 1.0,     # mm minimum chord length to include
+    # Slicing Settings - Keep It Simple
+    'slice_spacing': 4.0,        # mm uniform spacing - captures all detail
+    'min_chord_length': 10.0,    # mm minimum chord length to include
     
     # Geometry Settings
     'plane_size': 1000,          # mm size of sectioning planes
@@ -44,7 +38,7 @@ CONFIG = {
 }
 
 # Constants (derived from config)
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 SLICE_SPACING = CONFIG['slice_spacing']
 PLANE_SIZE = CONFIG['plane_size'] 
 NACA_PROFILE = CONFIG['naca_profile']
@@ -146,8 +140,7 @@ def run():
     Single full-pipeline macro: outline → chords → NACA sections → loft
     """
     print(f"FoilBuildFull v{VERSION}")
-    slicing_mode = "adaptive" if CONFIG['adaptive_slicing'] else "uniform"
-    print(f"Config: NACA {CONFIG['naca_profile']}, {slicing_mode} slicing, {CONFIG['naca_points']} pts/section")
+    print(f"Config: NACA {CONFIG['naca_profile']}, {CONFIG['slice_spacing']}mm uniform spacing, {CONFIG['naca_points']} pts/section")
     
     # 1) STEP file selection
     dlg = QtWidgets.QFileDialog()
@@ -205,15 +198,21 @@ def run():
         feat.ViewObject.ShapeColor = color
         feat.ViewObject.LineWidth = 2
 
-    # 4) Calculate adaptive slice levels
+    # 4) Generate uniform slice levels
     bb = shrunk_wire.BoundBox
     total_height = bb.ZMax - bb.ZMin
-    if total_height < CONFIG['fine_spacing']:
+    if total_height < CONFIG['slice_spacing']:
         print(f"❌ Wire height ({total_height:.1f}mm) too small for slicing.")
         return
     
-    levels = calculate_adaptive_levels(shrunk_wire, CONFIG)
-    print(f"🔪 Adaptive slicing: {len(levels)} levels from Z={bb.ZMin:.1f} to Z={bb.ZMax:.1f}")
+    # Simple uniform spacing
+    num_levels = int(total_height / CONFIG['slice_spacing']) + 1
+    levels = [bb.ZMin + i * CONFIG['slice_spacing'] for i in range(num_levels)]
+    # Always include the end
+    if levels[-1] != bb.ZMax:
+        levels.append(bb.ZMax)
+    
+    print(f"🔪 Uniform slicing: {len(levels)} levels from Z={bb.ZMin:.1f} to Z={bb.ZMax:.1f}")
     
     # 5) Slice chords via Part.section with validation
     chords = []
@@ -224,17 +223,17 @@ def run():
         if len(verts) >= 2:
             pts = sorted([v.Point for v in verts], key=lambda p: p.x)
             chord_length = pts[-1].x - pts[0].x
-            if chord_length > CONFIG['min_chord_length']:  # Configurable minimum chord length
+            if chord_length > CONFIG['min_chord_length']:
                 chords.append(((pts[0].x, z), (pts[-1].x, z)))
     
     if not chords:
         print("❌ No valid chords found - check wire geometry.")
         return
-    print(f"✅ Found {len(chords)} valid chords for sections.")
+    print(f"✅ Found {len(chords)} valid chords for sections (chords > {CONFIG['min_chord_length']}mm).")
 
     # 6) Generate NACA sections
     sections = []
-    for idx, ((x1, z1), (x2, z2)) in enumerate(chords):
+    for idx, ((x1, z1), (x2, z2)) in enumerate(chords):       
         p_le = Vector(x1, 0.0, z1)  # leading edge (minimum x)
         p_te = Vector(x2, 0.0, z2)  # trailing edge (maximum x)
         vec = p_te.sub(p_le)
@@ -250,7 +249,8 @@ def run():
         feat.ViewObject.ShapeColor = CONFIG['section_color']
         feat.ViewObject.LineWidth = 1
         sections.append(feat)
-    print(f"Built {len(sections)} sections.")
+    
+    print(f"Built {len(sections)} NACA sections.")
 
     # 7) Loft sections with validation
     shapes = [o.Shape for o in sections]
