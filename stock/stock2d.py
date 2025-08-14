@@ -15,17 +15,17 @@ from stock.plate import build_plate
 from stock.cylinder import build_cylinder
 from stock.taper import build_taper
 from stock.wedge_angled import build_wedge as build_wedge_angled
-from stock.heel_cutter import add_post_half_box_from_segments   # ← NEW
+from stock.heel_cutter import apply_heel_cutter_workflow
 
 VERSION = "1.2.8"
 
 def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
-    print(f"\n📄 build_stock_from_csv v{VERSION}")
+    print(f"\nBuilding build_stock_from_csv v{VERSION}")
 
     csv_path = os.path.join(os.path.dirname(__file__), 'stock_sample.csv')
     if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"❌ CSV file not found: {csv_path}")
-    print(f"📂 Reading CSV: {csv_path}")
+        raise FileNotFoundError(f"CSV file not found: {csv_path}")
+    print(f"Reading CSV: {csv_path}")
 
     body = doc.addObject("Part::Feature", "RudderStock")
     compound_shapes = []
@@ -37,9 +37,9 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
     def _radius_at(z_world: float) -> float:
         nonlocal _radius_debug_done
         if not _radius_debug_done:
-            print(f"🔎 radius_at(): {len(post_segments)} post segment(s) available")
+            print(f"radius_at(): {len(post_segments)} post segment(s) available")
             for i, seg in enumerate(post_segments, 1):
-                print(f"   •[{i}] {seg['kind']}  Z[{seg['z_bot']:.1f},{seg['z_top']:.1f}]  "
+                print(f"   [{i}] {seg['kind']}  Z[{seg['z_bot']:.1f},{seg['z_top']:.1f}]  "
                       f"R[{seg['r_bot']:.2f},{seg['r_top']:.2f}]")
             _radius_debug_done = True
         return _radius_at_core(z_world, post_segments)
@@ -88,30 +88,19 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                 summaries.append(wedge_summary)
 
             else:
-                print(f"  ❌ Unknown type in row: {row_dict}")
+                print(f"  Unknown type in row: {row_dict}")
 
         except Exception as e:
-            print(f"  ❌ Error parsing row {row_dict} → {e}")
+            print(f"  Error parsing row {row_dict} -> {e}")
 
-    # ▼ Add the visual half‑box cutter AFTER the post segments exist
-    try:
-        _, cutter_obj = add_post_half_box_from_segments(
-            doc,
-            post_segments,
-            side="negX",          # positive X half (in front)
-            oversize=2.0,         # a little extra clearance
-            name="HeelCutterHalfBox"
-        )
-        summaries.append(f"HeelCutterHalfBox z[{cutter_obj.Shape.BoundBox.ZMin:.1f},{cutter_obj.Shape.BoundBox.ZMax:.1f}]")
-    except Exception as e:
-        print(f"  ⚠️ HeelCutterHalfBox skipped: {e}")
+    apply_heel_cutter_workflow(doc, post_segments, summaries)
 
     if meta_info:
-        print(f"📌 Meta: {meta_info}")
-    print(f"📊 Components: {', '.join(summaries) if summaries else 'none'}")
+        print(f"Meta: {meta_info}")
+    print(f"Components: {', '.join(summaries) if summaries else 'none'}")
 
     if not compound_shapes:
-        raise ValueError("❌ No valid stock geometry found in CSV.")
+        raise ValueError("No valid stock geometry found in CSV.")
 
     compound = Part.makeCompound(compound_shapes)
     body.Shape = compound
@@ -119,11 +108,11 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
 
     try:
         bbox = body.Shape.BoundBox
-        print(f"📦 Solids: {len(compound_shapes)}  "
+        print(f"Solids: {len(compound_shapes)}  "
               f"BBox: X[{bbox.XMin:.1f},{bbox.XMax:.1f}] "
               f"Y[{bbox.YMin:.1f},{bbox.YMax:.1f}] "
               f"Z[{bbox.ZMin:.1f},{bbox.ZMax:.1f}]")
     except Exception as e:
-        print(f"⚠️ Could not compute bbox summary: {e}")
+        print(f"Could not compute bbox summary: {e}")
 
     return body

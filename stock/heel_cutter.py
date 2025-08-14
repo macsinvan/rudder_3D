@@ -1,8 +1,8 @@
 # stock/heel_cutter.py
 # ------------------------------------------------------------
 # Heel Cutter utilities for trimming tines/arms flush to a plane.
-# This version anchors the cutter’s INNER FACE on X = plane_x (default 0)
-# and extends the block away from that plane toward +X or –X.
+# This version anchors the cutterâ€™s INNER FACE on X = plane_x (default 0)
+# and extends the block away from that plane toward +X or â€"X.
 # ------------------------------------------------------------
 
 from typing import List, Dict, Tuple, Optional
@@ -12,6 +12,7 @@ import Part
 __all__ = [
     "add_post_half_box",
     "add_post_half_box_from_segments",
+    "apply_heel_cutter_workflow",
 ]
 
 """
@@ -24,7 +25,7 @@ Purpose:
     protrudes across that plane.
 
 Key behavior:
-    - side="negX": inner face at X=plane_x, box extends toward –X
+    - side="negX": inner face at X=plane_x, box extends toward â€"X
     - side="posX": inner face at X=plane_x, box extends toward +X
     - Z span covers [z_bottom, z_top] with oversize padding
     - Y span is symmetric about Y=0 with oversize padding
@@ -67,8 +68,8 @@ def add_post_half_box(doc,
 
         Box is created at origin with makeBox(x_len, y_len, z_len) (X length, Y width, Z height),
         then translated so that:
-          - side="negX": X-max face is at plane_x  (box from plane_x - x_len → plane_x)
-          - side="posX": X-min face is at plane_x  (box from plane_x → plane_x + x_len)
+          - side="negX": X-max face is at plane_x  (box from plane_x - x_len â†' plane_x)
+          - side="posX": X-min face is at plane_x  (box from plane_x â†' plane_x + x_len)
     """
     # Normalize Z
     z0 = float(min(z_bottom, z_top))
@@ -143,3 +144,22 @@ def add_post_half_box_from_segments(doc,
                              side=side, oversize=oversize,
                              plane_x=plane_x,
                              name=name)
+
+
+def apply_heel_cutter_workflow(doc, post_segments, summaries):
+    """
+    Extracted cutter workflow from stock2d.py - no behavior changes.
+    Keeps cutter object visible for development.
+    """
+    # â–¼ Add the visual halfâ€'box cutter AFTER the post segments exist
+    try:
+        _, cutter_obj = add_post_half_box_from_segments(
+            doc,
+            post_segments,
+            side="negX",          # positive X half (in front)
+            oversize=2.0,         # a little extra clearance
+            name="HeelCutterHalfBox"
+        )
+        summaries.append(f"HeelCutterHalfBox z[{cutter_obj.Shape.BoundBox.ZMin:.1f},{cutter_obj.Shape.BoundBox.ZMax:.1f}]")
+    except Exception as e:
+        print(f"  âš ï¸ HeelCutterHalfBox skipped: {e}")
