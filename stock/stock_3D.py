@@ -1,11 +1,12 @@
-# stock/stock2d.py
-# Main module for building rudder stock geometry from CSV data
+# stock/stock_3D.py
+# Main module for building rudder stock geometry from CSV data - Boat-Centric Version
 
 import os
 import math
 import FreeCAD as App
 import Part
 from FreeCAD import Vector
+from PySide2 import QtWidgets
 
 from stock.io import read_stock_csv_sectioned
 from stock.geom import radius_at as _radius_at_core, append_post_segment_from_row
@@ -17,20 +18,70 @@ from stock.taper import build_taper
 from stock.wedge_angled import build_wedge as build_wedge_angled
 from stock.heel_cutter import apply_heel_cutter_workflow
 
-VERSION = "1.2.8"
+# Configuration - Boat-Centric
+BOAT_NAME = "MackenSea"  # Single source of truth - change this for different boats
+VERSION = "1.3.0"
 
-# Debug control - set to True to make cutter visible and enable debug output
-DEBUG_HEEL_CUTTER = False
+# Derived paths - everything flows from boat name
+BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
+INPUT_FOLDER = f"{BOAT_FOLDER}/input"
+OUTPUT_FOLDER = f"{BOAT_FOLDER}/output/03_stock"
+
+# File specifications
+STOCK_CSV_FILE = f"{BOAT_NAME}_Stock.csv"
+STOCK_STEP_FILE = f"{BOAT_NAME}_Stock.step"
+
+
+def get_stock_csv_path():
+    """
+    Get stock CSV path using boat-centric logic:
+    1. Try organized location first
+    2. Fall back to file dialog if not found
+    """
+    organized_path = f"{INPUT_FOLDER}/{STOCK_CSV_FILE}"
+    
+    if os.path.exists(organized_path):
+        print(f"📁 Using organized stock file: {organized_path}")
+        return organized_path
+    else:
+        print(f"📁 {STOCK_CSV_FILE} not found in organized location")
+        print(f"   Expected: {organized_path}")
+        print(f"📁 Opening file dialog for manual selection...")
+        
+        # Fall back to file dialog
+        dlg = QtWidgets.QFileDialog()
+        dlg.setWindowTitle(f"Select {BOAT_NAME} Stock CSV")
+        dlg.setNameFilter("CSV files (*.csv)")
+        dlg.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+        
+        if dlg.exec_():
+            manual_path = dlg.selectedFiles()[0]
+            print(f"📁 User selected: {manual_path}")
+            return manual_path
+        else:
+            print("❌ No stock file selected. Aborting.")
+            return None
+
+
+def ensure_output_folder():
+    """Ensure output folder exists for this boat"""
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
 
 def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
-    print(f"\nBuilding build_stock_from_csv v{VERSION}")
+    print(f"\n⚓ Stock Build v{VERSION}")
+    print(f"🚤 Boat: {BOAT_NAME}")
+    print(f"📂 Boat folder: {BOAT_FOLDER}")
 
-    csv_path = os.path.join(os.path.dirname(__file__), 'stock_sample.csv')
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"CSV file not found: {csv_path}")
-    print(f"Reading CSV: {csv_path}")
+    # Get CSV file path
+    csv_path = get_stock_csv_path()
+    if not csv_path:
+        raise FileNotFoundError("No stock CSV file selected")
+    
+    # Ensure output folder exists
+    ensure_output_folder()
 
-    body = doc.addObject("Part::Feature", "RudderStock")
+    body = doc.addObject("Part::Feature", f"{BOAT_NAME}_RudderStock")
     compound_shapes = []
 
     # Track post segments for radius queries
@@ -120,7 +171,7 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
     # Apply smart heel cutting with visibility control
     compound_shapes = apply_heel_cutter_workflow(doc, post_segments, summaries, compound_shapes, 
                                                 post_shape_indices, non_post_shape_indices, 
-                                                debug_visible=DEBUG_HEEL_CUTTER)
+                                                debug_visible=False)
 
     if meta_info:
         print(f"Meta: {meta_info}")
@@ -133,6 +184,14 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
     body.Shape = compound
     doc.recompute()
 
+    # Export stock geometry to organized output folder
+    try:
+        step_path = f"{OUTPUT_FOLDER}/{STOCK_STEP_FILE}"
+        Part.export([body], step_path)
+        print(f"✅ Exported stock STEP: {step_path}")
+    except Exception as e:
+        print(f"❌ Stock STEP export failed: {e}")
+
     try:
         bbox = body.Shape.BoundBox
         print(f"Solids: {len(compound_shapes)}  "
@@ -141,5 +200,8 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
               f"Z[{bbox.ZMin:.1f},{bbox.ZMax:.1f}]")
     except Exception as e:
         print(f"Could not compute bbox summary: {e}")
+
+    print(f"⚓ {BOAT_NAME} stock geometry complete!")
+    print(f"📁 Next step: Use {step_path} for foil integration")
 
     return body
