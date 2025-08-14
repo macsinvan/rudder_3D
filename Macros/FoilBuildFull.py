@@ -1,20 +1,34 @@
 # Macros/FoilBuildFull.py
+"""
+Foil Build Full Pipeline
+Converts STEP outline profiles to 3D NACA foil via chord slicing and lofting.
+"""
 
 import sys, os
-# ─── ensure our packages are findable ─────────────────────────
+# Ensure our packages are findable
 project = os.path.expanduser("~/Rudder_Code")
-sys.path.insert(0, project)                           # so 'outline' package is found
+sys.path.insert(0, project)  # so 'outline' package is found
 sys.path.insert(0, os.path.join(project, "foil"))  # so 'rudderlib_foil' package is found
 
 from PySide2 import QtWidgets
 import FreeCAD as App, FreeCADGui as Gui, Part
 from FreeCAD import Vector
 from outline.geometry import slice_chords
-from rudderlib_foil.naca import naca4_coordinates  # proper import now that paths are set
+from rudderlib_foil.naca import naca4_coordinates
 
-# Single full-pipeline macro: outline → chords → NACA sections → loft
+# Constants
+VERSION = "1.0.0"
+SLICE_SPACING = 10.0  # mm between chord slices
+PLANE_SIZE = 1000  # mm for sectioning planes
+NACA_PROFILE = "0012"  # NACA 0012 (12% thick, symmetric)
+NACA_POINTS = 50  # number of points in airfoil section
 
 def run():
+    """
+    Single full-pipeline macro: outline → chords → NACA sections → loft
+    """
+    print(f"FoilBuildFull v{VERSION}")
+    
     # 1) STEP file selection
     dlg = QtWidgets.QFileDialog()
     dlg.setWindowTitle("Select RudderProfiles STEP")
@@ -39,10 +53,10 @@ def run():
     if len(subs) < 2:
         print("STEP must include outline and shrunk profile.")
         return
-    orig_wire   = Part.Wire(subs[0].Edges)
+    orig_wire = Part.Wire(subs[0].Edges)
     shrunk_wire = Part.Wire(subs[1].Edges)
 
-    # draw original & shrunk
+    # Draw original & shrunk wires
     for name, wire, color in [("Orig", orig_wire, (1.0, 0.6, 0.6)),
                               ("Shrunk", shrunk_wire, (1.0, 0.0, 0.0))]:
         feat = doc.addObject("Part::Feature", f"{name}_Wire")
@@ -53,9 +67,9 @@ def run():
     # 4) Slice chords via Part.section for exact outline intersections
     chords = []
     bb = shrunk_wire.BoundBox
-    levels = [bb.ZMin + i * 10.0 for i in range(int((bb.ZMax - bb.ZMin) / 10.0) + 1)]
+    levels = [bb.ZMin + i * SLICE_SPACING for i in range(int((bb.ZMax - bb.ZMin) / SLICE_SPACING) + 1)]
     for z in levels:
-        plane = Part.makePlane(1000, 1000, Vector(0, 0, z), Vector(0, 0, 1))
+        plane = Part.makePlane(PLANE_SIZE, PLANE_SIZE, Vector(0, 0, z), Vector(0, 0, 1))
         section = shrunk_wire.section(plane)
         verts = section.Vertexes
         if len(verts) >= 2:
@@ -66,14 +80,14 @@ def run():
     # 5) Generate NACA sections
     sections = []
     for idx, ((x1, z1), (x2, z2)) in enumerate(chords):
-        p_te = Vector(x2, 0.0, z2)  # leading edge
-        p_le = Vector(x1, 0.0, z1)  # trailing edge
+        p_le = Vector(x1, 0.0, z1)  # leading edge (minimum x)
+        p_te = Vector(x2, 0.0, z2)  # trailing edge (maximum x)
         vec = p_te.sub(p_le)
         length = vec.Length
         ux = vec.normalize()
         uy = ux.cross(Vector(0.0, 0.0, 1.0)).normalize()
 
-        coords = naca4_coordinates(length, float("0012"[2:]), num_pts=50)
+        coords = naca4_coordinates(length, float(NACA_PROFILE[2:]), num_pts=NACA_POINTS)
         pts3 = [p_le + ux * x + uy * z for x, z in coords]
         wire = Part.makePolygon(pts3)
         feat = doc.addObject("Part::Feature", f"Section_{idx}")
