@@ -122,17 +122,24 @@ def add_post_half_box_from_segments(doc,
                              name=name)
 
 
-def apply_heel_cutter_workflow(doc, post_segments, summaries):
+def apply_heel_cutter_workflow(doc, post_segments, summaries, compound_shapes, post_shape_indices, non_post_shape_indices):
     """
-    Create heel cutter and add to summaries.
-    Cutter remains visible for development and debugging.
+    Create smart heel cutter and apply cuts to non-post shapes only.
+    Returns modified compound_shapes with heel cuts applied.
 
     Args:
         doc: FreeCAD document
         post_segments: List of post segments for sizing
         summaries: List to append summary info to
+        compound_shapes: List of shapes to potentially cut
+        post_shape_indices: Indices of shapes that are post components
+        non_post_shape_indices: Indices of shapes that can be cut
+
+    Returns:
+        List of shapes with heel cuts applied
     """
     try:
+        # Create the basic cutter
         _, cutter_obj = add_post_half_box_from_segments(
             doc,
             post_segments,
@@ -140,6 +147,54 @@ def apply_heel_cutter_workflow(doc, post_segments, summaries):
             oversize=2.0,
             name="HeelCutterHalfBox"
         )
-        summaries.append(f"HeelCutterHalfBox z[{cutter_obj.Shape.BoundBox.ZMin:.1f},{cutter_obj.Shape.BoundBox.ZMax:.1f}]")
+        
+        # Separate post shapes from non-post shapes using tracked indices
+        post_shapes = [compound_shapes[i] for i in post_shape_indices]
+        non_post_shapes = [compound_shapes[i] for i in non_post_shape_indices]
+        
+        print(f"CUTTING: Found {len(post_shapes)} post shapes, {len(non_post_shapes)} non-post shapes")
+        
+        modified_shapes = [None] * len(compound_shapes)  # Preserve original order
+        
+        if post_shapes and non_post_shapes:
+            # Create compound of post shapes
+            post_compound = Part.makeCompound(post_shapes)
+            
+            # Create smart cutter by subtracting post from basic cutter
+            try:
+                smart_cutter = cutter_obj.Shape.cut(post_compound)
+                print(f"CUTTING: Smart cutter created successfully")
+                
+                # Apply smart cutter to non-post shapes only
+                cut_count = 0
+                for i, shape_idx in enumerate(non_post_shape_indices):
+                    try:
+                        original_shape = compound_shapes[shape_idx]
+                        cut_shape = original_shape.cut(smart_cutter)
+                        modified_shapes[shape_idx] = cut_shape
+                        cut_count += 1
+                    except Exception as e:
+                        print(f"CUTTING: Failed to cut shape {shape_idx}: {e}")
+                        modified_shapes[shape_idx] = original_shape
+                
+                # Keep post shapes unmodified in their original positions
+                for shape_idx in post_shape_indices:
+                    modified_shapes[shape_idx] = compound_shapes[shape_idx]
+                
+                print(f"CUTTING: Successfully cut {cut_count}/{len(non_post_shapes)} non-post shapes")
+                summaries.append(f"HeelCutterHalfBox z[{cutter_obj.Shape.BoundBox.ZMin:.1f},{cutter_obj.Shape.BoundBox.ZMax:.1f}] - Smart cut applied to {cut_count} shapes")
+                
+            except Exception as e:
+                print(f"CUTTING: Smart cutting failed: {e}, using original shapes")
+                modified_shapes = compound_shapes
+                summaries.append(f"HeelCutterHalfBox z[{cutter_obj.Shape.BoundBox.ZMin:.1f},{cutter_obj.Shape.BoundBox.ZMax:.1f}] - Visual only")
+        else:
+            # No smart cutting needed
+            modified_shapes = compound_shapes
+            summaries.append(f"HeelCutterHalfBox z[{cutter_obj.Shape.BoundBox.ZMin:.1f},{cutter_obj.Shape.BoundBox.ZMax:.1f}] - Visual only")
+            
+        return modified_shapes
+        
     except Exception as e:
-        print(f"  Warning: HeelCutterHalfBox skipped: {e}")
+        print(f"CUTTING: HeelCutterHalfBox skipped: {e}")
+        return compound_shapes

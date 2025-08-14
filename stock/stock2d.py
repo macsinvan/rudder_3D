@@ -47,6 +47,10 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
     rows, meta_info = read_stock_csv_sectioned(csv_path)
     summaries = []
 
+    # Track which shapes belong to post vs non-post
+    post_shape_indices = []
+    non_post_shape_indices = []
+
     for row_dict in rows:
         shape_type = (row_dict.get('type') or '').strip().lower()
         if not shape_type:
@@ -56,22 +60,37 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                 shape_type = 'wedge'
 
         try:
+            # Track compound_shapes length before adding new shapes
+            shapes_before = len(compound_shapes)
+
             if shape_type == 'cylinder':
                 parts, summary = build_cylinder(row_dict)
                 compound_shapes.extend(parts)
                 summaries.append(summary)
+                # Mark these as post shapes
+                shapes_after = len(compound_shapes)
+                new_indices = list(range(shapes_before, shapes_after))
+                post_shape_indices.extend(new_indices)
                 append_post_segment_from_row(post_segments, row_dict)
 
             elif shape_type == 'taper':
                 parts, summary = build_taper(row_dict)
                 compound_shapes.extend(parts)
                 summaries.append(summary)
+                # Mark these as post shapes
+                shapes_after = len(compound_shapes)
+                new_indices = list(range(shapes_before, shapes_after))
+                post_shape_indices.extend(new_indices)
                 append_post_segment_from_row(post_segments, row_dict)
 
             elif shape_type == 'plate':
                 plate_parts, plate_summary = build_plate(row_dict, _radius_at)
                 compound_shapes.extend(plate_parts)
                 summaries.append(plate_summary)
+                # Mark these as non-post shapes
+                shapes_after = len(compound_shapes)
+                new_indices = list(range(shapes_before, shapes_after))
+                non_post_shape_indices.extend(new_indices)
 
             elif shape_type == 'wedge':
                 try:
@@ -84,6 +103,10 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                     wedge_parts, wedge_summary = build_wedge_angled(row_dict, _radius_at)
                 compound_shapes.extend(wedge_parts)
                 summaries.append(wedge_summary)
+                # Mark these as non-post shapes
+                shapes_after = len(compound_shapes)
+                new_indices = list(range(shapes_before, shapes_after))
+                non_post_shape_indices.extend(new_indices)
 
             else:
                 print(f"  Unknown type in row: {row_dict}")
@@ -91,7 +114,8 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
         except Exception as e:
             print(f"  Error parsing row {row_dict} -> {e}")
 
-    apply_heel_cutter_workflow(doc, post_segments, summaries)
+    # Apply smart heel cutting with tracked indices
+    compound_shapes = apply_heel_cutter_workflow(doc, post_segments, summaries, compound_shapes, post_shape_indices, non_post_shape_indices)
 
     if meta_info:
         print(f"Meta: {meta_info}")
