@@ -1,5 +1,5 @@
 # stock/stock2d.py
-# Working after refactoring plate out 5.13pm
+# Main module for building rudder stock geometry from CSV data
 
 import os
 import math
@@ -54,8 +54,6 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                 shape_type = 'plate'
             elif 'wedge' in row_dict:
                 shape_type = 'wedge'
-
-        label = row_dict.get('label', '')
 
         try:
             if shape_type == 'cylinder':

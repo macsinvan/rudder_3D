@@ -1,9 +1,5 @@
 # stock/heel_cutter.py
-# ------------------------------------------------------------
-# Heel Cutter utilities for trimming tines/arms flush to a plane.
-# This version anchors the cutterâ€™s INNER FACE on X = plane_x (default 0)
-# and extends the block away from that plane toward +X or â€"X.
-# ------------------------------------------------------------
+# Heel cutter utilities for trimming tines/arms flush to a cutting plane
 
 from typing import List, Dict, Tuple, Optional
 from FreeCAD import Vector
@@ -11,28 +7,9 @@ import Part
 
 __all__ = [
     "add_post_half_box",
-    "add_post_half_box_from_segments",
+    "add_post_half_box_from_segments", 
     "apply_heel_cutter_workflow",
 ]
-
-"""
-Heel Cutter Module (plane-anchored)
------------------------------------
-
-Purpose:
-    Build a rectangular cutter whose inner face lies exactly on a given
-    plane X = plane_x (default 0). Use it to trim any geometry that
-    protrudes across that plane.
-
-Key behavior:
-    - side="negX": inner face at X=plane_x, box extends toward â€"X
-    - side="posX": inner face at X=plane_x, box extends toward +X
-    - Z span covers [z_bottom, z_top] with oversize padding
-    - Y span is symmetric about Y=0 with oversize padding
-
-Returns:
-    (Part.Shape, Part::Feature document object)
-"""
 
 
 def add_post_half_box(doc,
@@ -51,32 +28,25 @@ def add_post_half_box(doc,
     Create a rectangular cutter with its inner face lying on X = plane_x.
 
     Args:
-        doc: FreeCAD document.
-        z_bottom, z_top: Z extents (mm). Order does not matter.
-        r_bottom, r_top: Ignored (kept for API compatibility).
-        side: "negX" (extend to -X) or "posX" (extend to +X).
-        oversize: padding (mm) applied to Z and Y spans.
-        plane_x: X position of the inner face (default 0.0).
-        y_clear: overrides computed Y length if provided.
-        x_depth: explicit depth away from the plane; otherwise auto.
-        name: object name.
+        doc: FreeCAD document
+        z_bottom, z_top: Z extents (mm), order does not matter
+        r_bottom, r_top: Ignored (kept for API compatibility)
+        side: "negX" (extend to -X) or "posX" (extend to +X)
+        oversize: padding (mm) applied to Z and Y spans
+        plane_x: X position of the inner face (default 0.0)
+        y_clear: overrides computed Y length if provided
+        x_depth: explicit depth away from the plane; otherwise auto
+        name: object name
 
-    Geometry:
-        - z_len = (z_top - z_bottom) + 2*oversize
-        - y_len = y_clear or (40.0 + 2*oversize)   # widen as needed
-        - x_len = x_depth or (80.0 + 2*oversize)   # depth toward chosen side
-
-        Box is created at origin with makeBox(x_len, y_len, z_len) (X length, Y width, Z height),
-        then translated so that:
-          - side="negX": X-max face is at plane_x  (box from plane_x - x_len â†' plane_x)
-          - side="posX": X-min face is at plane_x  (box from plane_x â†' plane_x + x_len)
+    Returns:
+        (Part.Shape, FreeCAD object) tuple
     """
-    # Normalize Z
+    # Normalize Z extents
     z0 = float(min(z_bottom, z_top))
     z1 = float(max(z_bottom, z_top))
     pad = float(oversize if oversize is not None else 0.0)
 
-    # Dimensions
+    # Calculate dimensions
     z_len = (z1 - z0) + 2.0 * pad
     if z_len <= 0:
         raise ValueError("Computed z_len must be positive.")
@@ -89,13 +59,11 @@ def add_post_half_box(doc,
     # Build box at origin
     box = Part.makeBox(x_len, y_len, z_len)
 
-    # Place so inner face is exactly at X = plane_x
+    # Position so inner face is exactly at X = plane_x
     if side == "negX":
-        # X-max at plane_x
-        base_x = float(plane_x) - x_len
+        base_x = float(plane_x) - x_len  # X-max at plane_x
     elif side == "posX":
-        # X-min at plane_x
-        base_x = float(plane_x)
+        base_x = float(plane_x)          # X-min at plane_x
     else:
         raise ValueError("side must be 'negX' or 'posX'")
 
@@ -106,7 +74,7 @@ def add_post_half_box(doc,
     cutter_obj.Shape = box
     cutter_obj.Placement.Base = base
 
-    # Debug appearance
+    # Set visual appearance
     try:
         v = cutter_obj.ViewObject
         v.Transparency = 70
@@ -129,8 +97,16 @@ def add_post_half_box_from_segments(doc,
     """
     Convenience wrapper: derive Z limits from segments and build a plane-anchored box.
 
-    `post_segments` entries must include at least:
-        "z_bot", "z_top"  (radii fields are ignored by this plane-anchored cutter)
+    Args:
+        doc: FreeCAD document
+        post_segments: List of segments with "z_bot", "z_top" keys
+        side: "negX" or "posX" 
+        oversize: padding amount
+        plane_x: cutting plane X position
+        name: object name
+
+    Returns:
+        (Part.Shape, FreeCAD object) tuple
     """
     if not post_segments:
         raise ValueError("No post segments available to size cutter box.")
@@ -148,18 +124,22 @@ def add_post_half_box_from_segments(doc,
 
 def apply_heel_cutter_workflow(doc, post_segments, summaries):
     """
-    Extracted cutter workflow from stock2d.py - no behavior changes.
-    Keeps cutter object visible for development.
+    Create heel cutter and add to summaries.
+    Cutter remains visible for development and debugging.
+
+    Args:
+        doc: FreeCAD document
+        post_segments: List of post segments for sizing
+        summaries: List to append summary info to
     """
-    # â–¼ Add the visual halfâ€'box cutter AFTER the post segments exist
     try:
         _, cutter_obj = add_post_half_box_from_segments(
             doc,
             post_segments,
-            side="negX",          # positive X half (in front)
-            oversize=2.0,         # a little extra clearance
+            side="negX",
+            oversize=2.0,
             name="HeelCutterHalfBox"
         )
         summaries.append(f"HeelCutterHalfBox z[{cutter_obj.Shape.BoundBox.ZMin:.1f},{cutter_obj.Shape.BoundBox.ZMax:.1f}]")
     except Exception as e:
-        print(f"  âš ï¸ HeelCutterHalfBox skipped: {e}")
+        print(f"  Warning: HeelCutterHalfBox skipped: {e}")
