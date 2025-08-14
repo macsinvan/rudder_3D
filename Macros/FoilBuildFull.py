@@ -16,18 +16,40 @@ from FreeCAD import Vector
 from outline.geometry import slice_chords
 from rudderlib_foil.naca import naca4_coordinates
 
-# Constants
-VERSION = "1.0.0"
-SLICE_SPACING = 10.0  # mm between chord slices
-PLANE_SIZE = 1000  # mm for sectioning planes
-NACA_PROFILE = "0012"  # NACA 0012 (12% thick, symmetric)
-NACA_POINTS = 50  # number of points in airfoil section
+# Configuration - Easily adjustable parameters
+CONFIG = {
+    # NACA Profile Settings
+    'naca_profile': '0012',      # NACA 4-digit code (0012 = 12% thick, symmetric)
+    'naca_points': 50,           # Number of points in airfoil cross-section
+    
+    # Slicing Settings  
+    'slice_spacing': 10.0,       # mm between chord slices (smaller = more sections)
+    'min_chord_length': 1.0,     # mm minimum chord length to include
+    
+    # Geometry Settings
+    'plane_size': 1000,          # mm size of sectioning planes
+    'min_wire_size': 1.0,        # mm minimum wire diagonal for validation
+    
+    # Visual Settings
+    'section_color': (0.0, 0.0, 1.0),      # Blue for airfoil sections
+    'orig_wire_color': (1.0, 0.6, 0.6),    # Light red for original outline
+    'shrunk_wire_color': (1.0, 0.0, 0.0),  # Red for shrunk outline  
+    'loft_color': (0.6, 0.8, 1.0),         # Light blue for final loft
+}
+
+# Constants (derived from config)
+VERSION = "1.0.1"
+SLICE_SPACING = CONFIG['slice_spacing']
+PLANE_SIZE = CONFIG['plane_size'] 
+NACA_PROFILE = CONFIG['naca_profile']
+NACA_POINTS = CONFIG['naca_points']
 
 def run():
     """
     Single full-pipeline macro: outline → chords → NACA sections → loft
     """
     print(f"FoilBuildFull v{VERSION}")
+    print(f"Config: NACA {CONFIG['naca_profile']}, {CONFIG['slice_spacing']}mm spacing, {CONFIG['naca_points']} pts/section")
     
     # 1) STEP file selection
     dlg = QtWidgets.QFileDialog()
@@ -64,10 +86,10 @@ def run():
         shrunk_wire = Part.Wire(subs[1].Edges)
         
         # Validate wires are reasonable
-        if orig_wire.BoundBox.DiagonalLength < 1.0:
+        if orig_wire.BoundBox.DiagonalLength < CONFIG['min_wire_size']:
             print("❌ Original wire too small - check STEP file units.")
             return
-        if shrunk_wire.BoundBox.DiagonalLength < 1.0:
+        if shrunk_wire.BoundBox.DiagonalLength < CONFIG['min_wire_size']:
             print("❌ Shrunk wire too small - check STEP file units.")
             return
             
@@ -78,8 +100,8 @@ def run():
         return
 
     # Draw original & shrunk wires
-    for name, wire, color in [("Orig", orig_wire, (1.0, 0.6, 0.6)),
-                              ("Shrunk", shrunk_wire, (1.0, 0.0, 0.0))]:
+    for name, wire, color in [("Orig", orig_wire, CONFIG['orig_wire_color']),
+                              ("Shrunk", shrunk_wire, CONFIG['shrunk_wire_color'])]:
         feat = doc.addObject("Part::Feature", f"{name}_Wire")
         feat.Shape = wire
         feat.ViewObject.ShapeColor = color
@@ -103,7 +125,7 @@ def run():
         if len(verts) >= 2:
             pts = sorted([v.Point for v in verts], key=lambda p: p.x)
             chord_length = pts[-1].x - pts[0].x
-            if chord_length > 1.0:  # Minimum reasonable chord length
+            if chord_length > CONFIG['min_chord_length']:  # Configurable minimum chord length
                 chords.append(((pts[0].x, z), (pts[-1].x, z)))
     
     if not chords:
@@ -121,12 +143,12 @@ def run():
         ux = vec.normalize()
         uy = ux.cross(Vector(0.0, 0.0, 1.0)).normalize()
 
-        coords = naca4_coordinates(length, float(NACA_PROFILE[2:]), num_pts=NACA_POINTS)
+        coords = naca4_coordinates(length, float(CONFIG['naca_profile'][2:]), num_pts=CONFIG['naca_points'])
         pts3 = [p_le + ux * x + uy * z for x, z in coords]
         wire = Part.makePolygon(pts3)
         feat = doc.addObject("Part::Feature", f"Section_{idx}")
         feat.Shape = wire
-        feat.ViewObject.ShapeColor = (0.0, 0.0, 1.0)
+        feat.ViewObject.ShapeColor = CONFIG['section_color']
         feat.ViewObject.LineWidth = 1
         sections.append(feat)
     print(f"Built {len(sections)} sections.")
@@ -137,7 +159,7 @@ def run():
         loft = Part.makeLoft(shapes, solid=False, ruled=False)
         lf = doc.addObject("Part::Feature", "Foil_Loft")
         lf.Shape = loft
-        lf.ViewObject.ShapeColor = (0.6, 0.8, 1.0)
+        lf.ViewObject.ShapeColor = CONFIG['loft_color']
         lf.ViewObject.DisplayMode = "Shaded"
         print("✅ Loft created.")
     except Exception as e:
