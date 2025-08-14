@@ -24,7 +24,7 @@ CONFIG = {
     
     # Slicing Settings  
     'slice_spacing': 10.0,       # mm default spacing between chord slices
-    'adaptive_slicing': False,   # Disable adaptive slicing temporarily for debugging
+    'adaptive_slicing': False,   # Disable broken adaptive slicing - revert to working uniform
     'fine_spacing': 5.0,         # mm spacing in high-curvature areas
     'coarse_spacing': 20.0,      # mm spacing in straight areas
     'curvature_threshold': 0.01, # Curvature threshold for fine vs coarse spacing
@@ -63,52 +63,55 @@ def calculate_adaptive_levels(wire, config):
         num_levels = int(total_height / config['slice_spacing']) + 1
         return [bb.ZMin + i * config['slice_spacing'] for i in range(num_levels)]
     
-    # Sample wire at regular intervals to analyze curvature
-    sample_spacing = total_height / 100  # 100 sample points
-    sample_levels = [bb.ZMin + i * sample_spacing for i in range(101)]
-    
-    curvatures = []
-    for z in sample_levels:
-        # Create a small plane to intersect wire
-        plane = Part.makePlane(config['plane_size'], config['plane_size'], 
-                              Vector(0, 0, z), Vector(0, 0, 1))
-        try:
-            section = wire.section(plane)
-            if len(section.Vertexes) >= 2:
-                # Simple curvature estimate: change in chord length
-                pts = sorted([v.Point for v in section.Vertexes], key=lambda p: p.x)
-                chord_length = pts[-1].x - pts[0].x
-                curvatures.append(chord_length)
-            else:
-                curvatures.append(0)
-        except:
-            curvatures.append(0)
-    
-    # Calculate local curvature (rate of change of chord length)
-    local_curvatures = []
-    for i in range(len(curvatures)):
-        if i == 0 or i == len(curvatures) - 1:
-            local_curvatures.append(0)
-        else:
-            # Second derivative approximation
-            curvature = abs(curvatures[i+1] - 2*curvatures[i] + curvatures[i-1])
-            local_curvatures.append(curvature)
-    
-    # Generate adaptive levels
-    levels = [bb.ZMin]  # Always include start
+    # Improved adaptive algorithm with minimum spacing enforcement
+    levels = []
     current_z = bb.ZMin
     
+    # Always include start
+    levels.append(current_z)
+    
+    # Generate levels with adaptive spacing but enforce minimum distance
+    min_spacing = config['fine_spacing']  # Never go below fine spacing
+    max_spacing = config['coarse_spacing']
+    
     while current_z < bb.ZMax and len(levels) < config['max_sections']:
-        # Find curvature at current position
-        sample_idx = min(int((current_z - bb.ZMin) / sample_spacing), len(local_curvatures) - 1)
-        curvature = local_curvatures[sample_idx] if sample_idx < len(local_curvatures) else 0
+        # Sample local geometry to estimate spacing needed
+        try:
+            # Create planes at small intervals to check local variation
+            test_spacing = min_spacing * 2  # Test spacing
+            if current_z + test_spacing < bb.ZMax:
+                plane1 = Part.makePlane(config['plane_size'], config['plane_size'], 
+                                       Vector(0, 0, current_z), Vector(0, 0, 1))
+                plane2 = Part.makePlane(config['plane_size'], config['plane_size'], 
+                                       Vector(0, 0, current_z + test_spacing), Vector(0, 0, 1))
+                
+                section1 = wire.section(plane1)
+                section2 = wire.section(plane2)
+                
+                # Check if chord length changes significantly
+                if (len(section1.Vertexes) >= 2 and len(section2.Vertexes) >= 2):
+                    pts1 = sorted([v.Point for v in section1.Vertexes], key=lambda p: p.x)
+                    pts2 = sorted([v.Point for v in section2.Vertexes], key=lambda p: p.x)
+                    
+                    chord1 = pts1[-1].x - pts1[0].x
+                    chord2 = pts2[-1].x - pts2[0].x
+                    
+                    # If chord changes rapidly, use fine spacing
+                    chord_change = abs(chord2 - chord1) / chord1 if chord1 > 0 else 0
+                    
+                    if chord_change > config['curvature_threshold']:
+                        spacing = min_spacing
+                    else:
+                        spacing = max_spacing
+                else:
+                    spacing = config['slice_spacing']  # Default spacing if no intersection
+            else:
+                spacing = min_spacing  # Near end, use fine spacing
+                
+        except:
+            spacing = config['slice_spacing']  # Fallback to default
         
-        # Choose spacing based on curvature
-        if curvature > config['curvature_threshold']:
-            spacing = config['fine_spacing']
-        else:
-            spacing = config['coarse_spacing']
-        
+        # Advance by chosen spacing, but don't exceed max Z
         current_z += spacing
         if current_z < bb.ZMax:
             levels.append(current_z)
@@ -117,18 +120,26 @@ def calculate_adaptive_levels(wire, config):
     if levels[-1] != bb.ZMax:
         levels.append(bb.ZMax)
     
-    # Ensure minimum sections
+    # Ensure minimum sections by adding intermediate levels if needed
     while len(levels) < config['min_sections'] and len(levels) > 1:
-        # Insert levels between existing ones
         new_levels = [levels[0]]
         for i in range(len(levels) - 1):
             new_levels.append(levels[i])
-            mid_z = (levels[i] + levels[i+1]) / 2
-            new_levels.append(mid_z)
+            # Only add intermediate if gap is large enough
+            gap = levels[i+1] - levels[i]
+            if gap > min_spacing * 2:
+                mid_z = (levels[i] + levels[i+1]) / 2
+                new_levels.append(mid_z)
         new_levels.append(levels[-1])
         levels = new_levels
     
-    return sorted(levels)
+    # Ensure no levels are too close together (minimum spacing enforcement)
+    filtered_levels = [levels[0]]
+    for level in levels[1:]:
+        if level - filtered_levels[-1] >= min_spacing * 0.9:  # Small tolerance
+            filtered_levels.append(level)
+    
+    return sorted(filtered_levels)
 
 def run():
     """
