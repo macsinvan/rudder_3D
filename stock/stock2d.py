@@ -19,6 +19,9 @@ from stock.heel_cutter import apply_heel_cutter_workflow
 
 VERSION = "1.2.8"
 
+# Debug control - set to True to make cutter visible and enable debug output
+DEBUG_HEEL_CUTTER = False
+
 def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
     print(f"\nBuilding build_stock_from_csv v{VERSION}")
 
@@ -114,8 +117,10 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
         except Exception as e:
             print(f"  Error parsing row {row_dict} -> {e}")
 
-    # Apply smart heel cutting with tracked indices
-    compound_shapes = apply_heel_cutter_workflow(doc, post_segments, summaries, compound_shapes, post_shape_indices, non_post_shape_indices)
+    # Apply smart heel cutting with visibility control
+    compound_shapes = apply_heel_cutter_workflow(doc, post_segments, summaries, compound_shapes, 
+                                                post_shape_indices, non_post_shape_indices, 
+                                                debug_visible=DEBUG_HEEL_CUTTER)
 
     if meta_info:
         print(f"Meta: {meta_info}")

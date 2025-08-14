@@ -23,7 +23,8 @@ def add_post_half_box(doc,
                       plane_x: float = 0.0,
                       y_clear: Optional[float] = None,
                       x_depth: Optional[float] = None,
-                      name: str = "HeelCutterHalfBox") -> Tuple[Part.Shape, object]:
+                      name: str = "HeelCutterHalfBox",
+                      visible: bool = False) -> Tuple[Part.Shape, object]:
     """
     Create a rectangular cutter with its inner face lying on X = plane_x.
 
@@ -37,6 +38,7 @@ def add_post_half_box(doc,
         y_clear: overrides computed Y length if provided
         x_depth: explicit depth away from the plane; otherwise auto
         name: object name
+        visible: whether to make the cutter visible (default False)
 
     Returns:
         (Part.Shape, FreeCAD object) tuple
@@ -74,12 +76,14 @@ def add_post_half_box(doc,
     cutter_obj.Shape = box
     cutter_obj.Placement.Base = base
 
-    # Set visual appearance
+    # Set visual appearance and visibility
     try:
         v = cutter_obj.ViewObject
-        v.Transparency = 70
-        v.LineColor = (0.0, 1.0, 0.0)   # green edges
-        v.ShapeColor = (1.0, 1.0, 0.6)  # pale yellow
+        v.Visibility = visible
+        if visible:
+            v.Transparency = 70
+            v.LineColor = (0.0, 1.0, 0.0)   # green edges
+            v.ShapeColor = (1.0, 1.0, 0.6)  # pale yellow
     except Exception:
         pass
 
@@ -93,7 +97,8 @@ def add_post_half_box_from_segments(doc,
                                     side: str = "negX",
                                     oversize: float = 1.0,
                                     plane_x: float = 0.0,
-                                    name: str = "HeelCutterHalfBox") -> Tuple[Part.Shape, object]:
+                                    name: str = "HeelCutterHalfBox",
+                                    visible: bool = False) -> Tuple[Part.Shape, object]:
     """
     Convenience wrapper: derive Z limits from segments and build a plane-anchored box.
 
@@ -104,6 +109,7 @@ def add_post_half_box_from_segments(doc,
         oversize: padding amount
         plane_x: cutting plane X position
         name: object name
+        visible: whether to make the cutter visible (default False)
 
     Returns:
         (Part.Shape, FreeCAD object) tuple
@@ -119,10 +125,10 @@ def add_post_half_box_from_segments(doc,
                              r_bottom=0.0, r_top=0.0,
                              side=side, oversize=oversize,
                              plane_x=plane_x,
-                             name=name)
+                             name=name, visible=visible)
 
 
-def apply_heel_cutter_workflow(doc, post_segments, summaries, compound_shapes, post_shape_indices, non_post_shape_indices):
+def apply_heel_cutter_workflow(doc, post_segments, summaries, compound_shapes, post_shape_indices, non_post_shape_indices, debug_visible=False):
     """
     Create smart heel cutter and apply cuts to non-post shapes only.
     Returns modified compound_shapes with heel cuts applied.
@@ -134,6 +140,7 @@ def apply_heel_cutter_workflow(doc, post_segments, summaries, compound_shapes, p
         compound_shapes: List of shapes to potentially cut
         post_shape_indices: Indices of shapes that are post components
         non_post_shape_indices: Indices of shapes that can be cut
+        debug_visible: whether to make the cutter visible for debugging (default False)
 
     Returns:
         List of shapes with heel cuts applied
@@ -145,14 +152,16 @@ def apply_heel_cutter_workflow(doc, post_segments, summaries, compound_shapes, p
             post_segments,
             side="negX",
             oversize=2.0,
-            name="HeelCutterHalfBox"
+            name="HeelCutterHalfBox",
+            visible=debug_visible
         )
         
         # Separate post shapes from non-post shapes using tracked indices
         post_shapes = [compound_shapes[i] for i in post_shape_indices]
         non_post_shapes = [compound_shapes[i] for i in non_post_shape_indices]
         
-        print(f"CUTTING: Found {len(post_shapes)} post shapes, {len(non_post_shapes)} non-post shapes")
+        if debug_visible:
+            print(f"CUTTING: Found {len(post_shapes)} post shapes, {len(non_post_shapes)} non-post shapes")
         
         modified_shapes = [None] * len(compound_shapes)  # Preserve original order
         
@@ -163,7 +172,8 @@ def apply_heel_cutter_workflow(doc, post_segments, summaries, compound_shapes, p
             # Create smart cutter by subtracting post from basic cutter
             try:
                 smart_cutter = cutter_obj.Shape.cut(post_compound)
-                print(f"CUTTING: Smart cutter created successfully")
+                if debug_visible:
+                    print(f"CUTTING: Smart cutter created successfully")
                 
                 # Apply smart cutter to non-post shapes only
                 cut_count = 0
@@ -174,18 +184,23 @@ def apply_heel_cutter_workflow(doc, post_segments, summaries, compound_shapes, p
                         modified_shapes[shape_idx] = cut_shape
                         cut_count += 1
                     except Exception as e:
-                        print(f"CUTTING: Failed to cut shape {shape_idx}: {e}")
+                        if debug_visible:
+                            print(f"CUTTING: Failed to cut shape {shape_idx}: {e}")
                         modified_shapes[shape_idx] = original_shape
                 
                 # Keep post shapes unmodified in their original positions
                 for shape_idx in post_shape_indices:
                     modified_shapes[shape_idx] = compound_shapes[shape_idx]
                 
-                print(f"CUTTING: Successfully cut {cut_count}/{len(non_post_shapes)} non-post shapes")
-                summaries.append(f"HeelCutterHalfBox z[{cutter_obj.Shape.BoundBox.ZMin:.1f},{cutter_obj.Shape.BoundBox.ZMax:.1f}] - Smart cut applied to {cut_count} shapes")
+                if debug_visible:
+                    print(f"CUTTING: Successfully cut {cut_count}/{len(non_post_shapes)} non-post shapes")
+                
+                visibility_note = " (visible)" if debug_visible else ""
+                summaries.append(f"HeelCutterHalfBox z[{cutter_obj.Shape.BoundBox.ZMin:.1f},{cutter_obj.Shape.BoundBox.ZMax:.1f}] - Smart cut applied to {cut_count} shapes{visibility_note}")
                 
             except Exception as e:
-                print(f"CUTTING: Smart cutting failed: {e}, using original shapes")
+                if debug_visible:
+                    print(f"CUTTING: Smart cutting failed: {e}, using original shapes")
                 modified_shapes = compound_shapes
                 summaries.append(f"HeelCutterHalfBox z[{cutter_obj.Shape.BoundBox.ZMin:.1f},{cutter_obj.Shape.BoundBox.ZMax:.1f}] - Visual only")
         else:
@@ -196,5 +211,6 @@ def apply_heel_cutter_workflow(doc, post_segments, summaries, compound_shapes, p
         return modified_shapes
         
     except Exception as e:
-        print(f"CUTTING: HeelCutterHalfBox skipped: {e}")
+        if debug_visible:
+            print(f"CUTTING: HeelCutterHalfBox skipped: {e}")
         return compound_shapes
