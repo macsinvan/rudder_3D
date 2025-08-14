@@ -1,20 +1,28 @@
-# Macros/FoilBuildFull.py
+# foil/foil_3D.py
 """
-Foil Build Full Pipeline
+Foil 3D Pipeline - Boat-Centric Version
 Converts STEP outline profiles to 3D NACA foil via chord slicing and lofting.
 """
 
 import sys, os
-# Ensure our packages are findable
-project = os.path.expanduser("~/Rudder_Code")
-sys.path.insert(0, project)  # so 'outline' package is found
-sys.path.insert(0, os.path.join(project, "foil"))  # so 'rudderlib_foil' package is found
-
 from PySide2 import QtWidgets
 import FreeCAD as App, FreeCADGui as Gui, Part
 from FreeCAD import Vector
 from outline.geometry import slice_chords
 from rudderlib_foil.naca import naca4_coordinates
+
+# Configuration - Boat-Centric
+BOAT_NAME = "MackenSea"  # Single source of truth - change this for different boats
+VERSION = "1.1.1"
+
+# Derived paths - everything flows from boat name
+BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
+INPUT_FOLDER = f"{BOAT_FOLDER}/output/01_outline"  # Takes input from outline output
+OUTPUT_FOLDER = f"{BOAT_FOLDER}/output/02_foil"
+
+# File specifications
+PROFILES_STEP_FILE = f"{BOAT_NAME}_Profiles.step"  # Input from outline step
+FOIL_STEP_FILE = f"{BOAT_NAME}_Foil.step"          # Output for integration step
 
 # Configuration - Simplified and Essential Parameters Only
 CONFIG = {
@@ -41,10 +49,46 @@ CONFIG = {
 }
 
 # Constants (derived from config)
-VERSION = "1.1.0"
 SLICE_SPACING = CONFIG['slice_spacing']
 PLANE_SIZE = CONFIG['plane_size'] 
 NACA_POINTS = CONFIG['naca_points']
+
+
+def get_profiles_step_path():
+    """
+    Get profiles STEP path using boat-centric logic:
+    1. Try organized location first (from outline output)
+    2. Fall back to file dialog if not found
+    """
+    organized_path = f"{INPUT_FOLDER}/{PROFILES_STEP_FILE}"
+    
+    if os.path.exists(organized_path):
+        print(f"📁 Using organized profiles file: {organized_path}")
+        return organized_path
+    else:
+        print(f"📁 {PROFILES_STEP_FILE} not found in organized location")
+        print(f"   Expected: {organized_path}")
+        print(f"📁 Opening file dialog for manual selection...")
+        
+        # Fall back to file dialog
+        dlg = QtWidgets.QFileDialog()
+        dlg.setWindowTitle(f"Select {BOAT_NAME} Profiles STEP")
+        dlg.setNameFilter("STEP (*.step *.stp)")
+        dlg.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+        
+        if dlg.exec_():
+            manual_path = dlg.selectedFiles()[0]
+            print(f"📁 User selected: {manual_path}")
+            return manual_path
+        else:
+            print("❌ No profiles file selected. Aborting.")
+            return None
+
+
+def ensure_output_folder():
+    """Ensure output folder exists for this boat"""
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
 
 def calculate_naca_thickness(chords, config):
     """
@@ -104,32 +148,25 @@ def calculate_naca_thickness(chords, config):
     
     return calculated_percent, naca_profile
 
-def run():
+
+def build_foil_from_step(doc: App.Document):
     """
-    Single full-pipeline macro: outline → chords → NACA sections → loft
+    Single full-pipeline function: outline STEP → chords → NACA sections → loft
     """
-    print(f"FoilBuildFull v{VERSION}")
+    print(f"\n🛥️ Foil Build v{VERSION}")
+    print(f"🚤 Boat: {BOAT_NAME}")
+    print(f"📂 Boat folder: {BOAT_FOLDER}")
     print(f"Config: {CONFIG['slice_spacing']}mm uniform spacing, {CONFIG['naca_points']} pts/section")
+
+    # Get profiles STEP path
+    step_path = get_profiles_step_path()
+    if not step_path:
+        raise FileNotFoundError("No profiles STEP file selected")
     
-    # 1) STEP file selection
-    dlg = QtWidgets.QFileDialog()
-    dlg.setWindowTitle("Select RudderProfiles STEP")
-    dlg.setNameFilter("STEP (*.step *.stp)")
-    dlg.setFileMode(QtWidgets.QFileDialog.ExistingFile)
-    if not dlg.exec_():
-        print("No STEP selected. Aborting.")
-        return
-    step_path = dlg.selectedFiles()[0]
-    print(f"Loading STEP: {step_path}")
+    # Ensure output folder exists
+    ensure_output_folder()
 
-    # 2) New document
-    doc_name = "FoilBuildFull"
-    if doc_name in App.listDocuments():
-        App.closeDocument(doc_name)
-    doc = App.newDocument(doc_name)
-    Gui.activateWorkbench("PartWorkbench")
-
-    # 3) Read outline & shrunk profile with validation
+    # Read outline & shrunk profile with validation
     try:
         compound = Part.read(step_path)
         subs = getattr(compound, 'SubShapes', [compound])
@@ -160,14 +197,14 @@ def run():
         return
 
     # Draw original & shrunk wires
-    for name, wire, color in [("Orig", orig_wire, CONFIG['orig_wire_color']),
-                              ("Shrunk", shrunk_wire, CONFIG['shrunk_wire_color'])]:
-        feat = doc.addObject("Part::Feature", f"{name}_Wire")
+    for name, wire, color in [(f"{BOAT_NAME}_Orig", orig_wire, CONFIG['orig_wire_color']),
+                              (f"{BOAT_NAME}_Shrunk", shrunk_wire, CONFIG['shrunk_wire_color'])]:
+        feat = doc.addObject("Part::Feature", name)
         feat.Shape = wire
         feat.ViewObject.ShapeColor = color
         feat.ViewObject.LineWidth = 2
 
-    # 4) Generate uniform slice levels
+    # Generate uniform slice levels
     bb = shrunk_wire.BoundBox
     total_height = bb.ZMax - bb.ZMin
     if total_height < CONFIG['slice_spacing']:
@@ -183,7 +220,7 @@ def run():
     
     print(f"🔪 Uniform slicing: {len(levels)} levels from Z={bb.ZMin:.1f} to Z={bb.ZMax:.1f}")
     
-    # 5) Slice chords via Part.section with validation
+    # Slice chords via Part.section with validation
     chords = []
     for z in levels:
         plane = Part.makePlane(PLANE_SIZE, PLANE_SIZE, Vector(0, 0, z), Vector(0, 0, 1))
@@ -200,11 +237,11 @@ def run():
         return
     print(f"✅ Found {len(chords)} valid chords for sections (chords > {CONFIG['min_chord_length']}mm).")
 
-    # 6) Calculate NACA thickness based on config
+    # Calculate NACA thickness based on config
     thickness_percent, naca_profile = calculate_naca_thickness(chords, CONFIG)
     print(f"🎯 Using NACA {naca_profile} ({thickness_percent:.1f}% thick)")
 
-    # 7) Generate NACA sections
+    # Generate NACA sections
     sections = []
     for idx, ((x1, z1), (x2, z2)) in enumerate(chords):       
         p_le = Vector(x1, 0.0, z1)  # leading edge (minimum x)
@@ -217,7 +254,7 @@ def run():
         coords = naca4_coordinates(length, thickness_percent, num_pts=CONFIG['naca_points'])
         pts3 = [p_le + ux * x + uy * z for x, z in coords]
         wire = Part.makePolygon(pts3)
-        feat = doc.addObject("Part::Feature", f"Section_{idx}")
+        feat = doc.addObject("Part::Feature", f"{BOAT_NAME}_Section_{idx}")
         feat.Shape = wire
         feat.ViewObject.ShapeColor = CONFIG['section_color']
         feat.ViewObject.LineWidth = 1
@@ -225,7 +262,7 @@ def run():
     
     print(f"Built {len(sections)} NACA sections.")
 
-    # 8) Loft sections with validation
+    # Loft sections with validation
     shapes = [o.Shape for o in sections]
     
     # Validate shapes before lofting
@@ -245,29 +282,43 @@ def run():
     
     try:
         loft = Part.makeLoft(valid_shapes, solid=False, ruled=False)
-        lf = doc.addObject("Part::Feature", "Foil_Loft")
+        lf = doc.addObject("Part::Feature", f"{BOAT_NAME}_Foil")
         lf.Shape = loft
         lf.ViewObject.ShapeColor = CONFIG['loft_color']
         lf.ViewObject.DisplayMode = "Shaded"
         print("✅ Loft created.")
+        
+        # Export foil to organized output folder
+        try:
+            step_path = f"{OUTPUT_FOLDER}/{FOIL_STEP_FILE}"
+            Part.export([lf], step_path)
+            print(f"✅ Exported foil STEP: {step_path}")
+        except Exception as e:
+            print(f"❌ Foil STEP export failed: {e}")
+            
     except Exception as e:
         print(f"❌ Loft failed: {e}")
         print("🔄 Trying ruled loft as fallback...")
         try:
             loft = Part.makeLoft(valid_shapes, solid=False, ruled=True)
-            lf = doc.addObject("Part::Feature", "Foil_Loft_Ruled")
+            lf = doc.addObject("Part::Feature", f"{BOAT_NAME}_Foil_Ruled")
             lf.Shape = loft
             lf.ViewObject.ShapeColor = CONFIG['loft_color']
             lf.ViewObject.DisplayMode = "Shaded"
             print("✅ Ruled loft created as fallback.")
+            
+            # Export fallback foil
+            try:
+                step_path = f"{OUTPUT_FOLDER}/{FOIL_STEP_FILE}"
+                Part.export([lf], step_path)
+                print(f"✅ Exported ruled foil STEP: {step_path}")
+            except Exception as e:
+                print(f"❌ Foil STEP export failed: {e}")
+                
         except Exception as e2:
             print(f"❌ Ruled loft also failed: {e2}")
             return
 
-    # 9) Finalize view
     doc.recompute()
-    Gui.SendMsgToActiveView("ViewFit")
-    Gui.activeDocument().activeView().viewFront()
-
-if __name__ == '__main__':
-    run()
+    print(f"🛥️ {BOAT_NAME} foil geometry complete!")
+    print(f"📁 Next step: Use {step_path} for stock integration")
