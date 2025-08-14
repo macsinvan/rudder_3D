@@ -1,0 +1,45 @@
+# Rudder Outline Specification for Core Model,
+# ,
+# UNITS: Millimeters (mm),
+# ORIGIN: (0,0) is the top leading edge of the rudder (top-left corner in side view)
+# DIRECTION: Outline points must proceed CLOCKWISE around the rudder,
+# STRUCTURE: ,
+#   - First section: parameter key-value pairs (optional),
+#   - Second section: a list of X,Y coordinates defining the 2D outline
+#   - The outline MUST form a closed loop (first and last points identical),
+# Scale Max height (Y) 1100 mm,1.0
+# --- Parameters (optional) ---,
+Customer,Matt
+Boat,Duracell
+Version,1.2
+Date,2025-07-30
+Parameter,Value
+StockDiameter_mm,16
+StockPenetration_mm,180
+ThicknessRatio,0.14
+,
+# --- Outline Points (X,Z) ---
+X,Y
+0.0,0.0
+220.1,0.0
+442.0,0.0
+438.8,227.9
+409.5,552.5
+385.1,801.6
+338.4,1100.0
+228.2,1095.3
+176.3,1078.9
+149.1,1052.4
+124.7,1009.8
+110.2,973.7
+85.8,893.5
+33.9,499.9
+4.9,80.5
+3.2,31.1
+0.0,0.0
+
+
+# outline/stock_spec.csv
+Component,Style,Start,End,StartDiameter,EndDiameter
+Post,Cylinder,0.0,300.0,20.0,20.0
+Post,Tapered,300.0,700.0,20.0,10.0
