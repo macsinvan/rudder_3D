@@ -1,0 +1,514 @@
+# Macros/OutlineBuilder.py
+"""
+Standalone FreeCAD Macro for Building Outlines from CSV
+Reads CSV with LINE/ARC instructions and creates FreeCAD shapes
+Now with coordinate labels and segment numbering
+"""
+
+import csv
+import os
+from PySide2 import QtWidgets
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+from FreeCAD import Vector
+import Draft
+
+def read_sc_csv(csv_path):
+    """
+    Read S/C format CSV file
+    Returns (segment_pattern, points)
+    """
+    segment_pattern = []
+    points = []
+    
+    with open(csv_path, 'r', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        
+        for row in reader:
+            # Skip empty rows and comments
+            if not row or row[0].strip().startswith('#'):
+                continue
+            
+            # Look for Pattern/Segments row
+            if row[0].strip().lower() in ['pattern', 'segments']:
+                segment_pattern = [s.strip().upper() for s in row[1:] if s.strip()]
+                continue
+            
+            # Look for coordinate data (skip header)
+            if row[0].strip().upper() in ['X', 'POINT']:
+                continue
+                
+            # Parse coordinate points
+            try:
+                if len(row) >= 2:
+                    x = float(row[0].strip())
+                    y = float(row[1].strip())
+                    points.append((x, y))
+            except ValueError:
+                continue
+    
+    return segment_pattern, points
+
+
+def convert_sc_to_instructions(segment_pattern, points):
+    """
+    Convert S/C pattern and points to LINE/ARC instructions
+    Flips Y coordinates to make rudder extend downward (Y becomes -Z)
+    """
+    instructions = []
+    point_index = 0
+    
+    print(f"🔄 Converting {len(segment_pattern)} segments using {len(points)} points")
+    print("🔄 Flipping Y coordinates: Y will become -Z (rudder extends downward)")
+    
+    for i, segment_type in enumerate(segment_pattern):
+        if point_index >= len(points):
+            print(f"⚠️ Ran out of points at segment {i}")
+            break
+            
+        if segment_type == 'S':
+            # Straight segment: use 2 points
+            if point_index + 1 < len(points):
+                x1, y1 = points[point_index]
+                x2, y2 = points[point_index + 1]
+                
+                # Flip Y coordinates to make rudder extend downward
+                y1_flipped = -y1
+                y2_flipped = -y2
+                
+                instruction = {
+                    'type': 'LINE',
+                    'x1': x1, 'y1': y1_flipped,
+                    'x2': x2, 'y2': y2_flipped,
+                    'x3': None, 'y3': None,
+                    'label': f'Straight_{i+1}'
+                }
+                instructions.append(instruction)
+                print(f"S{i+1}: LINE ({x1:.1f},{y1_flipped:.1f}) → ({x2:.1f},{y2_flipped:.1f})")
+                point_index += 1  # Move to next point (end point becomes start of next)
+            else:
+                print(f"⚠️ Not enough points for straight segment {i}")
+                break
+                
+        elif segment_type == 'C':
+            # Curved segment: use 3 points
+            if point_index + 2 < len(points):
+                x1, y1 = points[point_index]      # Start
+                x2, y2 = points[point_index + 1]  # Mid
+                x3, y3 = points[point_index + 2]  # End
+                
+                # Flip Y coordinates to make rudder extend downward
+                y1_flipped = -y1
+                y2_flipped = -y2
+                y3_flipped = -y3
+                
+                instruction = {
+                    'type': 'ARC',
+                    'x1': x1, 'y1': y1_flipped,  # Start
+                    'x2': x3, 'y2': y3_flipped,  # End
+                    'x3': x2, 'y3': y2_flipped,  # Mid (for arc definition)
+                    'label': f'Curve_{i+1}'
+                }
+                instructions.append(instruction)
+                print(f"C{i+1}: ARC ({x1:.1f},{y1_flipped:.1f}) → ({x2:.1f},{y2_flipped:.1f}) → ({x3:.1f},{y3_flipped:.1f})")
+                point_index += 2  # Move past the 3 points used
+            else:
+                print(f"⚠️ Not enough points for curved segment {i}")
+                break
+        else:
+            print(f"⚠️ Unknown segment type: {segment_type}")
+    
+    print(f"✅ Generated {len(instructions)} instructions (Y coordinates flipped)")
+    return instructions
+
+
+def read_csv_instructions(csv_path):
+    """
+    Read CSV file with outline instructions
+    Returns list of outline instructions
+    """
+    instructions = []
+    
+    with open(csv_path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            # Skip comments and empty rows
+            if row.get('Type', '').strip().startswith('#') or not row.get('Type', '').strip():
+                continue
+                
+            # Parse coordinates
+            try:
+                instruction = {
+                    'type': row['Type'].strip().upper(),
+                    'x1': float(row['X1']) if row['X1'].strip() else None,
+                    'y1': float(row['Y1']) if row['Y1'].strip() else None,
+                    'x2': float(row['X2']) if row['X2'].strip() else None,
+                    'y2': float(row['Y2']) if row['Y2'].strip() else None,
+                    'x3': float(row['X3']) if row['X3'].strip() else None,
+                    'y3': float(row['Y3']) if row['Y3'].strip() else None,
+                    'label': row.get('Label', '').strip()
+                }
+                instructions.append(instruction)
+            except ValueError as e:
+                print(f"Skipping invalid row: {row} - {e}")
+                continue
+    
+    return instructions
+
+
+def add_coordinate_labels(doc, instructions, label_size=50):
+    """
+    Add text labels showing coordinates and segment numbers
+    Positioned in XZ plane (Y=0) for front view visibility
+    """
+    labels_group = doc.addObject("App::DocumentObjectGroup", "CoordinateLabels")
+    point_labels_group = doc.addObject("App::DocumentObjectGroup", "PointLabels")
+    segment_labels_group = doc.addObject("App::DocumentObjectGroup", "SegmentLabels")
+    labels_group.addObject(point_labels_group)
+    labels_group.addObject(segment_labels_group)
+    
+    # Track unique points to avoid duplicate labels
+    labeled_points = set()
+    
+    for i, inst in enumerate(instructions):
+        try:
+            # Label start point
+            if inst['x1'] is not None and inst['y1'] is not None:
+                point_key = (round(inst['x1'], 1), round(inst['y1'], 1))
+                if point_key not in labeled_points:
+                    # Position label in XZ plane (Y=0) with small X offset
+                    point_pos = Vector(inst['x1'] + label_size/3, 0, inst['y1'] + label_size/4)
+                    point_text = f"P({inst['x1']:.1f},{inst['y1']:.1f})"
+                    point_label = Draft.make_text([point_text], point_pos)
+                    point_label.ViewObject.FontSize = label_size * 0.8
+                    point_label.ViewObject.TextColor = (0.0, 0.0, 1.0)  # Blue
+                    point_label.Label = f"Point_{len(labeled_points)+1}"
+                    point_labels_group.addObject(point_label)
+                    labeled_points.add(point_key)
+            
+            # Label end point
+            if inst['x2'] is not None and inst['y2'] is not None:
+                point_key = (round(inst['x2'], 1), round(inst['y2'], 1))
+                if point_key not in labeled_points:
+                    # Position label in XZ plane (Y=0) with small X offset
+                    point_pos = Vector(inst['x2'] + label_size/3, 0, inst['y2'] + label_size/4)
+                    point_text = f"P({inst['x2']:.1f},{inst['y2']:.1f})"
+                    point_label = Draft.make_text([point_text], point_pos)
+                    point_label.ViewObject.FontSize = label_size * 0.8
+                    point_label.ViewObject.TextColor = (0.0, 0.0, 1.0)  # Blue
+                    point_label.Label = f"Point_{len(labeled_points)+1}"
+                    point_labels_group.addObject(point_label)
+                    labeled_points.add(point_key)
+            
+            # Label mid point for arcs
+            if inst['type'] == 'ARC' and inst['x3'] is not None and inst['y3'] is not None:
+                point_key = (round(inst['x3'], 1), round(inst['y3'], 1))
+                if point_key not in labeled_points:
+                    # Position label in XZ plane (Y=0) with small X offset
+                    point_pos = Vector(inst['x3'] + label_size/3, 0, inst['y3'] + label_size/4)
+                    point_text = f"M({inst['x3']:.1f},{inst['y3']:.1f})"
+                    point_label = Draft.make_text([point_text], point_pos)
+                    point_label.ViewObject.FontSize = label_size * 0.8
+                    point_label.ViewObject.TextColor = (1.0, 0.5, 0.0)  # Orange for mid points
+                    point_label.Label = f"MidPoint_{len(labeled_points)+1}"
+                    point_labels_group.addObject(point_label)
+                    labeled_points.add(point_key)
+            
+            # Add segment number label at midpoint of segment
+            if inst['x1'] is not None and inst['x2'] is not None:
+                mid_x = (inst['x1'] + inst['x2']) / 2
+                mid_y = (inst['y1'] + inst['y2']) / 2
+                
+                # Position segment label in XZ plane (Y=0) with offset
+                label_pos = Vector(mid_x + label_size/2, 0, mid_y - label_size/3)
+                
+                segment_text = f"#{i+1} {inst['type']}"
+                if inst.get('label'):
+                    segment_text += f"\n{inst['label']}"
+                
+                segment_label = Draft.make_text([segment_text], label_pos)
+                segment_label.ViewObject.FontSize = label_size * 0.6
+                segment_label.ViewObject.TextColor = (1.0, 0.0, 0.0)  # Red
+                segment_label.Label = f"Segment_{i+1}"
+                segment_labels_group.addObject(segment_label)
+        
+        except Exception as e:
+            print(f"Error creating labels for instruction {i}: {e}")
+            continue
+    
+    print(f"✅ Added labels for {len(labeled_points)} unique points and {len(instructions)} segments")
+    print("📍 Labels positioned in XZ plane (Y=0) for front view visibility")
+    return labels_group
+
+
+def build_outline_from_instructions(doc, instructions, name="Outline", add_labels=True):
+    """
+    Build outline shape from instructions with arc approximation and optional labels
+    """
+    edges = []
+    
+    for i, inst in enumerate(instructions):
+        try:
+            if inst['type'] == 'LINE':
+                # Line from (x1,y1) to (x2,y2)
+                if inst['x1'] is not None and inst['y1'] is not None and inst['x2'] is not None and inst['y2'] is not None:
+                    p1 = Vector(inst['x1'], 0, inst['y1'])
+                    p2 = Vector(inst['x2'], 0, inst['y2'])
+                    edge = Part.makeLine(p1, p2)
+                    edges.append(edge)
+                    print(f"LINE {i+1}: ({inst['x1']:.1f},{inst['y1']:.1f}) → ({inst['x2']:.1f},{inst['y2']:.1f}) - {inst['label']}")
+                else:
+                    print(f"Skipping LINE {i}: missing coordinates")
+                    
+            elif inst['type'] == 'ARC':
+                # Arc approximation: create multiple short line segments
+                if all(coord is not None for coord in [inst['x1'], inst['y1'], inst['x2'], inst['y2'], inst['x3'], inst['y3']]):
+                    p1 = Vector(inst['x1'], 0, inst['y1'])  # Start
+                    p_mid = Vector(inst['x3'], 0, inst['y3'])  # Mid (for arc definition)
+                    p3 = Vector(inst['x2'], 0, inst['y2'])  # End
+                    
+                    # Create approximated arc with line segments
+                    arc_edges = approximate_arc_with_lines(p1, p_mid, p3, num_segments=8)
+                    edges.extend(arc_edges)
+                    
+                    print(f"ARC {i+1}: ({inst['x1']:.1f},{inst['y1']:.1f}) → ({inst['x3']:.1f},{inst['y3']:.1f}) → ({inst['x2']:.1f},{inst['y2']:.1f}) - {inst['label']} ({len(arc_edges)} segments)")
+                else:
+                    print(f"Skipping ARC {i}: missing coordinates")
+                    
+            else:
+                print(f"Unknown instruction type: {inst['type']}")
+                
+        except Exception as e:
+            print(f"Error creating edge {i}: {e}")
+            continue
+    
+    if not edges:
+        print("❌ No valid edges created")
+        return None
+    
+    # Create wire from edges
+    try:
+        wire = Part.Wire(edges)
+        print(f"✅ Created wire with {len(edges)} edges")
+        
+        # Check if wire is closed, if not try to close it
+        if not wire.isClosed():
+            print("⚠️ Wire not closed, attempting to close...")
+            # Add closing line if needed
+            start_pt = wire.Edges[0].Vertexes[0].Point
+            end_pt = wire.Edges[-1].Vertexes[-1].Point
+            
+            if start_pt.distanceToPoint(end_pt) > 1e-6:  # Not already closed
+                closing_edge = Part.makeLine(end_pt, start_pt)
+                wire = Part.Wire(edges + [closing_edge])
+                print(f"✅ Added closing line: ({end_pt.x:.1f},{end_pt.z:.1f}) → ({start_pt.x:.1f},{start_pt.z:.1f})")
+        
+        # Create face if closed
+        if wire.isClosed():
+            try:
+                face = Part.Face(wire)
+                print("✅ Created filled face")
+            except:
+                face = None
+                print("⚠️ Could not create face, wire only")
+        else:
+            face = None
+            print("⚠️ Wire still not closed, wire only")
+        
+        # Add to document
+        wire_obj = doc.addObject("Part::Feature", f"{name}_Wire")
+        wire_obj.Shape = wire
+        wire_obj.ViewObject.ShapeColor = (0.0, 1.0, 0.0)  # Green
+        wire_obj.ViewObject.LineWidth = 2
+        
+        if face:
+            face_obj = doc.addObject("Part::Feature", f"{name}_Face")
+            face_obj.Shape = face
+            face_obj.ViewObject.ShapeColor = (0.6, 1.0, 0.6)  # Light green
+            face_obj.ViewObject.Transparency = 50
+        
+        # Add coordinate labels if requested
+        if add_labels:
+            add_coordinate_labels(doc, instructions)
+        
+        return wire_obj
+        
+    except Exception as e:
+        print(f"❌ Error creating wire: {e}")
+        return None
+
+
+def approximate_arc_with_lines(p1, p_mid, p3, num_segments=8):
+    """
+    Approximate an arc using multiple line segments for gentler curves
+    
+    Args:
+        p1: Start point (Vector)
+        p_mid: Middle point that arc should pass through (Vector)  
+        p3: End point (Vector)
+        num_segments: Number of line segments to create (more = smoother)
+    
+    Returns:
+        List of Part.Edge line segments
+    """
+    edges = []
+    
+    try:
+        # Create the arc to get the curve parameters
+        arc = Part.Arc(p1, p_mid, p3)
+        
+        # Sample points along the arc
+        curve_points = []
+        for i in range(num_segments + 1):
+            param = i / num_segments
+            # Get point at parameter along the arc
+            point = arc.value(arc.FirstParameter + param * (arc.LastParameter - arc.FirstParameter))
+            curve_points.append(point)
+        
+        # Create line segments between consecutive points
+        for i in range(len(curve_points) - 1):
+            edge = Part.makeLine(curve_points[i], curve_points[i + 1])
+            edges.append(edge)
+            
+    except Exception as e:
+        print(f"⚠️ Arc approximation failed, using single line: {e}")
+        # Fallback to single line if arc creation fails
+        edges = [Part.makeLine(p1, p3)]
+    
+    return edges
+
+
+def run():
+    """Main function"""
+    print("🔧 Outline Builder Macro - S/C Methodology with Labels")
+    
+    # Ask user if they want to use built-in test data or load CSV
+    reply = QtWidgets.QMessageBox.question(
+        None, 
+        'Outline Builder', 
+        'Use built-in MackenSea data?\n\nYes = Use real MackenSea rudder profile\nNo = Load CSV file',
+        QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+        QtWidgets.QMessageBox.Yes
+    )
+    
+    if reply == QtWidgets.QMessageBox.Yes:
+        print("📋 Using MackenSea real profile data")
+        
+        # Real MackenSea data from Web Plot Digitizer (Latest Update)
+        segment_pattern = ['S','S','S','S','S','C','C','C','C']
+        points = [
+            (0, 0),
+            (247.86, 38.76),
+            (262.82, 70.70),
+            (384.43, 65.71),
+            (440.85, 80.75),
+            (388.58, 725.39),
+            (356.64, 897.66),
+            (330.32, 990.69),
+            (305.32, 1044.10),
+            (274.27, 1067.06),
+            (220.97, 1091.62),
+            (117.17, 1096.55),
+            (43.74, 545.28),
+            (0, 0)
+        ]
+        
+        # Convert S/C pattern to instructions
+        instructions = convert_sc_to_instructions(segment_pattern, points)
+        outline_name = "MackenSea_Real_Profile"
+        
+    else:
+        # File selection dialog for CSV
+        dlg = QtWidgets.QFileDialog()
+        dlg.setWindowTitle("Select S/C Format CSV")
+        dlg.setNameFilter("CSV files (*.csv)")
+        dlg.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+        
+        if not dlg.exec_():
+            print("❌ No file selected")
+            return
+        
+        csv_path = dlg.selectedFiles()[0]
+        print(f"📁 Loading: {csv_path}")
+        
+        # Read S/C format CSV
+        try:
+            segment_pattern, points = read_sc_csv(csv_path)
+            instructions = convert_sc_to_instructions(segment_pattern, points)
+            print(f"📋 Read {len(points)} points with {len(segment_pattern)} segments")
+        except Exception as e:
+            print(f"❌ Failed to read S/C CSV: {e}")
+            return
+        
+        if not instructions:
+            print("❌ No valid instructions generated")
+            return
+            
+        outline_name = os.path.splitext(os.path.basename(csv_path))[0]
+    
+    # Ask if user wants labels
+    label_reply = QtWidgets.QMessageBox.question(
+        None, 
+        'Add Labels?', 
+        'Add coordinate and segment number labels?\n\nThis helps with debugging and visualization.',
+        QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+        QtWidgets.QMessageBox.Yes
+    )
+    
+    add_labels = (label_reply == QtWidgets.QMessageBox.Yes)
+    
+    # Create document
+    doc_name = "OutlineBuilder"
+    if doc_name in App.listDocuments():
+        doc = App.getDocument(doc_name)
+        # Clear existing objects
+        for obj in doc.Objects:
+            doc.removeObject(obj.Name)
+    else:
+        doc = App.newDocument(doc_name)
+    
+    # Activate Part workbench (needed for geometry)
+    Gui.activateWorkbench("PartWorkbench")
+    
+    # Build outline
+    result = build_outline_from_instructions(doc, instructions, outline_name, add_labels)
+    
+    if result:
+        # Fit view
+        doc.recompute()
+        Gui.SendMsgToActiveView("ViewFit")
+        Gui.activeDocument().activeView().viewFront()
+        
+        if add_labels:
+            print("✅ MackenSea outline built successfully with coordinate labels!")
+            print("📝 Blue labels = Point coordinates")
+            print("📝 Orange labels = Arc midpoints") 
+            print("📝 Red labels = Segment numbers and types")
+        else:
+            print("✅ MackenSea outline built successfully!")
+            
+        print("📝 This is the real rudder profile with complex top curves")
+    else:
+        print("❌ Failed to build outline")
+
+
+# Test data - sample CSV content for testing
+SAMPLE_CSV_CONTENT = '''Type,X1,Y1,X2,Y2,X3,Y3,Label
+LINE,0,0,100,0,,,Top edge
+ARC,100,0,120,20,100,40,Top right curve
+LINE,100,40,100,100,,,Right edge
+LINE,100,100,0,100,,,Bottom edge
+LINE,0,100,0,0,,,Left edge'''
+
+def create_sample_csv():
+    """Create a sample CSV for testing"""
+    sample_path = "/tmp/sample_outline.csv"
+    with open(sample_path, 'w') as f:
+        f.write(SAMPLE_CSV_CONTENT)
+    print(f"📝 Created sample CSV: {sample_path}")
+    return sample_path
+
+
+if __name__ == "__main__":
+    run()

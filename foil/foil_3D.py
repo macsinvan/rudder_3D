@@ -26,10 +26,10 @@ FOIL_STEP_FILE = f"{BOAT_NAME}_Foil.step"          # Output for integration step
 
 # Configuration - Simplified and Essential Parameters Only
 CONFIG = {
-    # NACA Profile Settings - Flexible Thickness Specification
+    # NACA Profile Settings - MackenSea Specific Measurements
     'naca_camber': '00',         # NACA camber digits (00 = symmetric, 23 = cambered)
-    'thickness_percent': 12.0,   # % thickness if no apex measurement (fallback)
-    'apex_at_top': None,         # mm actual measured thickness at top (overrides %)
+    'thickness_percent': None,   # % thickness - leave blank to use apex measurement
+    'apex_at_top': 64.0,         # mm measured thickness at top (44mm stock + 10mm each side)
     'thickness_tolerance': 2.0,  # mm tolerance for contradiction warning
     'naca_points': 50,           # Number of points in airfoil cross-section
     
@@ -103,27 +103,28 @@ def calculate_naca_thickness(chords, config):
         (thickness_percent, naca_profile_code)
     """
     apex_measured = config.get('apex_at_top')
-    thickness_percent = config.get('thickness_percent', 12.0)
+    thickness_percent = config.get('thickness_percent')
     tolerance = config.get('thickness_tolerance', 2.0)
     
     if apex_measured is not None:
         # Find the top chord (maximum Z) to calculate percentage
         if not chords:
-            print(f"❌ No chords available for apex calculation, using fallback {thickness_percent}%")
-            calculated_percent = thickness_percent
+            print(f"❌ No chords available for apex calculation, using fallback 12%")
+            calculated_percent = 12.0
         else:
             top_chord = max(chords, key=lambda chord: chord[0][1])  # Max Z value
             top_chord_length = top_chord[1][0] - top_chord[0][0]  # x2 - x1
             
             if top_chord_length <= 0:
-                print(f"❌ Invalid top chord length, using fallback {thickness_percent}%")
-                calculated_percent = thickness_percent
+                print(f"❌ Invalid top chord length, using fallback 12%")
+                calculated_percent = 12.0
             else:
                 calculated_percent = (apex_measured / top_chord_length) * 100.0
-                print(f"📏 Apex measurement: {apex_measured:.1f}mm on {top_chord_length:.1f}mm chord = {calculated_percent:.1f}%")
+                print(f"📏 Apex measurement: {apex_measured:.1f}mm on {top_chord_length:.1f}mm chord")
+                print(f"🎯 CALCULATED NACA PERCENTAGE: {calculated_percent:.1f}%")
                 
                 # Check for contradiction if both values provided
-                if thickness_percent != 12.0:  # 12.0 is our default, so not user-specified
+                if thickness_percent is not None:
                     expected_apex = (thickness_percent / 100.0) * top_chord_length
                     difference = abs(apex_measured - expected_apex)
                     
@@ -131,9 +132,15 @@ def calculate_naca_thickness(chords, config):
                         print(f"⚠️  WARNING: Apex measurement ({apex_measured:.1f}mm) contradicts thickness % ({thickness_percent:.1f}%)")
                         print(f"    Expected apex for {thickness_percent:.1f}%: {expected_apex:.1f}mm (difference: {difference:.1f}mm > {tolerance:.1f}mm tolerance)")
                         print(f"    Using measured apex value ({calculated_percent:.1f}%)")
-    else:
+                    else:
+                        print(f"✅ Apex measurement consistent with specified {thickness_percent:.1f}% (within {tolerance:.1f}mm tolerance)")
+    elif thickness_percent is not None:
         calculated_percent = thickness_percent
         print(f"📐 Using specified thickness: {thickness_percent:.1f}%")
+    else:
+        # Neither specified, use default
+        calculated_percent = 12.0
+        print(f"📐 No thickness specified, using default: {calculated_percent:.1f}%")
     
     # Ensure reasonable bounds
     if calculated_percent < 5.0:

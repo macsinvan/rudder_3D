@@ -1,4 +1,4 @@
-# Rudder Outline Specification for Core Model,
+# Rudder Profile Specification for Core Model,
 # ,
 # UNITS: Millimeters (mm),
 # ORIGIN: (0,0) is the top leading edge of the rudder (top-left corner in side view)
@@ -9,37 +9,94 @@
 #   - The outline MUST form a closed loop (first and last points identical),
 # Scale Max height (Y) 1100 mm,1.0
 # --- Parameters (optional) ---,
-Customer,Matt
-Boat,Duracell
-Version,1.2
-Date,2025-07-30
+Customer,Andrew
+Boat,MackenSea
+Nautitech 44, 2024
+Size 440mm X 1100
+Version,1.5
+Date,2025-08-15
 Parameter,Value
-StockDiameter_mm,16
+StockDiameter_mm,22
 StockPenetration_mm,180
-ThicknessRatio,0.14
-,
+ThicknessRatio,0.16
+
 # --- Outline Points (X,Z) ---
 X,Y
-0.0,0.0
-220.1,0.0
-442.0,0.0
-438.8,227.9
-409.5,552.5
-385.1,801.6
-338.4,1100.0
-228.2,1095.3
-176.3,1078.9
-149.1,1052.4
-124.7,1009.8
-110.2,973.7
-85.8,893.5
-33.9,499.9
-4.9,80.5
-3.2,31.1
-0.0,0.0
+0, 0
+Line
+244.9, 54.9
+# Rudder Profile Specification for Core Model,
+# ,
+# UNITS: Millimeters (mm),
+# ORIGIN: (0,0) is the top leading edge of the rudder (top-left corner in side view)
+# DIRECTION: Outline points must proceed CLOCKWISE around the rudder,
+# STRUCTURE: ,
+#   - First section: parameter key-value pairs (optional),
+#   - Second section: a list of X,Y coordinates defining the 2D outline
+#   - The outline MUST form a closed loop (first and last points identical),
+# Scale Max height (Y) 1100 mm,1.0
+# --- Parameters (optional) ---,
+Customer,Andrew
+Boat,MackenSea
+Nautitech 44, 2024
+Size 440mm X 1100
+Version,1.5
+Date,2025-08-15
+Parameter,Value
+StockDiameter_mm,22
+StockPenetration_mm,180
+ThicknessRatio,0.16
 
+# --- Outline Points (X,Z) ---
+X,Y
+SEGMENT,LINE
+0,0
+244.9,54.9
 
-# outline/stock_spec.csv
-Component,Style,Start,End,StartDiameter,EndDiameter
-Post,Cylinder,0.0,300.0,20.0,20.0
-Post,Tapered,300.0,700.0,20.0,10.0
+SEGMENT,LINE
+244.9,54.9
+266.2,79.1
+
+SEGMENT,LINE
+266.2,79.1
+379.9,79.1
+
+SEGMENT,LINE
+379.9,79.1
+436.2,89.3
+
+SEGMENT,LINE
+436.2,89.3
+395.6,564.0
+
+SEGMENT,ARC
+395.6,564.0
+365.4,775.9
+328.9,971.1
+
+SEGMENT,CURVE
+328.9,971.1
+313.9,1004.3
+301.3,1027.3
+281.3,1049.0
+261.3,1065.5
+243.8,1075.8
+220.0,1080.9
+193.8,1086.0
+170.0,1087.2
+142.5,1091.1
+126.3,1092.3
+107.5,1094.9
+
+SEGMENT,LINE
+107.5,1094.9
+36.9,571.7
+
+SEGMENT,ARC
+36.9,571.7
+19.6,356.0
+4.8,158.2
+
+SEGMENT,LINE
+4.8,158.2
+0,0

@@ -1,0 +1,300 @@
+import FreeCAD as App
+import FreeCADGui as Gui
+import os
+from PySide import QtGui
+
+# Rudder Tracing Macro
+doc = App.newDocument("RudderTracing")
+
+# View control functions
+def set_front_view():
+    """Set view to front (XZ plane) - best for rudder profile tracing"""
+    try:
+        Gui.activeDocument().activeView().viewFront()
+        print("View set to Front (XZ plane)")
+        return True
+    except Exception as e:
+        print(f"Error setting front view: {e}")
+        return False
+
+def set_view_for_tracing():
+    """Interactive view setup for rudder tracing"""
+    msg = QtGui.QMessageBox()
+    msg.setWindowTitle("View Setup")
+    msg.setText("Choose the best view for your rudder image")
+    msg.setInformativeText(
+        "Different images may import in different orientations:\n\n"
+        "• Top View (XY plane) - If image shows side profile here\n"
+        "• Front View (XZ plane) - Traditional side profile view\n"
+        "• Side View (YZ plane) - Alternative side view\n\n"
+        "Choose the view where you can see the rudder's leading edge, "
+        "trailing edge, and upper/lower surfaces clearly."
+    )
+    
+    top_btn = msg.addButton("Top View (XY)", QtGui.QMessageBox.ActionRole)
+    front_btn = msg.addButton("Front View (XZ)", QtGui.QMessageBox.ActionRole)
+    side_btn = msg.addButton("Side View (YZ)", QtGui.QMessageBox.ActionRole)
+    keep_btn = msg.addButton("Keep Current", QtGui.QMessageBox.RejectRole)
+    
+    msg.exec_()
+    
+    if msg.clickedButton() == top_btn:
+        Gui.activeDocument().activeView().viewTop()
+        print("Switched to Top View (XY plane)")
+        return "top"
+    elif msg.clickedButton() == front_btn:
+        Gui.activeDocument().activeView().viewFront()
+        print("Switched to Front View (XZ plane)")
+        return "front"
+    elif msg.clickedButton() == side_btn:
+        Gui.activeDocument().activeView().viewRight()
+        print("Switched to Side View (YZ plane)")  
+        return "side"
+    else:
+        print("Keeping current view")
+        return "current"
+
+# Set initial view
+print("Document created")
+set_front_view()
+
+def switch_to_draft_and_import():
+    """Switch to Draft workbench and then import image"""
+    try:
+        # Try to switch to Draft workbench
+        Gui.activateWorkbench("DraftWorkbench")
+        print("Switched to Draft Workbench")
+        
+        # Small delay to ensure workbench is loaded, then import
+        from PySide import QtCore
+        QtCore.QTimer.singleShot(500, import_rudder_image)
+        
+    except Exception as e:
+        print(f"Error switching workbench: {e}")
+        # If workbench switch fails, still try to import
+        import_rudder_image()
+
+def proceed_to_tracing_after_manual_import():
+    """Continue to tracing tools after manual import"""
+    # Check view and proceed to tracing
+    view_result = set_view_for_tracing()
+    if view_result in ["top", "front", "side", "current"]:
+        show_tracing_menu()
+
+def import_rudder_image():
+    """Import image function with file dialog"""
+    # Open file dialog to select image
+    file_dialog = QtGui.QFileDialog()
+    image_path, _ = file_dialog.getOpenFileName(
+        None,
+        "Select Rudder Image",
+        os.path.expanduser("~"),
+        "Image files (*.png *.jpg *.jpeg *.bmp *.tiff)"
+    )
+
+    if image_path:
+        try:
+            # Try multiple import methods
+            success = False
+            
+            # Method 1: Try Image workbench approach
+            try:
+                import ImageGui
+                ImageGui.open(image_path)
+                success = True
+                print(f"Image imported using ImageGui: {image_path}")
+            except:
+                pass
+            
+            # Method 2: Try standard Import with full path
+            if not success:
+                try:
+                    import Import
+                    Import.insert(image_path)  # Try without doc.Name parameter
+                    success = True
+                    print(f"Image imported using Import.insert: {image_path}")
+                except:
+                    pass
+            
+            # Method 3: Try opening as document
+            if not success:
+                try:
+                    App.openDocument(image_path)
+                    success = True
+                    print(f"Image opened as document: {image_path}")
+                except:
+                    pass
+            
+            # Method 4: Manual instruction fallback
+            if not success:
+                # Show non-blocking manual import instructions
+                QtGui.QMessageBox.information(
+                    None,
+                    "Manual Import Required",
+                    f"Automatic import failed. After dismissing this dialog:\n\n"
+                    f"1. Go to File → Import (or Insert → Image)\n"
+                    f"2. Select this file: {os.path.basename(image_path)}\n"
+                    f"3. Then run: show_tracing_menu() in the console\n\n"
+                    f"File path: {image_path}"
+                )
+                print(f"MANUAL IMPORT REQUIRED")
+                print(f"File path: {image_path}")
+                print(f"After manual import, run: show_tracing_menu()")
+                return image_path
+            else:
+                # Show success message
+                QtGui.QMessageBox.information(
+                    None,
+                    "Import Successful",
+                    f"Rudder image imported successfully!\n\nFile: {os.path.basename(image_path)}\n\nYou can now trace over the image using Draft tools."
+                )
+                return image_path
+                
+        except Exception as e:
+            QtGui.QMessageBox.critical(
+                None,
+                "Import Error",
+                f"Failed to import image:\n{str(e)}\n\nFile: {image_path}"
+            )
+            return None
+    else:
+        print("No image selected")
+        return None
+
+# Show popup to prompt user
+def show_workbench_prompt():
+    """Show popup to prompt user about workbench switch"""
+    msg = QtGui.QMessageBox()
+    msg.setWindowTitle("Rudder Tracing Setup")
+    msg.setText("Ready to set up rudder tracing!")
+    msg.setInformativeText(
+        "This macro will:\n"
+        "1. Switch to Draft Workbench (recommended for tracing)\n"
+        "2. Open file dialog to select your rudder image\n"
+        "3. Import the image for tracing\n\n"
+        "Make sure you have a rudder image file ready to import."
+    )
+    msg.setStandardButtons(QtGui.QMessageBox.Ok | QtGui.QMessageBox.Cancel)
+    msg.setDefaultButton(QtGui.QMessageBox.Ok)
+    
+    if msg.exec_() == QtGui.QMessageBox.Ok:
+        switch_to_draft_and_import()
+    else:
+        print("Rudder tracing setup cancelled by user")
+
+# Tracing Tools
+def create_spline_trace():
+    """Create a B-spline for smooth rudder outline tracing"""
+    try:
+        import Draft
+        # Create a B-spline - user will click points to define the curve
+        Draft.makeBSpline([], closed=False)
+        
+        QtGui.QMessageBox.information(
+            None,
+            "Spline Tracing Active",
+            "B-Spline tool activated!\n\n"
+            "Instructions:\n"
+            "• Click points along the rudder outline\n"
+            "• Press ENTER when finished\n"
+            "• ESC to cancel\n\n"
+            "Tip: Use fewer points for smoother curves"
+        )
+        print("B-Spline tracing tool activated")
+        
+    except Exception as e:
+        QtGui.QMessageBox.critical(None, "Error", f"Failed to create spline tool: {str(e)}")
+
+def create_polyline_trace():
+    """Create a polyline for precise rudder outline tracing"""
+    try:
+        import Draft
+        # Create a polyline - user will click points to define straight segments
+        Draft.makeWire([], closed=False)
+        
+        QtGui.QMessageBox.information(
+            None,
+            "Polyline Tracing Active",
+            "Polyline tool activated!\n\n"
+            "Instructions:\n"
+            "• Click points along the rudder outline\n"
+            "• Press ENTER when finished\n"
+            "• ESC to cancel\n\n"
+            "Tip: Use more points for precise angular shapes"
+        )
+        print("Polyline tracing tool activated")
+        
+    except Exception as e:
+        QtGui.QMessageBox.critical(None, "Error", f"Failed to create polyline tool: {str(e)}")
+
+def create_bezier_trace():
+    """Create a Bezier curve for artistic rudder outline tracing"""
+    try:
+        import Draft
+        # Create a Bezier curve
+        Draft.makeBezCurve([], closed=False)
+        
+        QtGui.QMessageBox.information(
+            None,
+            "Bezier Tracing Active",
+            "Bezier curve tool activated!\n\n"
+            "Instructions:\n"
+            "• Click points along the rudder outline\n"
+            "• Drag to adjust curve handles\n"
+            "• Press ENTER when finished\n"
+            "• ESC to cancel\n\n"
+            "Tip: Great for smooth, flowing curves"
+        )
+        print("Bezier curve tracing tool activated")
+        
+    except Exception as e:
+        QtGui.QMessageBox.critical(None, "Error", f"Failed to create bezier tool: {str(e)}")
+
+def show_tracing_menu():
+    """Show tracing tool selection menu"""
+    msg = QtGui.QMessageBox()
+    msg.setWindowTitle("Rudder Tracing Tools")
+    msg.setText("Choose your tracing method:")
+    msg.setInformativeText(
+        "• B-Spline: Smooth curves, fewer points needed\n"
+        "• Polyline: Straight segments, precise control\n"
+        "• Bezier: Artistic curves with control handles\n\n"
+        "You can use multiple methods and combine them later."
+    )
+    
+    spline_btn = msg.addButton("B-Spline", QtGui.QMessageBox.ActionRole)
+    polyline_btn = msg.addButton("Polyline", QtGui.QMessageBox.ActionRole)
+    bezier_btn = msg.addButton("Bezier", QtGui.QMessageBox.ActionRole)
+    cancel_btn = msg.addButton("Cancel", QtGui.QMessageBox.RejectRole)
+    
+    msg.exec_()
+    
+    if msg.clickedButton() == spline_btn:
+        create_spline_trace()
+    elif msg.clickedButton() == polyline_btn:
+        create_polyline_trace()
+    elif msg.clickedButton() == bezier_btn:
+        create_bezier_trace()
+    else:
+        print("Tracing cancelled")
+
+# Start the process
+print("Document created, front view set")
+print("Starting rudder tracing setup...")
+
+# Check if we should skip the import (since user has image loaded)
+skip_import = QtGui.QMessageBox.question(
+    None,
+    "Rudder Tracing",
+    "Do you already have your rudder image loaded?",
+    QtGui.QMessageBox.Yes | QtGui.QMessageBox.No,
+    QtGui.QMessageBox.Yes
+)
+
+if skip_import == QtGui.QMessageBox.Yes:
+    print("Skipping import, checking view setup...")
+    view_result = set_view_for_tracing()
+    if view_result in ["top", "front", "side", "current"]:
+        show_tracing_menu()
+else:
+    show_workbench_prompt()
