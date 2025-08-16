@@ -2,10 +2,11 @@
 """
 Comprehensive Rudder Outline Builder - Boat-Centric Version
 Processes both Profile and Outline CSV files with explicit geometry.
-Creates separate objects and exports for each.
+Creates wire and face objects with shrunk versions for each CSV.
 Everything organized by boat name.
+No point visualization - clean geometry focus.
 """
-import sys, os, time
+import sys, os
 from PySide2 import QtWidgets
 
 # Add project root so Python finds our modules
@@ -20,7 +21,7 @@ import csv
 
 # Configuration - Boat-Centric
 BOAT_NAME = "MackenSea"  # Single source of truth - change this for different boats
-VERSION = "2.2.0"  # Updated for dual CSV processing
+VERSION = "2.2.1"  # Updated to remove points
 
 # Derived paths - everything flows from boat name
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
@@ -43,15 +44,13 @@ MACRO_NAME = f"Rudder_Outline_{BOAT_NAME}"
 PROFILE_COLORS = {
     'fill': (1.0, 0.8, 0.6),      # Light orange
     'wire': (1.0, 0.5, 0.0),      # Orange
-    'shrunk': (0.8, 0.2, 0.0),    # Dark orange
-    'points': (1.0, 0.0, 0.0)     # Red
+    'shrunk': (0.8, 0.2, 0.0)     # Dark orange
 }
 
 OUTLINE_COLORS = {
     'fill': (0.6, 0.8, 1.0),      # Light blue  
     'wire': (0.0, 0.5, 1.0),      # Blue
-    'shrunk': (0.0, 0.2, 0.8),    # Dark blue
-    'points': (0.0, 0.0, 1.0)     # Blue
+    'shrunk': (0.0, 0.2, 0.8)     # Dark blue
 }
 
 
@@ -249,22 +248,10 @@ def process_csv_file(csv_filename, object_prefix, colors, doc):
     except Exception as e:
         print(f"   ⚠️ Could not create shrunk wire: {e}")
 
-    # Get all points for grid and visualization
+    # Get all points for grid calculation
     all_points = []
     for seg_type, points in segments:
         all_points.extend(points)
-
-    # Plot points with segment-specific colors
-    point_colors = {'line': colors['points'], 'arc': (0.0, 1.0, 0.0), 'curve': (0.0, 0.0, 1.0)}
-    point_counter = 0
-    for seg_type, points in segments:
-        color = point_colors.get(seg_type, colors['points'])
-        for x, z in points:
-            s = Part.makeSphere(2.0, Vector(x, 0, z))
-            obj = doc.addObject("Part::Feature", f"{object_prefix}_Pt_{point_counter}_{seg_type}")
-            obj.Shape = s
-            obj.ViewObject.ShapeColor = color
-            point_counter += 1
 
     print(f"   ✅ Created {object_prefix} objects with {len(segments)} segments")
     return objects_for_export, all_points
