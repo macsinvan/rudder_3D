@@ -30,7 +30,7 @@ OUTPUT_FOLDER = f"{BOAT_FOLDER}/output/01_outline"
 
 # File specifications
 NEW_SPEC_CSV = f"New_{BOAT_NAME}_Rudder.csv"
-NEW_PROFILE_STEP = f"New_{BOAT_NAME}_Profile.step"
+NEW_PROFILE_STEP = f"New_{BOAT_NAME}_Outline.step"
 
 # Parameters
 OFFSET_DIST = -5.0  # mm inward offset for shrink

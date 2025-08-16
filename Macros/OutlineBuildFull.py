@@ -21,7 +21,7 @@ import csv
 
 # Configuration - Boat-Centric
 BOAT_NAME = "MackenSea"  # Single source of truth - change this for different boats
-VERSION = "2.2.1"  # Updated to remove points
+VERSION = "2.2.19"  # LINE and ARC only - no CURVE support
 
 # Derived paths - everything flows from boat name
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
@@ -65,6 +65,8 @@ def read_explicit_csv(path: str):
     x2,y2
     x3,y3
     etc.
+    
+    Validates segments strictly - fails on any invalid segment.
     """
     segments = []
     current_type = None
@@ -111,11 +113,84 @@ def read_explicit_csv(path: str):
     if current_type and current_points:
         segments.append((current_type, current_points.copy()))
     
-    print(f"   📐 Parsed {len(segments)} geometry segments:")
+    # STRICT VALIDATION - No tolerance for bad input (LINES and ARCS only)
+    print(f"   📐 Validating {len(segments)} geometry segments...")
+    
+    for i, (seg_type, points) in enumerate(segments):
+        if seg_type == 'line':
+            if len(points) < 2:
+                error_msg = f"CSV ERROR: LINE segment {i} has {len(points)} points, needs at least 2"
+                print(f"   ❌ {error_msg}")
+                from PySide2 import QtWidgets
+                QtWidgets.QMessageBox.critical(None, "CSV Validation Error", error_msg)
+                raise ValueError(error_msg)
+                
+        elif seg_type == 'arc':
+            if len(points) != 3:
+                error_msg = f"CSV ERROR: ARC segment {i} has {len(points)} points, needs exactly 3"
+                print(f"   ❌ {error_msg}")
+                from PySide2 import QtWidgets
+                QtWidgets.QMessageBox.critical(None, "CSV Validation Error", error_msg)
+                raise ValueError(error_msg)
+                
+        else:
+            error_msg = f"CSV ERROR: Invalid segment type '{seg_type}' in segment {i}.\n"
+            error_msg += f"Only LINE and ARC segments are supported.\n"
+            error_msg += f"CURVE segments are no longer allowed - use multiple ARCs instead."
+            print(f"   ❌ {error_msg}")
+            from PySide2 import QtWidgets
+            QtWidgets.QMessageBox.critical(None, "CSV Validation Error", error_msg)
+            raise ValueError(error_msg)
+    
+    # CONTINUITY VALIDATION - Check segments connect properly
+    print(f"   🔗 Checking segment continuity...")
+    tolerance = 0.1  # mm tolerance for point matching
+    
+    for i in range(len(segments) - 1):
+        current_seg_type, current_points = segments[i]
+        next_seg_type, next_points = segments[i + 1]
+        
+        # Get end point of current segment
+        current_end = current_points[-1]
+        # Get start point of next segment  
+        next_start = next_points[0]
+        
+        # Calculate distance between end and start points
+        distance = ((current_end[0] - next_start[0])**2 + (current_end[1] - next_start[1])**2)**0.5
+        
+        if distance > tolerance:
+            error_msg = f"CSV ERROR: Segment {i} ({current_seg_type.upper()}) does not connect to segment {i+1} ({next_seg_type.upper()})\n"
+            error_msg += f"  Segment {i} ends at: ({current_end[0]:.3f}, {current_end[1]:.3f})\n"
+            error_msg += f"  Segment {i+1} starts at: ({next_start[0]:.3f}, {next_start[1]:.3f})\n"
+            error_msg += f"  Gap distance: {distance:.3f}mm (tolerance: {tolerance}mm)"
+            print(f"   ❌ {error_msg}")
+            from PySide2 import QtWidgets
+            QtWidgets.QMessageBox.critical(None, "CSV Continuity Error", error_msg)
+            raise ValueError(error_msg)
+    
+    # Check if outline closes (first point = last point)
+    if len(segments) > 0:
+        first_point = segments[0][1][0]  # First point of first segment
+        last_point = segments[-1][1][-1]  # Last point of last segment
+        distance = ((first_point[0] - last_point[0])**2 + (first_point[1] - last_point[1])**2)**0.5
+        
+        if distance > tolerance:
+            error_msg = f"CSV ERROR: Outline does not close properly\n"
+            error_msg += f"  First point: ({first_point[0]:.3f}, {first_point[1]:.3f})\n"
+            error_msg += f"  Last point: ({last_point[0]:.3f}, {last_point[1]:.3f})\n"
+            error_msg += f"  Gap distance: {distance:.3f}mm (tolerance: {tolerance}mm)"
+            print(f"   ❌ {error_msg}")
+            from PySide2 import QtWidgets
+            QtWidgets.QMessageBox.critical(None, "CSV Closure Error", error_msg)
+            raise ValueError(error_msg)
+    
+    print(f"   ✅ All segments validated successfully:")
     for i, (seg_type, points) in enumerate(segments):
         start_pt = points[0] if points else "none"
         end_pt = points[-1] if points else "none"
         print(f"      {i}: {seg_type.upper()} with {len(points)} points: {start_pt} -> {end_pt}")
+    
+    print(f"   ✅ All segments are continuous and outline closes properly")
     
     return segments
 
@@ -123,65 +198,32 @@ def read_explicit_csv(path: str):
 def create_edges_from_segments(segments):
     """
     Create FreeCAD edges from geometry segments.
+    Assumes segments are already validated - only LINE and ARC types allowed.
     """
     edges = []
     
     for seg_type, points in segments:
-        if not points:
-            continue
-            
-        try:
-            if seg_type == 'line':
-                if len(points) >= 2:
-                    for i in range(len(points) - 1):
-                        p1 = Vector(points[i][0], 0, points[i][1])
-                        p2 = Vector(points[i+1][0], 0, points[i+1][1])
-                        edges.append(Part.makeLine(p1, p2))
-                        
-            elif seg_type == 'arc':
-                if len(points) == 3:
-                    p1 = Vector(points[0][0], 0, points[0][1])
-                    p2 = Vector(points[1][0], 0, points[1][1])
-                    p3 = Vector(points[2][0], 0, points[2][1])
-                    edges.append(Part.Arc(p1, p2, p3).toShape())
-                else:
-                    print(f"      ⚠️ Arc needs exactly 3 points, got {len(points)}")
-                    
-            elif seg_type == 'curve':
-                if len(points) >= 2:
-                    # Create B-spline through all points
-                    vectors = [Vector(p[0], 0, p[1]) for p in points]
-                    if len(vectors) >= 2:
-                        # For 2 points, make a line
-                        if len(vectors) == 2:
-                            edges.append(Part.makeLine(vectors[0], vectors[1]))
-                        else:
-                            # For 3+ points, make a spline
-                            try:
-                                spline = Part.BSplineCurve()
-                                spline.interpolate(vectors)
-                                edges.append(spline.toShape())
-                            except:
-                                # Fallback to lines if spline fails
-                                for i in range(len(vectors) - 1):
-                                    edges.append(Part.makeLine(vectors[i], vectors[i+1]))
-                                    
-        except Exception as e:
-            print(f"      ⚠️ Failed to create {seg_type}: {e}")
-            # Fallback: create lines between consecutive points
+        if seg_type == 'line':
             for i in range(len(points) - 1):
                 p1 = Vector(points[i][0], 0, points[i][1])
                 p2 = Vector(points[i+1][0], 0, points[i+1][1])
                 edges.append(Part.makeLine(p1, p2))
+                
+        elif seg_type == 'arc':
+            # Exactly 3 points guaranteed by validation
+            p1 = Vector(points[0][0], 0, points[0][1])
+            p2 = Vector(points[1][0], 0, points[1][1])
+            p3 = Vector(points[2][0], 0, points[2][1])
+            edges.append(Part.Arc(p1, p2, p3).toShape())
     
-    print(f"   ✅ Created {len(edges)} edges from segments")
+    print(f"   ✅ Created {len(edges)} edges from {len(segments)} segments (LINE and ARC only)")
     return edges
 
 
 def process_csv_file(csv_filename, object_prefix, colors, doc):
     """
     Process a single CSV file and create FreeCAD objects.
-    Returns (objects_for_export, all_points) or (None, None) if file not found.
+    Returns (objects_for_export, all_points) or (None, None) if file not found or invalid.
     """
     csv_path = f"{INPUT_FOLDER}/{csv_filename}"
     
@@ -191,30 +233,54 @@ def process_csv_file(csv_filename, object_prefix, colors, doc):
     
     print(f"🔄 Processing {csv_filename}...")
     
-    # Parse CSV and create geometry
-    segments = read_explicit_csv(csv_path)
-    if not segments:
-        print(f"   ❌ No segments found in {csv_filename}")
+    # Parse CSV with strict validation - will raise exception on bad input
+    try:
+        segments = read_explicit_csv(csv_path)
+    except ValueError as e:
+        print(f"   ❌ CSV validation failed: {e}")
         return None, None
     
+    if not segments:
+        error_msg = f"No valid segments found in {csv_filename}"
+        print(f"   ❌ {error_msg}")
+        from PySide2 import QtWidgets
+        QtWidgets.QMessageBox.critical(None, "CSV Processing Error", error_msg)
+        return None, None
+    
+    # Create edges - no error handling needed since segments are validated
     edges = create_edges_from_segments(segments)
     if not edges:
-        print(f"   ❌ No edges created from {csv_filename}")
+        error_msg = f"No edges created from {csv_filename}"
+        print(f"   ❌ {error_msg}")
+        from PySide2 import QtWidgets
+        QtWidgets.QMessageBox.critical(None, "Geometry Creation Error", error_msg)
         return None, None
     
     # Build wire
     try:
         wire = Part.Wire(edges)
+        print(f"   🔧 Created wire with {len(wire.Edges)} edges, closed: {wire.isClosed()}")
+        
         if not wire.isClosed():
             # Try to close the wire
             last_pt = wire.Edges[-1].Vertexes[-1].Point
             first_pt = wire.Edges[0].Vertexes[0].Point
-            if last_pt.distanceToPoint(first_pt) > 0.1:  # If not already connected
+            gap_distance = last_pt.distanceToPoint(first_pt)
+            print(f"   📏 Gap distance: {gap_distance:.3f}mm")
+            
+            if gap_distance > 0.1:  # If not already connected
                 closing_edge = Part.makeLine(last_pt, first_pt)
                 wire = Part.Wire(edges + [closing_edge])
-                print(f"   🔗 Added closing edge to complete wire")
+                print(f"   🔗 Added closing edge, now closed: {wire.isClosed()}")
+        
+        # Simple validation
+        print(f"   ✅ Final wire: {len(wire.Edges)} edges, closed: {wire.isClosed()}, valid: {wire.isValid()}")
+        
     except Exception as e:
-        print(f"   ❌ Failed to create wire: {e}")
+        error_msg = f"Failed to create wire from {csv_filename}: {e}"
+        print(f"   ❌ {error_msg}")
+        from PySide2 import QtWidgets
+        QtWidgets.QMessageBox.critical(None, "Wire Creation Error", error_msg)
         return None, None
 
     # Create objects with proper naming
@@ -239,14 +305,100 @@ def process_csv_file(csv_filename, object_prefix, colors, doc):
 
     # Shrunk wire
     try:
-        shrunk_wire = wire.makeOffset2D(OFFSET_DIST)
+        print(f"   🔧 Creating shrunk wire with {OFFSET_DIST}mm offset...")
+        
+        # Try different makeOffset2D parameters for better curve handling
+        try:
+            # Method 1: High precision offset with join type specified
+            print(f"   🎯 Attempting high-precision offset...")
+            shrunk_wire_raw = wire.makeOffset2D(OFFSET_DIST, 0.01, True, True, False)  # offset, tol, fill, openResult, intersection
+            print(f"   ✅ High-precision offset successful")
+        except:
+            try:
+                # Method 2: Standard precision with different parameters
+                print(f"   🎯 Attempting standard offset with join settings...")
+                shrunk_wire_raw = wire.makeOffset2D(OFFSET_DIST, 0.1, True, True)  # offset, tolerance, fill, openResult
+                print(f"   ✅ Standard offset successful")
+            except:
+                try:
+                    # Method 3: Simple offset (original method)
+                    print(f"   🎯 Falling back to simple offset...")
+                    shrunk_wire_raw = wire.makeOffset2D(OFFSET_DIST)
+                    print(f"   ✅ Simple offset successful")
+                except Exception as e:
+                    print(f"   ❌ All offset methods failed: {e}")
+                    return None, None
+        
+        # DEBUG: Create a visual object for the raw shrunk wire to inspect shape
+        print(f"   🔍 Creating debug object for raw shrunk wire inspection...")
+        debug_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_{object_prefix}_Shrunk_RAW_DEBUG")
+        debug_obj.Shape = shrunk_wire_raw
+        debug_obj.ViewObject.ShapeColor = (1.0, 0.0, 1.0)  # Magenta for easy identification
+        debug_obj.ViewObject.LineWidth = 3
+        print(f"   🔍 DEBUG: Look for magenta '{debug_obj.Name}' object to inspect raw offset shape")
+        
+        # Use raw shrunk wire directly (no simplification for now)
+        print(f"   🚧 USING RAW SHRUNK WIRE (no simplification)")
+        shrunk_wire = shrunk_wire_raw
+        
+        # Final validation
+        print(f"   📊 Final shrunk wire: {len(shrunk_wire.Edges)} edges, closed: {shrunk_wire.isClosed()}")
+        
+        # Check edge count consistency
+        if len(shrunk_wire.Edges) != len(wire.Edges):
+            print(f"   📊 Edge count comparison:")
+            print(f"      Original: {len(wire.Edges)} edges")
+            print(f"      Shrunk: {len(shrunk_wire.Edges)} edges")
+            print(f"      Difference: {len(shrunk_wire.Edges) - len(wire.Edges)} edges")
+        
+        # Check closure consistency
+        if wire.isClosed() and not shrunk_wire.isClosed():
+            warning_msg = f"SHRUNK WIRE WARNING: Closure mismatch!\n"
+            warning_msg += f"  Original wire: CLOSED\n"
+            warning_msg += f"  Shrunk wire: OPEN\n"
+            warning_msg += f"  This will cause foil generation problems!"
+            print(f"   ⚠️ {warning_msg}")
+            
+        # Check bounding box consistency
+        orig_bb = wire.BoundBox
+        shrunk_bb = shrunk_wire.BoundBox
+        orig_diagonal = orig_bb.DiagonalLength
+        shrunk_diagonal = shrunk_bb.DiagonalLength
+        
+        print(f"   📏 Bounding box comparison:")
+        print(f"      Original: {orig_diagonal:.1f}mm diagonal")
+        print(f"      Shrunk: {shrunk_diagonal:.1f}mm diagonal")
+        
+        # Shrunk should be smaller but not dramatically different
+        size_ratio = shrunk_diagonal / orig_diagonal if orig_diagonal > 0 else 0
+        if size_ratio < 0.5 or size_ratio > 1.0:
+            warning_msg = f"SHRUNK WIRE WARNING: Suspicious size change!\n"
+            warning_msg += f"  Size ratio: {size_ratio:.2f} (expected: 0.7-0.95)\n"
+            warning_msg += f"  Shrunk wire may be malformed"
+            print(f"   ⚠️ {warning_msg}")
+            
+        # Check if shrunk wire is valid
+        if not shrunk_wire.isValid():
+            error_msg = f"SHRUNK WIRE ERROR: Invalid geometry created by offset operation!"
+            print(f"   ❌ {error_msg}")
+            from PySide2 import QtWidgets
+            QtWidgets.QMessageBox.warning(None, "Shrunk Wire Warning", error_msg)
+        
+        # Create shrunk wire object (the normal one for export)
         shrunk_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_{object_prefix}_Shrunk")
         shrunk_obj.Shape = shrunk_wire
         shrunk_obj.ViewObject.ShapeColor = colors['shrunk']
         shrunk_obj.ViewObject.LineWidth = 2
         objects_for_export.append(shrunk_obj)
+        
+        print(f"   ✅ Shrunk wire created with enhanced offset parameters")
+        print(f"   🔍 INSPECT: Compare magenta debug object vs normal shrunk object")
+        
     except Exception as e:
-        print(f"   ⚠️ Could not create shrunk wire: {e}")
+        error_msg = f"SHRUNK WIRE ERROR: Offset operation failed: {e}"
+        print(f"   ❌ {error_msg}")
+        from PySide2 import QtWidgets
+        QtWidgets.QMessageBox.warning(None, "Shrunk Wire Error", error_msg)
 
     # Get all points for grid calculation
     all_points = []
@@ -294,8 +446,47 @@ def run():
     if profile_objects:
         profile_step_path = f"{OUTPUT_FOLDER}/{PROFILE_STEP}"
         try:
+            print(f"   🔧 Exporting {len(profile_objects)} profile objects...")
+            
+            # Pre-export validation - log what we're sending
+            for i, obj in enumerate(profile_objects):
+                edge_count = len(obj.Shape.Edges) if hasattr(obj.Shape, 'Edges') else 0
+                print(f"      Object {i}: {obj.Name} - Valid: {obj.Shape.isValid()}, Edges: {edge_count}")
+            
             Part.export(profile_objects, profile_step_path)
             print(f"✅ Exported Profile STEP: {profile_step_path}")
+            
+            # Post-export validation - verify file integrity
+            import os
+            file_size = os.path.getsize(profile_step_path)
+            print(f"   📏 File size: {file_size} bytes")
+            
+            # Test import to verify data integrity
+            try:
+                test_compound = Part.read(profile_step_path)
+                test_subs = getattr(test_compound, 'SubShapes', [test_compound])
+                print(f"   🔍 STEP Export Validation:")
+                print(f"      File contains {len(test_subs)} objects")
+                
+                for i, sub in enumerate(test_subs):
+                    edge_count = len(sub.Edges) if hasattr(sub, 'Edges') else 0
+                    print(f"      Object {i}: {edge_count} edges")
+                    
+                    # Compare with original
+                    if i < len(profile_objects):
+                        orig_edges = len(profile_objects[i].Shape.Edges)
+                        if edge_count != orig_edges:
+                            warning_msg = f"EXPORT WARNING: Edge count changed during STEP export!\n"
+                            warning_msg += f"  Object {i} ({profile_objects[i].Name}):\n"
+                            warning_msg += f"  Original: {orig_edges} edges\n"
+                            warning_msg += f"  Exported: {edge_count} edges\n"
+                            warning_msg += f"  Lost: {orig_edges - edge_count} edges"
+                            print(f"   ⚠️ {warning_msg}")
+                            
+            except Exception as e:
+                error_msg = f"EXPORT VALIDATION ERROR: Cannot re-read exported STEP file: {e}"
+                print(f"   ❌ {error_msg}")
+                
         except Exception as e:
             print(f"❌ Profile STEP export failed: {e}")
     
@@ -303,8 +494,49 @@ def run():
     if outline_objects:
         outline_step_path = f"{OUTPUT_FOLDER}/{OUTLINE_STEP}"
         try:
+            print(f"   🔧 Exporting {len(outline_objects)} outline objects...")
+            
+            # Pre-export validation - log what we're sending
+            for i, obj in enumerate(outline_objects):
+                edge_count = len(obj.Shape.Edges) if hasattr(obj.Shape, 'Edges') else 0
+                print(f"      Object {i}: {obj.Name} - Valid: {obj.Shape.isValid()}, Edges: {edge_count}")
+            
             Part.export(outline_objects, outline_step_path)
             print(f"✅ Exported Outline STEP: {outline_step_path}")
+            
+            # Post-export validation - verify file integrity
+            import os
+            file_size = os.path.getsize(outline_step_path)
+            print(f"   📏 File size: {file_size} bytes")
+            
+            # Test import to verify data integrity
+            try:
+                test_compound = Part.read(outline_step_path)
+                test_subs = getattr(test_compound, 'SubShapes', [test_compound])
+                print(f"   🔍 STEP Export Validation:")
+                print(f"      File contains {len(test_subs)} objects")
+                
+                for i, sub in enumerate(test_subs):
+                    edge_count = len(sub.Edges) if hasattr(sub, 'Edges') else 0
+                    print(f"      Object {i}: {edge_count} edges")
+                    
+                    # Compare with original
+                    if i < len(outline_objects):
+                        orig_edges = len(outline_objects[i].Shape.Edges)
+                        if edge_count != orig_edges:
+                            warning_msg = f"EXPORT WARNING: Edge count changed during STEP export!\n"
+                            warning_msg += f"  Object {i} ({outline_objects[i].Name}):\n"
+                            warning_msg += f"  Original: {orig_edges} edges\n"
+                            warning_msg += f"  Exported: {edge_count} edges\n"
+                            warning_msg += f"  Lost: {orig_edges - edge_count} edges"
+                            print(f"   ⚠️ {warning_msg}")
+                            from PySide2 import QtWidgets
+                            QtWidgets.QMessageBox.warning(None, "STEP Export Warning", warning_msg)
+                            
+            except Exception as e:
+                error_msg = f"EXPORT VALIDATION ERROR: Cannot re-read exported STEP file: {e}"
+                print(f"   ❌ {error_msg}")
+                
         except Exception as e:
             print(f"❌ Outline STEP export failed: {e}")
 

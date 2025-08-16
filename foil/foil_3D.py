@@ -21,7 +21,7 @@ INPUT_FOLDER = f"{BOAT_FOLDER}/output/01_outline"  # Takes input from outline ou
 OUTPUT_FOLDER = f"{BOAT_FOLDER}/output/02_foil"
 
 # File specifications
-PROFILES_STEP_FILE = f"{BOAT_NAME}_Profiles.step"  # Input from outline step
+PROFILES_STEP_FILE = f"{BOAT_NAME}_Outline.step"  # Input from outline step
 FOIL_STEP_FILE = f"{BOAT_NAME}_Foil.step"          # Output for integration step
 
 # Configuration - Simplified and Essential Parameters Only
