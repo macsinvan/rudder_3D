@@ -195,33 +195,36 @@ def arrange_for_printing(foil_obj, stock_obj, tabs, doc):
     try:
         print(f"🎯 Arranging parts for printing...")
         
-        # Get bounding boxes
+        # Get bounding boxes BEFORE any transformations
         foil_bbox = foil_obj.Shape.BoundBox
         stock_bbox = stock_obj.Shape.BoundBox
         
-        # Position foil at origin (create new translated shape)
+        # Create transformation matrix for foil (position at origin)
+        foil_matrix = App.Matrix()
         foil_offset = Vector(-foil_bbox.Center.x, -foil_bbox.YMin, -foil_bbox.ZMin)
-        foil_translated = foil_obj.Shape.translate(foil_offset)
-        foil_obj.Shape = foil_translated
+        foil_matrix.move(foil_offset)
+        foil_obj.Shape = foil_obj.Shape.transformGeometry(foil_matrix)
         
-        # Position stock next to foil (create new translated shape)
+        # Create transformation matrix for stock (position next to foil)
+        stock_matrix = App.Matrix()
         stock_offset = Vector(
             foil_bbox.XLength/2 + PRINT_MARGIN - stock_bbox.Center.x,
             -stock_bbox.YMin, 
             -stock_bbox.ZMin
         )
-        stock_translated = stock_obj.Shape.translate(stock_offset)
-        stock_obj.Shape = stock_translated
+        stock_matrix.move(stock_offset)
+        stock_obj.Shape = stock_obj.Shape.transformGeometry(stock_matrix)
         
-        # Position tabs to connect parts (simplified for demo)
+        # Position tabs using transformation matrices
         for i, tab in enumerate(tabs):
+            tab_matrix = App.Matrix()
             tab_offset = Vector(
                 foil_bbox.XLength/4 * (i - len(tabs)/2),
                 0,
                 foil_bbox.ZLength + PRINT_MARGIN
             )
-            tab_translated = tab.Shape.translate(tab_offset)
-            tab.Shape = tab_translated
+            tab_matrix.move(tab_offset)
+            tab.Shape = tab.Shape.transformGeometry(tab_matrix)
         
         print(f"   ✅ Arranged parts for printing")
         return True
@@ -307,6 +310,10 @@ def run():
     if not solid_foil_obj:
         print("❌ Failed to create solid foil.")
         return
+    
+    # Hide the original cut foil to avoid confusion
+    cut_foil_obj.ViewObject.Visibility = False
+    print(f"   ✅ Hidden original cut foil")
 
     # Step 5: Create breakaway tabs
     print(f"\n🔗 STEP 5: Creating breakaway tabs...")
