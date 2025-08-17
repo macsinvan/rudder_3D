@@ -26,7 +26,7 @@ VERSION = "2.2.19"  # LINE and ARC only - no CURVE support
 # Derived paths - everything flows from boat name
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
 INPUT_FOLDER = f"{BOAT_FOLDER}/input"
-OUTPUT_FOLDER = f"{BOAT_FOLDER}/output/01_outline"
+OUTPUT_FOLDER = f"{BOAT_FOLDER}/output/outline"
 
 # File specifications
 PROFILE_CSV = f"{BOAT_NAME}_Rudder_Profile.csv"

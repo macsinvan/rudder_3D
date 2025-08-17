@@ -25,7 +25,7 @@ VERSION = "1.3.0"
 # Derived paths - everything flows from boat name
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
 INPUT_FOLDER = f"{BOAT_FOLDER}/input"
-OUTPUT_FOLDER = f"{BOAT_FOLDER}/output/03_stock"
+OUTPUT_FOLDER = f"{BOAT_FOLDER}/output/stock"
 
 # File specifications
 STOCK_CSV_FILE = f"{BOAT_NAME}_Stock.csv"

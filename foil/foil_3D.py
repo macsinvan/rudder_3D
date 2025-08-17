@@ -17,8 +17,8 @@ VERSION = "1.1.1"
 
 # Derived paths - everything flows from boat name
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
-INPUT_FOLDER = f"{BOAT_FOLDER}/output/01_outline"  # Takes input from outline output
-OUTPUT_FOLDER = f"{BOAT_FOLDER}/output/02_foil"
+INPUT_FOLDER = f"{BOAT_FOLDER}/output/outline"  # Takes input from outline output
+OUTPUT_FOLDER = f"{BOAT_FOLDER}/output/foil"
 
 # File specifications
 PROFILES_STEP_FILE = f"{BOAT_NAME}_Outline.step"  # Input from outline step
