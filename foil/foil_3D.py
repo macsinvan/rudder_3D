@@ -251,8 +251,8 @@ def build_foil_from_step(doc: App.Document):
     # Generate NACA sections
     sections = []
     for idx, ((x1, z1), (x2, z2)) in enumerate(chords):       
-        p_le = Vector(x1, 0.0, z1)  # leading edge (minimum x)
-        p_te = Vector(x2, 0.0, z2)  # trailing edge (maximum x)
+        p_le = Vector(x2, 0.0, z1)  # trailing edge (minimum x)
+        p_te = Vector(x1, 0.0, z2)  # leading edge (maximum x)
         vec = p_te.sub(p_le)
         length = vec.Length
         ux = vec.normalize()

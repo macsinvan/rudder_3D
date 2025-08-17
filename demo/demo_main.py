@@ -106,49 +106,110 @@ def scale_object(obj, scale_factor):
         return False
 
 
-def create_solid_foil_from_cut(cut_foil_obj, doc):
+def split_foil_for_visualization(cut_foil_obj, doc):
     """
-    Create a solid demo foil from the cut foil.
-    For demo purposes, we want a solid foil rather than one with a cavity.
+    Split the foil down the middle to show the internal cavity and stock.
+    Split along Y-axis (through the chord/thickness).
     """
     try:
-        print(f"🔧 Creating solid demo foil...")
+        print(f"✂️ Splitting foil through the chord for visualization...")
         
-        # Get the cut foil shape
-        cut_shape = cut_foil_obj.Shape
+        foil_shape = cut_foil_obj.Shape
+        foil_bbox = foil_shape.BoundBox
         
-        # For demo, we'll create a simplified solid version
-        # Use the outer boundary to create a solid foil
-        if hasattr(cut_shape, 'Shells') and cut_shape.Shells:
-            # Get the outer shell and make it solid
-            outer_shell = cut_shape.Shells[0]
-            try:
-                solid_foil = Part.makeSolid(outer_shell)
-                print(f"   ✅ Created solid foil from shell")
-            except:
-                # If that fails, use the original cut shape
-                solid_foil = cut_shape
-                print(f"   ⚠️ Using cut foil as-is for demo")
-        else:
-            solid_foil = cut_shape
-            print(f"   ⚠️ Using cut foil as-is for demo")
+        # Create cutting plane down the middle (XZ plane through center Y)
+        cutting_plane_y = foil_bbox.Center.y
         
-        # Create new solid foil object
-        solid_foil_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Demo_SolidFoil")
-        solid_foil_obj.Shape = solid_foil
-        solid_foil_obj.ViewObject.ShapeColor = (0.0, 0.8, 0.0)  # Green
+        # Create a large cutting box that splits the foil through chord
+        cutter_box = Part.makeBox(
+            foil_bbox.XLength + 10,   # Full width + margin
+            foil_bbox.YLength/2 + 1,  # Half thickness + margin
+            foil_bbox.ZLength + 10,   # Full length + margin
+            Vector(foil_bbox.XMin - 5, cutting_plane_y, foil_bbox.ZMin - 5)
+        )
         
-        print(f"   ✅ Created solid demo foil: {solid_foil.ShapeType}")
-        return solid_foil_obj
+        # Split foil into two halves through chord
+        upper_half = foil_shape.cut(cutter_box)      # Upper part (smaller Y)
+        lower_half = foil_shape.common(cutter_box)   # Lower part (larger Y)
+        
+        # Create upper half object
+        upper_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Demo_Foil_Upper")
+        upper_obj.Shape = upper_half
+        upper_obj.ViewObject.ShapeColor = (0.0, 0.8, 0.0)  # Green
+        
+        # Create lower half object  
+        lower_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Demo_Foil_Lower")
+        lower_obj.Shape = lower_half
+        lower_obj.ViewObject.ShapeColor = (0.0, 0.6, 0.0)  # Darker green
+        
+        print(f"   ✅ Split foil into upper and lower halves along Y-axis")
+        print(f"   📏 Upper half: {len(upper_half.Faces)} faces")
+        print(f"   📏 Lower half: {len(lower_half.Faces)} faces")
+        print(f"   📐 Split at Y = {cutting_plane_y:.1f}mm")
+        
+        return upper_obj, lower_obj
         
     except Exception as e:
-        print(f"❌ Failed to create solid foil: {e}")
-        return None
+        print(f"❌ Failed to split foil: {e}")
+        return None, None
+
+
+def position_stock_in_cavity(upper_foil_obj, lower_foil_obj, stock_obj, doc):
+    """
+    Position the stock inside the foil cavity, centered between the split halves.
+    Applies 180° rotation around Z-axis to orient post toward leading edge.
+    """
+    try:
+        print(f"🎯 Positioning stock between upper and lower foil halves...")
+        
+        # Use upper half for reference (both halves should have same cavity)
+        foil_bbox = upper_foil_obj.Shape.BoundBox
+        stock_bbox = stock_obj.Shape.BoundBox
+        
+        # Create transformation matrix with rotation and translation
+        stock_matrix = App.Matrix()
+        
+        # First rotate 180° around Z-axis to orient post toward leading edge
+        # Rotation is around stock's current center
+        stock_matrix.rotateZ(3.14159)  # 180° in radians
+        print(f"   🔄 Applied 180° rotation around Z-axis")
+        
+        # Apply rotation first
+        rotated_shape = stock_obj.Shape.transformGeometry(stock_matrix)
+        
+        # Get bounding box of rotated shape for positioning
+        rotated_bbox = rotated_shape.BoundBox
+        
+        # Calculate position offset to center rotated stock in cavity
+        stock_offset = Vector(
+            foil_bbox.Center.x - rotated_bbox.Center.x,  # Center on X
+            foil_bbox.Center.y - rotated_bbox.Center.y,  # Center on Y (between halves)
+            foil_bbox.Center.z - rotated_bbox.Center.z   # Center on Z
+        )
+        
+        # Create translation matrix
+        translation_matrix = App.Matrix()
+        translation_matrix.move(stock_offset)
+        
+        # Apply translation to the already rotated shape
+        final_shape = rotated_shape.transformGeometry(translation_matrix)
+        stock_obj.Shape = final_shape
+        
+        print(f"   ✅ Positioned stock between upper and lower halves")
+        print(f"   📐 Stock offset: ({stock_offset.x:.1f}, {stock_offset.y:.1f}, {stock_offset.z:.1f})mm")
+        print(f"   🎯 Post now oriented toward leading edge")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to position stock: {e}")
+        return False
 
 
 def create_breakaway_tabs(foil_obj, stock_obj, doc):
     """
     Create breakaway tabs connecting the stock to the foil.
+    Stock is now positioned inside the cavity.
     """
     try:
         print(f"🔗 Creating {TAB_COUNT} breakaway tabs...")
@@ -158,21 +219,34 @@ def create_breakaway_tabs(foil_obj, stock_obj, doc):
         
         tabs = []
         
-        # Create tabs at different positions around the stock
+        # Create tabs that bridge from stock (inside cavity) to foil exterior
         for i in range(TAB_COUNT):
-            angle = (360.0 / TAB_COUNT) * i  # Distribute tabs evenly
+            # Position tabs to connect stock to foil opening
+            # Since stock is inside cavity, tabs need to reach outside
             
-            # Calculate tab position (simplified - connect to foil base)
-            tab_x = stock_bbox.Center.x + (stock_bbox.XLength / 3) * (i - TAB_COUNT/2)
-            tab_y = foil_bbox.YMin  # Bottom of foil
-            tab_z = stock_bbox.Center.z
+            # Calculate tab position - from stock edge to foil edge
+            if i == 0:  # Top tab
+                tab_start = Vector(stock_bbox.Center.x, stock_bbox.YMax, stock_bbox.ZMax + 2)
+                tab_end = Vector(foil_bbox.Center.x, foil_bbox.YMax + 5, stock_bbox.ZMax + 2)
+            elif i == 1:  # Side tab
+                tab_start = Vector(stock_bbox.XMax + 2, stock_bbox.Center.y, stock_bbox.Center.z)
+                tab_end = Vector(foil_bbox.XMax + 5, stock_bbox.Center.y, stock_bbox.Center.z)
+            else:  # Bottom tab
+                tab_start = Vector(stock_bbox.Center.x, stock_bbox.YMin, stock_bbox.ZMin - 2)
+                tab_end = Vector(foil_bbox.Center.x, foil_bbox.YMin - 5, stock_bbox.ZMin - 2)
             
-            # Create tab as a small box
+            # Create tab as connecting bridge
+            tab_center = Vector(
+                (tab_start.x + tab_end.x) / 2,
+                (tab_start.y + tab_end.y) / 2,
+                (tab_start.z + tab_end.z) / 2
+            )
+            
             tab_shape = Part.makeBox(
                 TAB_WIDTH, 
                 TAB_THICKNESS, 
                 TAB_WIDTH,
-                Vector(tab_x - TAB_WIDTH/2, tab_y, tab_z - TAB_WIDTH/2)
+                Vector(tab_center.x - TAB_WIDTH/2, tab_center.y - TAB_THICKNESS/2, tab_center.z - TAB_WIDTH/2)
             )
             
             tab_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Demo_Tab_{i}")
@@ -180,7 +254,7 @@ def create_breakaway_tabs(foil_obj, stock_obj, doc):
             tab_obj.ViewObject.ShapeColor = (1.0, 1.0, 0.0)  # Yellow
             tabs.append(tab_obj)
         
-        print(f"   ✅ Created {len(tabs)} breakaway tabs")
+        print(f"   ✅ Created {len(tabs)} breakaway tabs connecting stock to foil")
         return tabs
         
     except Exception as e:
@@ -234,29 +308,28 @@ def arrange_for_printing(foil_obj, stock_obj, tabs, doc):
         return False
 
 
-def create_demo_assembly(foil_obj, stock_obj, tabs, doc):
+def create_demo_assembly_simple(upper_foil_obj, lower_foil_obj, stock_obj, doc):
     """
-    Create final demo assembly by fusing all parts together.
+    Create simple demo assembly with split foil halves and stock (no tabs).
     """
     try:
-        print(f"🔧 Creating demo assembly...")
+        print(f"🔧 Creating simple demo assembly...")
         
-        # Start with foil
-        assembly_shape = foil_obj.Shape
+        # Start with upper foil half
+        assembly_shape = upper_foil_obj.Shape
+        
+        # Add lower foil half
+        assembly_shape = assembly_shape.fuse(lower_foil_obj.Shape)
         
         # Add stock
         assembly_shape = assembly_shape.fuse(stock_obj.Shape)
-        
-        # Add all tabs
-        for tab in tabs:
-            assembly_shape = assembly_shape.fuse(tab.Shape)
         
         # Create final assembly object
         assembly_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Demo_Assembly")
         assembly_obj.Shape = assembly_shape
         assembly_obj.ViewObject.ShapeColor = (0.0, 0.6, 1.0)  # Light blue
         
-        print(f"   ✅ Created demo assembly")
+        print(f"   ✅ Created simple demo assembly (no tabs)")
         return assembly_obj
         
     except Exception as e:
@@ -304,33 +377,26 @@ def run():
         print("❌ Failed to scale stock.")
         return
 
-    # Step 4: Create solid foil for demo
-    print(f"\n🔧 STEP 4: Creating solid demo foil...")
-    solid_foil_obj = create_solid_foil_from_cut(cut_foil_obj, doc)
-    if not solid_foil_obj:
-        print("❌ Failed to create solid foil.")
+    # Step 4: Split foil for visualization (through chord along Y-axis)
+    print(f"\n✂️ STEP 4: Splitting foil through chord for visualization...")
+    upper_foil_obj, lower_foil_obj = split_foil_for_visualization(cut_foil_obj, doc)
+    if not upper_foil_obj or not lower_foil_obj:
+        print("❌ Failed to split foil.")
         return
     
     # Hide the original cut foil to avoid confusion
     cut_foil_obj.ViewObject.Visibility = False
     print(f"   ✅ Hidden original cut foil")
 
-    # Step 5: Create breakaway tabs
-    print(f"\n🔗 STEP 5: Creating breakaway tabs...")
-    tabs = create_breakaway_tabs(solid_foil_obj, stock_obj, doc)
-    if not tabs:
-        print("❌ Failed to create tabs.")
+    # Step 5: Position stock between the foil halves
+    print(f"\n🎯 STEP 5: Positioning stock between halves...")
+    if not position_stock_in_cavity(upper_foil_obj, lower_foil_obj, stock_obj, doc):
+        print("❌ Failed to position stock.")
         return
 
-    # Step 6: Arrange for printing
-    print(f"\n🎯 STEP 6: Arranging for printing...")
-    if not arrange_for_printing(solid_foil_obj, stock_obj, tabs, doc):
-        print("❌ Failed to arrange parts.")
-        return
-
-    # Step 7: Create final assembly
-    print(f"\n🔧 STEP 7: Creating demo assembly...")
-    assembly_obj = create_demo_assembly(solid_foil_obj, stock_obj, tabs, doc)
+    # Step 6: Create simple assembly (no tabs)
+    print(f"\n🔧 STEP 6: Creating simple demo assembly...")
+    assembly_obj = create_demo_assembly_simple(upper_foil_obj, lower_foil_obj, stock_obj, doc)
     if not assembly_obj:
         print("❌ Failed to create assembly.")
         return
