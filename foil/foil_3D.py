@@ -8,7 +8,7 @@ import sys, os
 from PySide2 import QtWidgets
 import FreeCAD as App, FreeCADGui as Gui, Part
 from FreeCAD import Vector
-from outline.geometry import slice_chords
+from foil.geometry import slice_chords
 from rudderlib_foil.naca import naca4_coordinates
 
 # Configuration - Boat-Centric
