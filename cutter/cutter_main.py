@@ -220,6 +220,13 @@ def align_and_cut_foil(foil_obj, cutter_obj, doc):
     try:
         print(f"🎯 Aligning cutter and cutting foil...")
         
+        # Debug: Check what types of geometry we have
+        print(f"   🔍 Foil shape type: {foil_obj.Shape.ShapeType}")
+        print(f"   🔍 Foil solids: {len(foil_obj.Shape.Solids) if hasattr(foil_obj.Shape, 'Solids') else 'N/A'}")
+        print(f"   🔍 Foil faces: {len(foil_obj.Shape.Faces) if hasattr(foil_obj.Shape, 'Faces') else 'N/A'}")
+        print(f"   🔍 Cutter shape type: {cutter_obj.Shape.ShapeType}")
+        print(f"   🔍 Cutter solids: {len(cutter_obj.Shape.Solids) if hasattr(cutter_obj.Shape, 'Solids') else 'N/A'}")
+        
         # Get bounding boxes for alignment
         foil_bbox = foil_obj.Shape.BoundBox
         cutter_bbox = cutter_obj.Shape.BoundBox
@@ -245,9 +252,33 @@ def align_and_cut_foil(foil_obj, cutter_obj, doc):
         aligned_cutter_obj.ViewObject.ShapeColor = (1.0, 0.5, 0.0)  # Orange
         aligned_cutter_obj.ViewObject.Transparency = 70
         
+        # Check if foil is a solid - if not, try to make it one
+        if foil_obj.Shape.ShapeType != 'Solid' and len(foil_obj.Shape.Solids) == 0:
+            print(f"   ⚠️ Foil is not a solid ({foil_obj.Shape.ShapeType}), attempting to create solid...")
+            try:
+                # Try to make a solid from the shell/compound
+                if hasattr(foil_obj.Shape, 'Shells') and foil_obj.Shape.Shells:
+                    shell = foil_obj.Shape.Shells[0]
+                    foil_solid = Part.makeSolid(shell)
+                    print(f"   ✅ Created solid from shell")
+                elif hasattr(foil_obj.Shape, 'Faces') and foil_obj.Shape.Faces:
+                    # Try to create shell from faces then solid
+                    shell = Part.makeShell(foil_obj.Shape.Faces)
+                    foil_solid = Part.makeSolid(shell)
+                    print(f"   ✅ Created solid from faces")
+                else:
+                    print(f"   ❌ Cannot create solid - no shells or faces found")
+                    foil_solid = foil_obj.Shape
+            except Exception as e:
+                print(f"   ⚠️ Could not create solid: {e}, using original shape")
+                foil_solid = foil_obj.Shape
+        else:
+            foil_solid = foil_obj.Shape
+            print(f"   ✅ Foil is already a solid")
+        
         # Perform the cut operation (foil - cutter = foil with cavity)
         print(f"   ✂️ Performing Boolean cut operation...")
-        cut_shape = foil_obj.Shape.cut(cutter_aligned)
+        cut_shape = foil_solid.cut(cutter_aligned)
         
         # Create final cut foil object
         cut_foil_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Cut_Foil")
@@ -256,10 +287,15 @@ def align_and_cut_foil(foil_obj, cutter_obj, doc):
         
         # Validation
         solid_count = len(cut_shape.Solids) if hasattr(cut_shape, 'Solids') else 0
-        print(f"   ✅ Cut foil created: {solid_count} solid(s), valid: {cut_shape.isValid()}")
+        face_count = len(cut_shape.Faces) if hasattr(cut_shape, 'Faces') else 0
+        print(f"   ✅ Cut foil created: {solid_count} solid(s), {face_count} faces, valid: {cut_shape.isValid()}")
+        print(f"   🔍 Cut result type: {cut_shape.ShapeType}")
         
-        if solid_count == 0:
-            print(f"   ⚠️ Warning: No solids in cut result - check geometry alignment")
+        if solid_count == 0 and face_count == 0:
+            print(f"   ❌ Critical: No geometry in cut result - Boolean operation completely failed")
+            return None
+        elif solid_count == 0:
+            print(f"   ⚠️ Warning: No solids in cut result - result is surface/shell geometry")
         
         return cut_foil_obj
         
@@ -320,7 +356,7 @@ def run():
         print("❌ Cut operation failed.")
         return
 
-    # Step 6: Export finished rudder foil
+# Step 6: Export finished rudder foil
     print(f"\n💾 STEP 6: Exporting cut foil...")
     cut_foil_path = f"{CUTTER_FOLDER}/{CUT_FOIL_STEP}"
     cut_foil_stl_path = f"{CUTTER_FOLDER}/{BOAT_NAME}_Cut_Foil.stl"
@@ -331,29 +367,23 @@ def run():
         print(f"✅ Exported cut foil STEP: {cut_foil_path}")
         
         # Export STL file for 3D printing
-        import Mesh
-        mesh = cut_foil_obj.Shape.tessellate(0.1)  # 0.1mm tolerance for high quality
-        mesh_obj = Mesh.Mesh(mesh[0], mesh[1])
-        mesh_obj.write(cut_foil_stl_path)
-        print(f"✅ Exported cut foil STL: {cut_foil_stl_path}")
+        try:
+            cut_foil_obj.Shape.exportStl(cut_foil_stl_path)
+            print(f"✅ Exported cut foil STL: {cut_foil_stl_path}")
+        except Exception as stl_error:
+            print(f"   ❌ STL export failed: {stl_error}")
+            print(f"   ℹ️ STEP file is still available for CAD use")
         
         # Validation
         step_size = os.path.getsize(cut_foil_path)
-        stl_size = os.path.getsize(cut_foil_stl_path)
         print(f"   📏 STEP file size: {step_size} bytes")
-        print(f"   📏 STL file size: {stl_size} bytes")
         
-        # STL validation
-        print(f"   🔍 STL mesh info: {len(mesh[0])} vertices, {len(mesh[1])} triangles")
+        if os.path.exists(cut_foil_stl_path):
+            stl_size = os.path.getsize(cut_foil_stl_path)
+            print(f"   📏 STL file size: {stl_size} bytes")
         
     except Exception as e:
         print(f"❌ Export failed: {e}")
-        # Try to export at least one format
-        try:
-            Part.export([cut_foil_obj], cut_foil_path)
-            print(f"✅ Exported STEP file only: {cut_foil_path}")
-        except:
-            print(f"❌ All exports failed")
 
     # Finalize view
     doc.recompute()
