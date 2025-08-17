@@ -65,13 +65,24 @@ def import_step_file(step_path, doc, object_prefix):
         # Import the STEP file
         imported_shape = Part.read(step_path)
         
+        # SINGLE FIX: Make foil solid immediately
+        if object_prefix == "Foil":
+            print(f"   🔧 Converting foil to solid...")
+            if imported_shape.ShapeType != 'Solid':
+                try:
+                    if hasattr(imported_shape, 'Shells') and imported_shape.Shells:
+                        imported_shape = Part.makeSolid(imported_shape.Shells[0])
+                        print(f"   ✅ Converted to solid")
+                except Exception as e:
+                    print(f"   ⚠️ Could not convert to solid: {e}")
+        
         # Create object in document
         obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_{object_prefix}")
         obj.Shape = imported_shape
         
         # Basic validation
         edge_count = len(obj.Shape.Edges) if hasattr(obj.Shape, 'Edges') else 0
-        print(f"   ✅ Imported: {edge_count} edges, valid: {obj.Shape.isValid()}")
+        print(f"   ✅ Imported: {edge_count} edges, valid: {obj.Shape.isValid()}, type: {obj.Shape.ShapeType}")
         
         return obj
         
@@ -252,29 +263,9 @@ def align_and_cut_foil(foil_obj, cutter_obj, doc):
         aligned_cutter_obj.ViewObject.ShapeColor = (1.0, 0.5, 0.0)  # Orange
         aligned_cutter_obj.ViewObject.Transparency = 70
         
-        # Check if foil is a solid - if not, try to make it one
-        if foil_obj.Shape.ShapeType != 'Solid' and len(foil_obj.Shape.Solids) == 0:
-            print(f"   ⚠️ Foil is not a solid ({foil_obj.Shape.ShapeType}), attempting to create solid...")
-            try:
-                # Try to make a solid from the shell/compound
-                if hasattr(foil_obj.Shape, 'Shells') and foil_obj.Shape.Shells:
-                    shell = foil_obj.Shape.Shells[0]
-                    foil_solid = Part.makeSolid(shell)
-                    print(f"   ✅ Created solid from shell")
-                elif hasattr(foil_obj.Shape, 'Faces') and foil_obj.Shape.Faces:
-                    # Try to create shell from faces then solid
-                    shell = Part.makeShell(foil_obj.Shape.Faces)
-                    foil_solid = Part.makeSolid(shell)
-                    print(f"   ✅ Created solid from faces")
-                else:
-                    print(f"   ❌ Cannot create solid - no shells or faces found")
-                    foil_solid = foil_obj.Shape
-            except Exception as e:
-                print(f"   ⚠️ Could not create solid: {e}, using original shape")
-                foil_solid = foil_obj.Shape
-        else:
-            foil_solid = foil_obj.Shape
-            print(f"   ✅ Foil is already a solid")
+        # Foil should now be solid from import - no need to check
+        foil_solid = foil_obj.Shape
+        print(f"   ✅ Using foil: {foil_solid.ShapeType}")
         
         # Perform the cut operation (foil - cutter = foil with cavity)
         print(f"   ✂️ Performing Boolean cut operation...")
@@ -356,7 +347,7 @@ def run():
         print("❌ Cut operation failed.")
         return
 
-# Step 6: Export finished rudder foil
+    # Step 6: Export finished rudder foil
     print(f"\n💾 STEP 6: Exporting cut foil...")
     cut_foil_path = f"{CUTTER_FOLDER}/{CUT_FOIL_STEP}"
     cut_foil_stl_path = f"{CUTTER_FOLDER}/{BOAT_NAME}_Cut_Foil.stl"

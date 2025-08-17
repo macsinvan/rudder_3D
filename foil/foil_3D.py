@@ -288,7 +288,7 @@ def build_foil_from_step(doc: App.Document):
     print(f"✅ {len(valid_shapes)} valid sections ready for lofting")
     
     try:
-        loft = Part.makeLoft(valid_shapes, solid=False, ruled=False)
+        loft = Part.makeLoft(valid_shapes, solid=True, ruled=False)
         lf = doc.addObject("Part::Feature", f"{BOAT_NAME}_Foil")
         lf.Shape = loft
         lf.ViewObject.ShapeColor = CONFIG['loft_color']
@@ -307,7 +307,7 @@ def build_foil_from_step(doc: App.Document):
         print(f"❌ Loft failed: {e}")
         print("🔄 Trying ruled loft as fallback...")
         try:
-            loft = Part.makeLoft(valid_shapes, solid=False, ruled=True)
+            loft = Part.makeLoft(valid_shapes, solid=True, ruled=True)
             lf = doc.addObject("Part::Feature", f"{BOAT_NAME}_Foil_Ruled")
             lf.Shape = loft
             lf.ViewObject.ShapeColor = CONFIG['loft_color']
