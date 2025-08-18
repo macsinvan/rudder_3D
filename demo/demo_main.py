@@ -39,14 +39,13 @@ STOCK_STEP = f"{BOAT_NAME}_Stock.step"           # From Step 2
 DEMO_STL = f"{BOAT_NAME}_Demo_Model.stl"
 
 # Demo Parameters
-SCALE_FACTOR = 0.25      # 1:4 scale (25% of original size)
 TAB_THICKNESS = 0.8      # mm thickness of breakaway tabs
 TAB_WIDTH = 4.0          # mm width of breakaway tabs
 TAB_COUNT = 3            # Number of tabs connecting parts
 PRINT_MARGIN = 5.0       # mm margin between parts on print bed
 
 # HARD-CODED POSITIONING PARAMETERS (for reliable positioning)
-STOCK_Z_TOP_POSITION = -20.0  # mm - HARD-CODED stock TOP position (Z coordinate)
+STOCK_Z_TOP_POSITION = 20.0   # mm - HARD-CODED stock TOP position (Z coordinate)
 STOCK_Y_POSITION = 0.0        # mm - HARD-CODED stock Y position (centerline)
 
 MACRO_NAME = f"Demo_Model_{BOAT_NAME}"
@@ -275,18 +274,18 @@ def create_demo_assembly_clean(upper_foil_obj, lower_foil_obj, stock_obj, doc):
         lower_assembly_obj.ViewObject.Transparency = 5   # Minimal transparency
         lower_assembly_obj.ViewObject.DisplayMode = "Shaded"  # Smooth shading
         
-        # CLEANUP: Remove intermediate objects to reduce clutter
+        # CLEANUP: Remove intermediate objects to reduce clutter (but keep original stock)
         print(f"   🧹 Cleaning up intermediate objects...")
         doc.removeObject(upper_foil_obj.Name)
         doc.removeObject(lower_foil_obj.Name)
-        doc.removeObject(stock_obj.Name)
-        doc.removeObject(upper_stock.Name)  # Remove individual stock copies too
+        # NOTE: Keeping original stock_obj for reference
+        doc.removeObject(upper_stock.Name)  # Remove individual stock copies
         doc.removeObject(lower_stock.Name)
         
         print(f"   ✅ Created clean split assembly with improved materials")
         print(f"   📏 Upper assembly faces: {len(upper_assembly_shape.Faces)}")
         print(f"   📏 Lower assembly faces: {len(lower_assembly_shape.Faces)}")
-        print(f"   🧹 Removed {5} intermediate objects")
+        print(f"   🧹 Removed {4} intermediate objects (kept original stock)")
         print(f"   🎨 Applied DARK charcoal grey to foil assemblies")
         print(f"   🔩 Applied VERY BRIGHT stainless steel to stock components")
         print(f"   ✨ Using 'Shaded' display mode for realistic appearance")
@@ -299,9 +298,9 @@ def create_demo_assembly_clean(upper_foil_obj, lower_foil_obj, stock_obj, doc):
 
 
 def run():
-    print(f"\n🎭 Demo Model Generator v{VERSION} (Performance Optimized)")
+    print(f"\n🎭 Demo Model Generator v{VERSION} (Full Size)")
     print(f"🚤 Boat: {BOAT_NAME}")
-    print(f"📐 Scale: {SCALE_FACTOR} ({int(SCALE_FACTOR*100)}% of original)")
+    print(f"📏 Working at FULL SIZE - scale STL files as needed for printing")
     print(f"⚡ Performance mode: Minimal view updates during processing")
     
     # Ensure output folder exists
@@ -332,41 +331,32 @@ def run():
         print("❌ Cannot proceed without stock. Run Step 2 first.")
         return
 
-    # Step 3: Scale everything down for demo
-    print(f"\n📐 STEP 3: Scaling for demo...")
-    if not scale_object(cut_foil_obj, SCALE_FACTOR):
-        print("❌ Failed to scale cut foil.")
-        return
-    if not scale_object(stock_obj, SCALE_FACTOR):
-        print("❌ Failed to scale stock.")
-        return
-
-    # Step 4: Split foil for visualization (through chord along Y-axis)
-    print(f"\n✂️ STEP 4: Splitting foil through chord for visualization...")
+    # Step 3: Split foil for visualization (through chord along Y-axis)
+    print(f"\n✂️ STEP 3: Splitting foil through chord for visualization...")
     upper_foil_obj, lower_foil_obj = split_foil_for_visualization(cut_foil_obj, doc)
     if not upper_foil_obj or not lower_foil_obj:
         print("❌ Failed to split foil.")
         return
     
-    # Hide the original cut foil to avoid confusion
-    cut_foil_obj.ViewObject.Visibility = False
-    print(f"   ✅ Hidden original cut foil")
+    # Remove the original cut foil since we have the split versions
+    doc.removeObject(cut_foil_obj.Name)
+    print(f"   ✅ Removed original cut foil (replaced by split versions)")
 
-    # Step 5: Position stock between the foil halves
-    print(f"\n🎯 STEP 5: Positioning stock between halves...")
+    # Step 4: Position stock between the foil halves
+    print(f"\n🎯 STEP 4: Positioning stock between halves...")
     if not position_stock_in_cavity(upper_foil_obj, lower_foil_obj, stock_obj, doc):
         print("❌ Failed to position stock.")
         return
 
-    # Step 6: Create clean split assembly
-    print(f"\n🔧 STEP 6: Creating clean split assembly...")
+    # Step 5: Create clean split assembly
+    print(f"\n🔧 STEP 5: Creating clean split assembly...")
     upper_assembly_obj, lower_assembly_obj = create_demo_assembly_clean(upper_foil_obj, lower_foil_obj, stock_obj, doc)
     if not upper_assembly_obj or not lower_assembly_obj:
         print("❌ Failed to create assembly.")
         return
 
-    # Step 7: Export STL for demo printing (export both halves)
-    print(f"\n💾 STEP 7: Exporting demo STL files...")
+    # Step 6: Export STL for demo printing (export both halves)
+    print(f"\n💾 STEP 6: Exporting full-size STL files...")
     
     # Export upper half
     upper_stl_path = f"{DEMO_FOLDER}/{BOAT_NAME}_Demo_Upper.stl"
@@ -402,8 +392,8 @@ def run():
     
     # Summary
     print(f"\n🎭 {BOAT_NAME} demo model complete!")
-    print(f"📐 Scale: {SCALE_FACTOR} ({int(SCALE_FACTOR*100)}% of original size)")
-    print(f"🖨️ Ready for demo printing:")
+    print(f"📏 Working at FULL SIZE - scale STL files as needed for printing")
+    print(f"🖨️ Ready for printing:")
     print(f"   📁 Upper half: {BOAT_NAME}_Demo_Upper.stl")
     print(f"   📁 Lower half: {BOAT_NAME}_Demo_Lower.stl")
     print(f"⚡ Clean visualization with intermediate objects removed!")
