@@ -33,20 +33,20 @@ CONFIG = {
     'thickness_percent': None,   # % thickness - leave blank to use apex measurement
     'apex_at_top': 64.0,         # mm measured thickness at top (44mm stock + 10mm each side)
     'thickness_tolerance': 2.0,  # mm tolerance for contradiction warning
-    'naca_points': 150,          # Enhanced: More points for smoother airfoil cross-sections (was 50)
-    'use_cosine_clustering': True,  # Enhanced: Better point distribution at leading/trailing edges
+    'naca_points': 80,           # Balanced: Good quality without excessive points (was 150)
+    'use_cosine_clustering': True,  # Keep: Significant quality improvement, minimal cost
     
-    # Slicing Settings - Enhanced for Surface Quality
-    'slice_spacing': 2.0,        # Enhanced: Finer spacing for smoother lofting (was 4.0mm)
-    'adaptive_slicing': True,    # Enhanced: Dense at high curvature areas
-    'curvature_threshold': 0.1,  # Enhanced: Threshold for adaptive slicing
+    # Slicing Settings - Balanced Performance
+    'slice_spacing': 3.0,        # Balanced: Better than original 4.0mm, faster than 2.0mm
+    'adaptive_slicing': False,   # Disabled: Too much processing overhead
+    'curvature_threshold': 0.1,  # Unused when adaptive_slicing=False
     'min_chord_length': 10.0,    # mm minimum chord length to include
     
-    # Surface Quality Settings - New
-    'use_bspline_sections': True,    # Use B-spline curves instead of polygons
-    'bspline_degree': 3,            # B-spline curve degree
-    'surface_smoothing': True,      # Apply surface smoothing after lofting
-    'smoothing_iterations': 2,      # Number of smoothing passes
+    # Surface Quality Settings - Performance Optimized
+    'use_bspline_sections': False,   # Disabled: Polygons are fast and adequate
+    'bspline_degree': 3,            # Unused when use_bspline_sections=False
+    'surface_smoothing': False,     # Disabled: Minimal visual benefit, significant cost
+    'smoothing_iterations': 2,      # Unused when surface_smoothing=False
     
     # Geometry Settings
     'plane_size': 1000,          # mm size of sectioning planes
