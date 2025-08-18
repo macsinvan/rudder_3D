@@ -45,6 +45,10 @@ TAB_WIDTH = 4.0          # mm width of breakaway tabs
 TAB_COUNT = 3            # Number of tabs connecting parts
 PRINT_MARGIN = 5.0       # mm margin between parts on print bed
 
+# HARD-CODED POSITIONING PARAMETERS (for reliable positioning)
+STOCK_Z_TOP_POSITION = -20.0  # mm - HARD-CODED stock TOP position (Z coordinate)
+STOCK_Y_POSITION = 0.0        # mm - HARD-CODED stock Y position (centerline)
+
 MACRO_NAME = f"Demo_Model_{BOAT_NAME}"
 
 
@@ -163,64 +167,67 @@ def split_foil_for_visualization(cut_foil_obj, doc):
 
 def position_stock_in_cavity(upper_foil_obj, lower_foil_obj, stock_obj, doc):
     """
-    Position the stock inside the foil cavity with proper orientation and positioning.
+    Position the stock with HARD-CODED positioning for reliability.
     - Applies 180° rotation around Z-axis to orient post toward leading edge
-    - Positions at Y=0 (center plane)
-    - Extends upward (+Z) until it penetrates the top of the rudder
+    - HARD-CODED Y position at centerline (Y=0)
+    - HARD-CODED Z position with TOP of stock at specified Z coordinate
     """
     try:
-        print(f"🎯 Positioning stock with correct orientation and penetration...")
+        print(f"🎯 Positioning stock with HARD-CODED coordinates...")
+        print(f"   📐 HARD-CODED: Stock TOP at Z={STOCK_Z_TOP_POSITION}mm, Y={STOCK_Y_POSITION}mm")
         
-        # PERFORMANCE: Disable view updates
-        stock_obj.ViewObject.Visibility = False
-        
-        # Use upper half for reference (both halves should have same cavity)
+        # Use upper half for reference
         foil_bbox = upper_foil_obj.Shape.BoundBox
         stock_bbox = stock_obj.Shape.BoundBox
+        
+        print(f"   📏 Original stock bounds: Z={stock_bbox.ZMin:.1f} to Z={stock_bbox.ZMax:.1f}mm (height: {stock_bbox.ZLength:.1f}mm)")
+        print(f"   📏 Foil bounds: Z={foil_bbox.ZMin:.1f} to Z={foil_bbox.ZMax:.1f}mm (height: {foil_bbox.ZLength:.1f}mm)")
         
         # Create transformation matrix with rotation and translation
         stock_matrix = App.Matrix()
         
         # First rotate 180° around Z-axis to orient post toward leading edge
-        # Rotation is around stock's current center
         stock_matrix.rotateZ(3.14159)  # 180° in radians
         print(f"   🔄 Applied 180° rotation around Z-axis")
         
         # Apply rotation first
         rotated_shape = stock_obj.Shape.transformGeometry(stock_matrix)
-        
-        # Get bounding box of rotated shape for positioning
         rotated_bbox = rotated_shape.BoundBox
         
-        # Calculate position offset with specific requirements:
-        # - X: Center in foil cavity (as before)
-        # - Y: Position at Y=0 (center plane)
-        # - Z: Extend upward until stock penetrates top of rudder
-        penetration_distance = 5.0  # mm of penetration above rudder top
+        # HARD-CODED position calculation:
+        # - X: Center in foil cavity (only this is calculated)
+        # - Y: HARD-CODED to centerline
+        # - Z: HARD-CODED TOP position
         
         stock_offset = Vector(
-            foil_bbox.Center.x - rotated_bbox.Center.x,  # Center on X
-            0.0 - rotated_bbox.Center.y,                 # Position at Y=0
-            (foil_bbox.ZMax + penetration_distance) - rotated_bbox.ZMax  # Penetrate top by 5mm
+            foil_bbox.Center.x - rotated_bbox.Center.x,     # Center on X (calculated)
+            STOCK_Y_POSITION - rotated_bbox.Center.y,       # HARD-CODED Y position
+            STOCK_Z_TOP_POSITION - rotated_bbox.ZMax        # HARD-CODED Z position (TOP)
         )
         
-        # Create translation matrix
+        # Create translation matrix and apply
         translation_matrix = App.Matrix()
         translation_matrix.move(stock_offset)
-        
-        # Apply translation to the already rotated shape
         final_shape = rotated_shape.transformGeometry(translation_matrix)
+        
+        # Update stock object
         stock_obj.Shape = final_shape
+        
+        # Apply BRIGHT stainless steel appearance - DIFFERENT from foil
+        stock_obj.ViewObject.ShapeColor = (0.95, 0.95, 1.0)  # VERY bright stainless steel
+        stock_obj.ViewObject.Transparency = 0
+        stock_obj.ViewObject.DisplayMode = "Shaded"  # Proper metallic shading
         
         # Get final positioning for verification
         final_bbox = final_shape.BoundBox
         
-        print(f"   ✅ Positioned stock with correct orientation")
+        print(f"   ✅ Positioned stock with HARD-CODED coordinates")
         print(f"   📐 Stock offset: ({stock_offset.x:.1f}, {stock_offset.y:.1f}, {stock_offset.z:.1f})mm")
-        print(f"   🎯 Post oriented toward leading edge")
-        print(f"   📍 Stock Y-position: {final_bbox.Center.y:.1f}mm (target: 0.0mm)")
-        print(f"   ⬆️  Stock top at Z={final_bbox.ZMax:.1f}mm, rudder top at Z={foil_bbox.ZMax:.1f}mm")
-        print(f"   🔺 Penetration: {final_bbox.ZMax - foil_bbox.ZMax:.1f}mm above rudder")
+        print(f"   📍 Final stock Y-position: {final_bbox.Center.y:.1f}mm (target: {STOCK_Y_POSITION}mm)")
+        print(f"   ⬆️  Final stock extends: Z={final_bbox.ZMin:.1f} to Z={final_bbox.ZMax:.1f}mm")
+        print(f"   🎯 Stock TOP at Z={final_bbox.ZMax:.1f}mm (target: {STOCK_Z_TOP_POSITION}mm)")
+        print(f"   📏 Stock now {final_bbox.ZLength:.1f}mm tall, foil is {foil_bbox.ZLength:.1f}mm tall")
+        print(f"   🔩 Applied VERY BRIGHT stainless steel appearance")
         
         return True
         
@@ -231,36 +238,58 @@ def position_stock_in_cavity(upper_foil_obj, lower_foil_obj, stock_obj, doc):
 
 def create_demo_assembly_clean(upper_foil_obj, lower_foil_obj, stock_obj, doc):
     """
-    Create clean demo assembly and remove intermediate objects.
-    Shows only the final split assembly for clear visualization.
+    Create clean demo assembly with improved materials.
+    Shows split assembly with dark foil and bright stainless steel stock.
     """
     try:
-        print(f"🔧 Creating clean demo assembly...")
+        print(f"🔧 Creating clean demo assembly with improved materials...")
         
-        # Create upper assembly (upper foil + stock)
-        upper_assembly_shape = upper_foil_obj.Shape.fuse(stock_obj.Shape)
+        # Create separate stock objects for each assembly with VERY BRIGHT stainless steel
+        # Upper assembly: copy stock with VERY bright stainless steel appearance
+        upper_stock = doc.addObject("Part::Feature", f"{BOAT_NAME}_Demo_Stock_Upper")
+        upper_stock.Shape = stock_obj.Shape
+        upper_stock.ViewObject.ShapeColor = (0.95, 0.95, 1.0)  # VERY BRIGHT stainless steel
+        upper_stock.ViewObject.Transparency = 0
+        upper_stock.ViewObject.DisplayMode = "Shaded"  # Metallic shading
+        
+        # Lower assembly: copy stock with VERY bright stainless steel appearance  
+        lower_stock = doc.addObject("Part::Feature", f"{BOAT_NAME}_Demo_Stock_Lower")
+        lower_stock.Shape = stock_obj.Shape
+        lower_stock.ViewObject.ShapeColor = (0.95, 0.95, 1.0)  # VERY BRIGHT stainless steel
+        lower_stock.ViewObject.Transparency = 0
+        lower_stock.ViewObject.DisplayMode = "Shaded"  # Metallic shading
+        
+        # Create upper assembly (upper foil + upper stock) with DARK foil
+        upper_assembly_shape = upper_foil_obj.Shape.fuse(upper_stock.Shape)
         upper_assembly_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Demo_Upper_Assembly")
         upper_assembly_obj.Shape = upper_assembly_shape
-        upper_assembly_obj.ViewObject.ShapeColor = (0.2, 0.7, 0.2)  # Forest green
-        upper_assembly_obj.ViewObject.Transparency = 20  # Slight transparency
+        upper_assembly_obj.ViewObject.ShapeColor = (0.3, 0.3, 0.4)  # DARK charcoal grey
+        upper_assembly_obj.ViewObject.Transparency = 5   # Minimal transparency
+        upper_assembly_obj.ViewObject.DisplayMode = "Shaded"  # Smooth shading
         
-        # Create lower assembly (lower foil + stock copy)
-        lower_assembly_shape = lower_foil_obj.Shape.fuse(stock_obj.Shape)
+        # Create lower assembly (lower foil + lower stock) with DARKER foil
+        lower_assembly_shape = lower_foil_obj.Shape.fuse(lower_stock.Shape)
         lower_assembly_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Demo_Lower_Assembly")
         lower_assembly_obj.Shape = lower_assembly_shape
-        lower_assembly_obj.ViewObject.ShapeColor = (0.1, 0.5, 0.1)  # Darker green
-        lower_assembly_obj.ViewObject.Transparency = 20  # Slight transparency
+        lower_assembly_obj.ViewObject.ShapeColor = (0.2, 0.2, 0.3)  # DARKER charcoal grey
+        lower_assembly_obj.ViewObject.Transparency = 5   # Minimal transparency
+        lower_assembly_obj.ViewObject.DisplayMode = "Shaded"  # Smooth shading
         
         # CLEANUP: Remove intermediate objects to reduce clutter
         print(f"   🧹 Cleaning up intermediate objects...")
         doc.removeObject(upper_foil_obj.Name)
         doc.removeObject(lower_foil_obj.Name)
         doc.removeObject(stock_obj.Name)
+        doc.removeObject(upper_stock.Name)  # Remove individual stock copies too
+        doc.removeObject(lower_stock.Name)
         
-        print(f"   ✅ Created clean split assembly visualization")
+        print(f"   ✅ Created clean split assembly with improved materials")
         print(f"   📏 Upper assembly faces: {len(upper_assembly_shape.Faces)}")
         print(f"   📏 Lower assembly faces: {len(lower_assembly_shape.Faces)}")
-        print(f"   🧹 Removed {3} intermediate objects")
+        print(f"   🧹 Removed {5} intermediate objects")
+        print(f"   🎨 Applied DARK charcoal grey to foil assemblies")
+        print(f"   🔩 Applied VERY BRIGHT stainless steel to stock components")
+        print(f"   ✨ Using 'Shaded' display mode for realistic appearance")
         
         return upper_assembly_obj, lower_assembly_obj
         
