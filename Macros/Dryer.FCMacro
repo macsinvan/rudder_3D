@@ -5,6 +5,7 @@ import FreeCAD
 import Part
 import Sketcher
 import PartDesign
+import math
 
 def create_spiral_tunnel_module():
     """
@@ -17,7 +18,7 @@ def create_spiral_tunnel_module():
     MODULE_HEIGHT = 50.0        # mm - module height
     NUM_LOOPS = 10             # number of spiral loops
     TUNNEL_DIAMETER = 3.0      # mm - tunnel for 1.75mm filament + clearance
-    WALL_THICKNESS = 6.0       # mm - minimum wall thickness on all sides
+    WALL_THICKNESS = 5.0       # mm - minimum wall thickness on all sides
     
     # Calculated parameters
     # Spiral radius must account for tunnel radius to maintain wall thickness
@@ -40,9 +41,9 @@ def create_spiral_tunnel_module():
     # Create document
     try:
         doc = FreeCAD.getDocument("FilamentDryer")
-        # Clear existing document
-        for obj in doc.Objects:
-            doc.removeObject(obj.Name)
+        # Clear existing document - commented out for development
+        # for obj in doc.Objects:
+        #     doc.removeObject(obj.Name)
     except:
         doc = FreeCAD.newDocument("FilamentDryer")
     
@@ -127,11 +128,76 @@ def create_spiral_tunnel_module():
     
     main_shape = outer_cylinder.cut(center_hole)
     
-    # Step 5: Create final part
+    # Step 5: Create tangential entry and exit tunnels
+    # Calculate entry point (start of helix)
+    entry_angle = 0
+    entry_x = SPIRAL_RADIUS * math.cos(entry_angle)
+    entry_y = SPIRAL_RADIUS * math.sin(entry_angle)
+    entry_z = z_offset
+    
+    # Entry tunnel - tangential to spiral at start
+    # Tangent direction at entry: perpendicular to radius, in XY plane
+    entry_tangent_x = -math.sin(entry_angle)  # Derivative of cos
+    entry_tangent_y = math.cos(entry_angle)   # Derivative of sin
+    entry_tangent_z = pitch / (2 * math.pi * SPIRAL_RADIUS)  # Vertical component based on pitch
+    
+    # Normalize the tangent vector
+    entry_tangent = FreeCAD.Vector(entry_tangent_x, entry_tangent_y, entry_tangent_z).normalize()
+    
+    # Calculate required tunnel length to clear the cylinder
+    # The tunnel needs to travel from SPIRAL_RADIUS to beyond OUTER_DIAMETER/2
+    # Account for the tangential angle and add 20mm for obvious exit
+    distance_to_wall = OUTER_DIAMETER/2 - SPIRAL_RADIUS
+    # Since we're going tangentially, we need more length to actually clear the wall
+    # For a tangent starting at radius R, the distance to clear radius R_outer is approximately:
+    # distance = sqrt((R_outer)^2 - R^2) for pure tangent, but we have a slight angle
+    clearance_length = math.sqrt((OUTER_DIAMETER/2)**2 - (SPIRAL_RADIUS)**2) * 1.2  # 1.2 safety factor
+    tunnel_length = clearance_length + 20.0  # Add 20mm for obvious exit
+    
+    # Create entry tunnel extending backwards from entry point
+    entry_tunnel = Part.makeCylinder(
+        TUNNEL_DIAMETER/2,
+        tunnel_length,
+        FreeCAD.Vector(entry_x - entry_tangent.x * tunnel_length,
+                      entry_y - entry_tangent.y * tunnel_length,
+                      entry_z - entry_tangent.z * tunnel_length),
+        entry_tangent
+    )
+    
+    # Calculate exit point (end of helix)
+    exit_angle = 2 * math.pi * NUM_LOOPS  # Total rotation in radians
+    exit_x = SPIRAL_RADIUS * math.cos(exit_angle)
+    exit_y = SPIRAL_RADIUS * math.sin(exit_angle)
+    exit_z = z_offset + spiral_height
+    
+    # Exit tunnel - tangential to spiral at end
+    exit_tangent_x = -math.sin(exit_angle)
+    exit_tangent_y = math.cos(exit_angle)
+    exit_tangent_z = pitch / (2 * math.pi * SPIRAL_RADIUS)
+    
+    # Normalize the exit tangent vector
+    exit_tangent = FreeCAD.Vector(exit_tangent_x, exit_tangent_y, exit_tangent_z).normalize()
+    
+    # Create exit tunnel extending forward from exit point
+    exit_tunnel = Part.makeCylinder(
+        TUNNEL_DIAMETER/2,
+        tunnel_length,
+        FreeCAD.Vector(exit_x, exit_y, exit_z),
+        exit_tangent
+    )
+    
+    print(f"✓ Created tangential entry tunnel at angle 0° at height {entry_z:.1f}mm")
+    print(f"✓ Created tangential exit tunnel at angle {math.degrees(exit_angle):.1f}° at height {exit_z:.1f}mm")
+    print(f"  Calculated clearance: {clearance_length:.1f}mm + 20mm extension = {tunnel_length:.1f}mm total")
+    
+    # Step 6: Create final part
     if helix_created and body.Shape.isValid():
         try:
-            # Cut the helix tunnel from main cylinder
-            final_shape = main_shape.cut(body.Shape)
+            # Combine helix tunnel with entry and exit tunnels
+            tunnel_system = body.Shape.fuse([entry_tunnel, exit_tunnel])
+            
+            # Cut the complete tunnel system from main cylinder
+            final_shape = main_shape.cut(tunnel_system)
             
             final_obj = doc.addObject("Part::Feature", "ModuleWithTunnel")
             final_obj.Shape = final_shape
@@ -145,7 +211,7 @@ def create_spiral_tunnel_module():
             # Hide the body since we have the final part
             body.ViewObject.Visibility = False
             
-            print("✓ Successfully cut spiral tunnel from main cylinder")
+            print("✓ Successfully cut spiral tunnel with entry/exit ports from main cylinder")
             
         except Exception as e:
             print(f"❌ Cut operation failed: {e}")
@@ -197,10 +263,10 @@ def create_spiral_tunnel_part_method():
     # Parameters
     OUTER_DIAMETER = 150.0
     CENTER_HOLE_DIAMETER = 35.0
-    MODULE_HEIGHT = 40.0
+    MODULE_HEIGHT = 50.0
     NUM_LOOPS = 10
     TUNNEL_DIAMETER = 3.0
-    WALL_THICKNESS = 8.0
+    WALL_THICKNESS = 5.0
     
     # Calculated parameters
     # Spiral radius must account for tunnel radius to maintain wall thickness
@@ -212,8 +278,9 @@ def create_spiral_tunnel_part_method():
     
     try:
         doc = FreeCAD.getDocument("FilamentDryer")
-        for obj in doc.Objects:
-            doc.removeObject(obj.Name)
+        # Clear existing document - commented out for development
+        # for obj in doc.Objects:
+        #     doc.removeObject(obj.Name)
     except:
         doc = FreeCAD.newDocument("FilamentDryer")
     
@@ -241,8 +308,54 @@ def create_spiral_tunnel_part_method():
                                    FreeCAD.Vector(0, 0, -1))
     main_shape = outer_cylinder.cut(center_hole)
     
-    # Cut tunnel from cylinder
-    final_shape = main_shape.cut(tunnel_shape)
+    # Create tangential entry and exit tunnels
+    entry_angle = 0
+    entry_x = SPIRAL_RADIUS * math.cos(entry_angle)
+    entry_y = SPIRAL_RADIUS * math.sin(entry_angle)
+    entry_z = z_offset
+    
+    # Entry tangent direction
+    entry_tangent_x = -math.sin(entry_angle)
+    entry_tangent_y = math.cos(entry_angle)
+    entry_tangent_z = pitch / (2 * math.pi * SPIRAL_RADIUS)
+    entry_tangent = FreeCAD.Vector(entry_tangent_x, entry_tangent_y, entry_tangent_z).normalize()
+    
+    # Calculate proper clearance length
+    clearance_length = math.sqrt((OUTER_DIAMETER/2)**2 - (SPIRAL_RADIUS)**2) * 1.2
+    tunnel_length = clearance_length + 20.0  # Add 20mm for obvious exit
+    
+    entry_tunnel = Part.makeCylinder(
+        TUNNEL_DIAMETER/2,
+        tunnel_length,
+        FreeCAD.Vector(entry_x - entry_tangent.x * tunnel_length,
+                      entry_y - entry_tangent.y * tunnel_length,
+                      entry_z - entry_tangent.z * tunnel_length),
+        entry_tangent
+    )
+    
+    exit_angle = 2 * math.pi * NUM_LOOPS
+    exit_x = SPIRAL_RADIUS * math.cos(exit_angle)
+    exit_y = SPIRAL_RADIUS * math.sin(exit_angle)
+    exit_z = z_offset + spiral_height
+    
+    # Exit tangent direction
+    exit_tangent_x = -math.sin(exit_angle)
+    exit_tangent_y = math.cos(exit_angle)
+    exit_tangent_z = pitch / (2 * math.pi * SPIRAL_RADIUS)
+    exit_tangent = FreeCAD.Vector(exit_tangent_x, exit_tangent_y, exit_tangent_z).normalize()
+    
+    exit_tunnel = Part.makeCylinder(
+        TUNNEL_DIAMETER/2,
+        tunnel_length,
+        FreeCAD.Vector(exit_x, exit_y, exit_z),
+        exit_tangent
+    )
+    
+    # Combine all tunnels
+    tunnel_system = tunnel_shape.fuse([entry_tunnel, exit_tunnel])
+    
+    # Cut tunnel system from cylinder
+    final_shape = main_shape.cut(tunnel_system)
     
     final_obj = doc.addObject("Part::Feature", "FilamentDryerModule")
     final_obj.Shape = final_shape
