@@ -15,130 +15,259 @@ def create_spiral_tunnel_module():
     OUTER_DIAMETER = 150.0      # mm - module outer diameter
     CENTER_HOLE_DIAMETER = 35.0 # mm - central heating core
     MODULE_HEIGHT = 50.0        # mm - module height
-    NUM_LOOPS = 12             # number of spiral loops
+    NUM_LOOPS = 10             # number of spiral loops
     TUNNEL_DIAMETER = 3.0      # mm - tunnel for 1.75mm filament + clearance
-    SPIRAL_RADIUS = 50.0       # mm - radius of spiral path
+    WALL_THICKNESS = 6.0       # mm - minimum wall thickness on all sides
     
     # Calculated parameters
-    pitch = MODULE_HEIGHT / NUM_LOOPS  # Height per loop (~4.2mm)
+    # Spiral radius must account for tunnel radius to maintain wall thickness
+    SPIRAL_RADIUS = (OUTER_DIAMETER/2) - WALL_THICKNESS - (TUNNEL_DIAMETER/2)
+    # Height must account for tunnel diameter at top and bottom
+    spiral_height = MODULE_HEIGHT - (2 * WALL_THICKNESS) - TUNNEL_DIAMETER
+    pitch = spiral_height / NUM_LOOPS  # Height per loop
+    z_offset = WALL_THICKNESS + (TUNNEL_DIAMETER/2)  # Start spiral center up from bottom
     
+    print(f"FreeCAD Spiral Tunnel Creator v2.1")
     print(f"Creating spiral tunnel module using PartDesign Additive Helix:")
     print(f"  Tunnel diameter: {TUNNEL_DIAMETER}mm")
+    print(f"  Wall thickness: {WALL_THICKNESS}mm")
     print(f"  Spiral radius: {SPIRAL_RADIUS}mm") 
+    print(f"  Spiral height: {spiral_height}mm")
     print(f"  Pitch: {pitch:.1f}mm")
-    print(f"  Height: {MODULE_HEIGHT}mm")
+    print(f"  Total height: {MODULE_HEIGHT}mm")
     print(f"  Turns: {NUM_LOOPS}")
     
     # Create document
     try:
         doc = FreeCAD.getDocument("FilamentDryer")
+        # Clear existing document
+        for obj in doc.Objects:
+            doc.removeObject(obj.Name)
     except:
         doc = FreeCAD.newDocument("FilamentDryer")
     
-    # Step 1: Create main cylinder with center hole
-    outer_cylinder = Part.makeCylinder(OUTER_DIAMETER/2, MODULE_HEIGHT,
-                                      FreeCAD.Vector(0, 0, -MODULE_HEIGHT/2))
-    center_hole = Part.makeCylinder(CENTER_HOLE_DIAMETER/2, MODULE_HEIGHT + 2,
-                                   FreeCAD.Vector(0, 0, -MODULE_HEIGHT/2 - 1))
-    main_shape = outer_cylinder.cut(center_hole)
-    
-    main_obj = doc.addObject("Part::Feature", "MainCylinder")
-    main_obj.Shape = main_shape
-    main_obj.Label = "Main Cylinder"
-    
-    # Step 2: Create PartDesign Body for tunnel
+    # Step 1: Create PartDesign Body for tunnel
     body = doc.addObject('PartDesign::Body', 'TunnelBody')
     
-    # Step 3: Create sketch for circular profile
+    # Step 2: Create sketch for circular profile
     sketch = body.newObject('Sketcher::SketchObject', 'CircleProfile')
     
-    # Position circle at helix starting point (SPIRAL_RADIUS from center)
+    # Position the sketch at the bottom with wall thickness offset
+    sketch.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(0, 0, z_offset),
+        FreeCAD.Rotation(0, 0, 0)
+    )
+    
+    # The profile should be a circle at the spiral radius on the XY plane
+    # For a helix around Z-axis, profile should be offset from origin
     circle = sketch.addGeometry(Part.Circle(
-        FreeCAD.Vector(SPIRAL_RADIUS, 0, 0),  # At spiral radius
-        FreeCAD.Vector(0, 0, 1), 
-        TUNNEL_DIAMETER/2
+        FreeCAD.Vector(SPIRAL_RADIUS, 0, 0),  # Center at spiral radius
+        FreeCAD.Vector(0, 0, 1),              # Normal to XY plane
+        TUNNEL_DIAMETER/2                      # Radius of tunnel
     ), False)  # False = not construction geometry
     
     # Add constraints to fully define the circle
     sketch.addConstraint(Sketcher.Constraint('Radius', circle, TUNNEL_DIAMETER/2))
-    sketch.addConstraint(Sketcher.Constraint('DistanceX', circle, 3, SPIRAL_RADIUS))  # 3 = center point
-    sketch.addConstraint(Sketcher.Constraint('DistanceY', circle, 3, 0))
     
-    # Close the sketch (important!)
-    sketch.ViewObject.hide()
+    # Constrain the center point position
+    center_point = sketch.getPoint(circle, 3)  # 3 = center point
+    sketch.addConstraint(Sketcher.Constraint('DistanceX', -1, 1, circle, 3, SPIRAL_RADIUS))
+    sketch.addConstraint(Sketcher.Constraint('DistanceY', -1, 1, circle, 3, 0))
+    
     doc.recompute()
-    print("✓ Created circular profile sketch positioned at helix starting point")
+    print("✓ Created circular profile sketch at spiral radius")
     
-    # Step 4: Create Additive Helix
+    # Step 3: Create Additive Helix
+    helix_created = False
     try:
         helix = body.newObject("PartDesign::AdditiveHelix", "SpiralTunnel")
         helix.Profile = sketch
         
-        # Set mode and parameters based on working examples
+        # Set helix parameters
         helix.Mode = 0  # 0 = pitch-height mode
         helix.Pitch = pitch
-        helix.Height = MODULE_HEIGHT
+        helix.Height = spiral_height  # Use reduced height to maintain wall thickness
         helix.Turns = NUM_LOOPS
         helix.LeftHanded = False
         helix.Reversed = False
-        helix.ReferenceAxis = (body.Origin.OriginFeatures[2],[''])  # Z-axis
+        
+        # Set reference axis to Z-axis
+        helix.ReferenceAxis = (body.Origin.OriginFeatures[2], [''])  # Z-axis
         
         doc.recompute()
-        print("✓ Created spiral tunnel using PartDesign Additive Helix")
         
         # Check if helix created properly
         if hasattr(helix, 'Shape') and helix.Shape.isValid():
-            print("✓ Helix shape is valid")
+            print("✓ Created spiral tunnel using PartDesign Additive Helix")
+            helix_created = True
+            
             # Set visualization
             if hasattr(helix, 'ViewObject'):
                 helix.ViewObject.ShapeColor = (1.0, 0.0, 1.0)  # Magenta
                 helix.ViewObject.Transparency = 30
         else:
             print("❌ Helix shape is invalid")
-            helix = None
             
     except Exception as e:
-        print(f"Additive Helix failed: {e}")
-        print("Trying alternative approach...")
-        helix = None
+        print(f"❌ Additive Helix failed: {e}")
     
-    # Step 5: Cut tunnel from main cylinder
-    if helix and hasattr(helix, 'Shape'):
+    # Step 4: Create main cylinder with center hole
+    # Position cylinder centered on origin
+    outer_cylinder = Part.makeCylinder(
+        OUTER_DIAMETER/2, 
+        MODULE_HEIGHT,
+        FreeCAD.Vector(0, 0, 0)
+    )
+    
+    center_hole = Part.makeCylinder(
+        CENTER_HOLE_DIAMETER/2, 
+        MODULE_HEIGHT + 2,
+        FreeCAD.Vector(0, 0, -1)
+    )
+    
+    main_shape = outer_cylinder.cut(center_hole)
+    
+    # Step 5: Create final part
+    if helix_created and body.Shape.isValid():
         try:
-            final_shape = main_shape.cut(helix.Shape)
+            # Cut the helix tunnel from main cylinder
+            final_shape = main_shape.cut(body.Shape)
             
             final_obj = doc.addObject("Part::Feature", "ModuleWithTunnel")
             final_obj.Shape = final_shape
             final_obj.Label = "Filament Dryer Module"
             
-            # Hide intermediate objects
-            main_obj.ViewObject.Visibility = False
+            # Set visualization
+            if hasattr(final_obj, 'ViewObject'):
+                final_obj.ViewObject.Transparency = 50
+                final_obj.ViewObject.ShapeColor = (0.8, 0.8, 0.9)
+            
+            # Hide the body since we have the final part
             body.ViewObject.Visibility = False
             
-            print("✓ Cut spiral tunnel from main cylinder")
+            print("✓ Successfully cut spiral tunnel from main cylinder")
             
         except Exception as e:
-            print(f"Cut operation failed: {e}")
-            final_obj = main_obj
+            print(f"❌ Cut operation failed: {e}")
+            print("Creating main cylinder without tunnel")
+            
+            final_obj = doc.addObject("Part::Feature", "MainCylinder")
+            final_obj.Shape = main_shape
+            final_obj.Label = "Main Cylinder (No Tunnel)"
     else:
-        final_obj = main_obj
+        # If helix failed, just create the main cylinder
+        print("Creating main cylinder without tunnel")
+        
+        final_obj = doc.addObject("Part::Feature", "MainCylinder")
+        final_obj.Shape = main_shape
+        final_obj.Label = "Main Cylinder (No Tunnel)"
+        
+        if hasattr(final_obj, 'ViewObject'):
+            final_obj.ViewObject.Transparency = 50
+            final_obj.ViewObject.ShapeColor = (0.8, 0.8, 0.9)
     
-    # Final setup
+    # Final recompute
     doc.recompute()
     
+    # Try to fit view
     try:
         import FreeCADGui
         FreeCADGui.SendMsgToActiveView("ViewFit")
+        FreeCADGui.activeDocument().activeView().viewAxonometric()
     except:
         pass
     
-    print("\n✓ Spiral tunnel module created using proper PartDesign method!")
-    print("  - Circular profile positioned at helix starting point")
-    print("  - PartDesign Additive Helix with correct parameters")
-    print("  - Clean, constant circular cross-section")
+    print("\n✓ Module creation complete!")
+    if helix_created:
+        print("  - Spiral tunnel successfully integrated")
+    else:
+        print("  - Main cylinder created (tunnel creation failed)")
+    print(f"  - Dimensions: {OUTER_DIAMETER}mm × {MODULE_HEIGHT}mm")
+    print(f"  - Center hole: {CENTER_HOLE_DIAMETER}mm")
+    
+    return final_obj
+
+# Alternative method using Part workbench if PartDesign fails
+def create_spiral_tunnel_part_method():
+    """
+    Alternative method using Part workbench for creating spiral tunnel
+    """
+    print("\nTrying alternative Part workbench method...")
+    
+    # Parameters
+    OUTER_DIAMETER = 150.0
+    CENTER_HOLE_DIAMETER = 35.0
+    MODULE_HEIGHT = 40.0
+    NUM_LOOPS = 10
+    TUNNEL_DIAMETER = 3.0
+    WALL_THICKNESS = 8.0
+    
+    # Calculated parameters
+    # Spiral radius must account for tunnel radius to maintain wall thickness
+    SPIRAL_RADIUS = (OUTER_DIAMETER/2) - WALL_THICKNESS - (TUNNEL_DIAMETER/2)
+    # Height must account for tunnel diameter at top and bottom
+    spiral_height = MODULE_HEIGHT - (2 * WALL_THICKNESS) - TUNNEL_DIAMETER
+    pitch = spiral_height / NUM_LOOPS
+    z_offset = WALL_THICKNESS + (TUNNEL_DIAMETER/2)
+    
+    try:
+        doc = FreeCAD.getDocument("FilamentDryer")
+        for obj in doc.Objects:
+            doc.removeObject(obj.Name)
+    except:
+        doc = FreeCAD.newDocument("FilamentDryer")
+    
+    # Create helix curve starting at z_offset
+    helix_curve = Part.makeHelix(pitch, spiral_height, SPIRAL_RADIUS)
+    helix_curve.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(0, 0, z_offset),
+        FreeCAD.Rotation(0, 0, 0)
+    )
+    
+    # Create circle profile
+    circle = Part.makeCircle(TUNNEL_DIAMETER/2)
+    circle.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(SPIRAL_RADIUS, 0, z_offset),
+        FreeCAD.Rotation(0, 90, 0)
+    )
+    
+    # Create wire and sweep
+    wire = Part.Wire(circle)
+    tunnel_shape = wire.makePipeShell([helix_curve], True, True)
+    
+    # Create main cylinder
+    outer_cylinder = Part.makeCylinder(OUTER_DIAMETER/2, MODULE_HEIGHT)
+    center_hole = Part.makeCylinder(CENTER_HOLE_DIAMETER/2, MODULE_HEIGHT + 2,
+                                   FreeCAD.Vector(0, 0, -1))
+    main_shape = outer_cylinder.cut(center_hole)
+    
+    # Cut tunnel from cylinder
+    final_shape = main_shape.cut(tunnel_shape)
+    
+    final_obj = doc.addObject("Part::Feature", "FilamentDryerModule")
+    final_obj.Shape = final_shape
+    
+    doc.recompute()
+    
+    print("✓ Created module using Part workbench sweep method")
     
     return final_obj
 
 # Main execution
 if __name__ == "__main__":
-    module = create_spiral_tunnel_module()
+    try:
+        # Try PartDesign method first
+        module = create_spiral_tunnel_module()
+    except Exception as e:
+        print(f"\nPartDesign method failed: {e}")
+        try:
+            # Fall back to Part workbench method
+            module = create_spiral_tunnel_part_method()
+        except Exception as e2:
+            print(f"Part method also failed: {e2}")
+            module = None
+    
+    if module:
+        print("\n✅ Success! Filament dryer module created.")
+    else:
+        print("\n❌ Failed to create module.")
