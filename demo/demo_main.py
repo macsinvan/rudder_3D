@@ -45,8 +45,11 @@ TAB_COUNT = 3            # Number of tabs connecting parts
 PRINT_MARGIN = 5.0       # mm margin between parts on print bed
 
 # HARD-CODED POSITIONING PARAMETERS (for reliable positioning)
-STOCK_Z_TOP_POSITION = 20.0   # mm - HARD-CODED stock TOP position (Z coordinate)
+STOCK_Z_TOP_POSITION = 80.0   # mm - HARD-CODED stock TOP position (Z coordinate) - scaled for full size
 STOCK_Y_POSITION = 0.0        # mm - HARD-CODED stock Y position (centerline)
+
+# CLEARANCE PARAMETERS (for realistic assembly tolerances)
+STOCK_CLEARANCE = 2.0    # mm - clearance around stock for real-world assembly tolerances
 
 MACRO_NAME = f"Demo_Model_{BOAT_NAME}"
 
@@ -235,72 +238,100 @@ def position_stock_in_cavity(upper_foil_obj, lower_foil_obj, stock_obj, doc):
         return False
 
 
-def create_demo_assembly_clean(upper_foil_obj, lower_foil_obj, stock_obj, doc):
+def create_stock_clearance_cutter(stock_obj, doc):
     """
-    Create clean demo assembly with improved materials.
-    Shows split assembly with dark foil and bright stainless steel stock.
+    Create enlarged stock shape for cutting clearance cavities.
+    Uses bounding box expansion method for reliability with complex geometries.
     """
     try:
-        print(f"🔧 Creating clean demo assembly with improved materials...")
+        print(f"🔧 Creating stock clearance cutter with {STOCK_CLEARANCE}mm clearance...")
         
-        # Create separate stock objects for each assembly with VERY BRIGHT stainless steel
-        # Upper assembly: copy stock with VERY bright stainless steel appearance
-        upper_stock = doc.addObject("Part::Feature", f"{BOAT_NAME}_Demo_Stock_Upper")
-        upper_stock.Shape = stock_obj.Shape
-        upper_stock.ViewObject.ShapeColor = (0.95, 0.95, 1.0)  # VERY BRIGHT stainless steel
-        upper_stock.ViewObject.Transparency = 0
-        upper_stock.ViewObject.DisplayMode = "Shaded"  # Metallic shading
+        # Get stock bounding box
+        stock_bbox = stock_obj.Shape.BoundBox
         
-        # Lower assembly: copy stock with VERY bright stainless steel appearance  
-        lower_stock = doc.addObject("Part::Feature", f"{BOAT_NAME}_Demo_Stock_Lower")
-        lower_stock.Shape = stock_obj.Shape
-        lower_stock.ViewObject.ShapeColor = (0.95, 0.95, 1.0)  # VERY BRIGHT stainless steel
-        lower_stock.ViewObject.Transparency = 0
-        lower_stock.ViewObject.DisplayMode = "Shaded"  # Metallic shading
+        # Create enlarged bounding box with clearance
+        clearance_box = Part.makeBox(
+            stock_bbox.XLength + (2 * STOCK_CLEARANCE),  # Add clearance on both sides
+            stock_bbox.YLength + (2 * STOCK_CLEARANCE),  # Add clearance on both sides
+            stock_bbox.ZLength + (2 * STOCK_CLEARANCE),  # Add clearance on both sides
+            Vector(
+                stock_bbox.XMin - STOCK_CLEARANCE,       # Shift origin to maintain centering
+                stock_bbox.YMin - STOCK_CLEARANCE,
+                stock_bbox.ZMin - STOCK_CLEARANCE
+            )
+        )
         
-        # Create upper assembly (upper foil + upper stock) with DARK foil
-        upper_assembly_shape = upper_foil_obj.Shape.fuse(upper_stock.Shape)
-        upper_assembly_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Demo_Upper_Assembly")
-        upper_assembly_obj.Shape = upper_assembly_shape
-        upper_assembly_obj.ViewObject.ShapeColor = (0.3, 0.3, 0.4)  # DARK charcoal grey
-        upper_assembly_obj.ViewObject.Transparency = 5   # Minimal transparency
-        upper_assembly_obj.ViewObject.DisplayMode = "Shaded"  # Smooth shading
+        # Create clearance cutter object (hidden - only for cutting)
+        clearance_cutter = doc.addObject("Part::Feature", f"{BOAT_NAME}_Demo_Stock_Clearance")
+        clearance_cutter.Shape = clearance_box
+        clearance_cutter.ViewObject.Visibility = False  # Hidden - only for cutting
         
-        # Create lower assembly (lower foil + lower stock) with DARKER foil
-        lower_assembly_shape = lower_foil_obj.Shape.fuse(lower_stock.Shape)
-        lower_assembly_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Demo_Lower_Assembly")
-        lower_assembly_obj.Shape = lower_assembly_shape
-        lower_assembly_obj.ViewObject.ShapeColor = (0.2, 0.2, 0.3)  # DARKER charcoal grey
-        lower_assembly_obj.ViewObject.Transparency = 5   # Minimal transparency
-        lower_assembly_obj.ViewObject.DisplayMode = "Shaded"  # Smooth shading
+        # Get enlarged dimensions for verification
+        clearance_bbox = clearance_box.BoundBox
         
-        # CLEANUP: Remove intermediate objects to reduce clutter (but keep original stock)
-        print(f"   🧹 Cleaning up intermediate objects...")
-        doc.removeObject(upper_foil_obj.Name)
-        doc.removeObject(lower_foil_obj.Name)
-        # NOTE: Keeping original stock_obj for reference
-        doc.removeObject(upper_stock.Name)  # Remove individual stock copies
-        doc.removeObject(lower_stock.Name)
+        print(f"   ✅ Created clearance cutter using bounding box method")
+        print(f"   📏 Original stock: {stock_bbox.XLength:.1f} x {stock_bbox.YLength:.1f} x {stock_bbox.ZLength:.1f}mm")
+        print(f"   📏 Clearance cutter: {clearance_bbox.XLength:.1f} x {clearance_bbox.YLength:.1f} x {clearance_bbox.ZLength:.1f}mm")
+        print(f"   📐 Clearance expansion: {STOCK_CLEARANCE}mm on all edges")
+        print(f"   🔧 Using box method for reliability with complex stock geometry")
         
-        print(f"   ✅ Created clean split assembly with improved materials")
-        print(f"   📏 Upper assembly faces: {len(upper_assembly_shape.Faces)}")
-        print(f"   📏 Lower assembly faces: {len(lower_assembly_shape.Faces)}")
-        print(f"   🧹 Removed {4} intermediate objects (kept original stock)")
-        print(f"   🎨 Applied DARK charcoal grey to foil assemblies")
-        print(f"   🔩 Applied VERY BRIGHT stainless steel to stock components")
-        print(f"   ✨ Using 'Shaded' display mode for realistic appearance")
-        
-        return upper_assembly_obj, lower_assembly_obj
+        return clearance_cutter
         
     except Exception as e:
-        print(f"❌ Failed to create assembly: {e}")
-        return None, None
+        print(f"❌ Failed to create clearance cutter: {e}")
+        return None
+
+
+def create_demo_assembly_clean(upper_foil_obj, lower_foil_obj, stock_obj, clearance_cutter, doc):
+    """
+    Create clean demo visualization with separate components.
+    Shows split foil halves with cavities and stock as separate object.
+    """
+    try:
+        print(f"🔧 Creating clean demo visualization with separate components...")
+        
+        # Apply realistic materials to the split foil halves (NO stock fusion)
+        # Upper foil half with dark charcoal appearance
+        upper_foil_obj.ViewObject.ShapeColor = (0.3, 0.3, 0.4)  # Dark charcoal grey
+        upper_foil_obj.ViewObject.Transparency = 5   # Minimal transparency
+        upper_foil_obj.ViewObject.DisplayMode = "Shaded"  # Smooth shading
+        
+        # Lower foil half with darker charcoal appearance
+        lower_foil_obj.ViewObject.ShapeColor = (0.2, 0.2, 0.3)  # Darker charcoal grey
+        lower_foil_obj.ViewObject.Transparency = 5   # Minimal transparency
+        lower_foil_obj.ViewObject.DisplayMode = "Shaded"  # Smooth shading
+        
+        # Apply bright stainless steel to the separate stock
+        stock_obj.ViewObject.ShapeColor = (0.95, 0.95, 1.0)  # Very bright stainless steel
+        stock_obj.ViewObject.Transparency = 0
+        stock_obj.ViewObject.DisplayMode = "Shaded"  # Metallic shading
+        
+        # Rename objects for clarity
+        upper_foil_obj.Label = f"{BOAT_NAME}_Demo_Upper_Foil"
+        lower_foil_obj.Label = f"{BOAT_NAME}_Demo_Lower_Foil"
+        stock_obj.Label = f"{BOAT_NAME}_Demo_Stock"
+        
+        print(f"   ✅ Created clean demo visualization with separate components")
+        print(f"   📏 Upper foil faces: {len(upper_foil_obj.Shape.Faces)}")
+        print(f"   📏 Lower foil faces: {len(lower_foil_obj.Shape.Faces)}")
+        print(f"   📏 Stock faces: {len(stock_obj.Shape.Faces)}")
+        print(f"   🎨 Applied dark charcoal grey to foil halves")
+        print(f"   🔩 Applied very bright stainless steel to separate stock")
+        print(f"   ✨ Using 'Shaded' display mode for realistic appearance")
+        print(f"   🔧 Stock remains separate - shows actual assembly method")
+        
+        return upper_foil_obj, lower_foil_obj, stock_obj
+        
+    except Exception as e:
+        print(f"❌ Failed to create demo visualization: {e}")
+        return None, None, None
 
 
 def run():
-    print(f"\n🎭 Demo Model Generator v{VERSION} (Full Size)")
+    print(f"\n🎭 Demo Model Generator v{VERSION} (Full Size with Clearance)")
     print(f"🚤 Boat: {BOAT_NAME}")
     print(f"📏 Working at FULL SIZE - scale STL files as needed for printing")
+    print(f"🔧 Stock clearance: {STOCK_CLEARANCE}mm for realistic assembly tolerances")
     print(f"⚡ Performance mode: Minimal view updates during processing")
     
     # Ensure output folder exists
@@ -348,43 +379,61 @@ def run():
         print("❌ Failed to position stock.")
         return
 
-    # Step 5: Create clean split assembly
-    print(f"\n🔧 STEP 5: Creating clean split assembly...")
-    upper_assembly_obj, lower_assembly_obj = create_demo_assembly_clean(upper_foil_obj, lower_foil_obj, stock_obj, doc)
-    if not upper_assembly_obj or not lower_assembly_obj:
-        print("❌ Failed to create assembly.")
+    # Step 5: Create clearance cutter for realistic assembly tolerances
+    print(f"\n🔧 STEP 5: Creating clearance cutter...")
+    clearance_cutter = create_stock_clearance_cutter(stock_obj, doc)
+    if not clearance_cutter:
+        print("❌ Failed to create clearance cutter.")
         return
 
-    # Step 6: Export STL for demo printing (export both halves)
-    print(f"\n💾 STEP 6: Exporting full-size STL files...")
+    # Step 6: Create clean demo visualization with clearance cavities
+    print(f"\n🔧 STEP 6: Creating clean demo visualization with clearance...")
+    upper_foil_obj, lower_foil_obj, stock_obj = create_demo_assembly_clean(upper_foil_obj, lower_foil_obj, stock_obj, clearance_cutter, doc)
+    if not upper_foil_obj or not lower_foil_obj or not stock_obj:
+        print("❌ Failed to create demo visualization.")
+        return
+
+    # Step 7: Export STL for demo printing (export foil halves and stock separately)
+    print(f"\n💾 STEP 7: Exporting full-size STL files...")
     
-    # Export upper half
-    upper_stl_path = f"{DEMO_FOLDER}/{BOAT_NAME}_Demo_Upper.stl"
+    # Export upper foil half
+    upper_stl_path = f"{DEMO_FOLDER}/{BOAT_NAME}_Demo_Upper_Foil.stl"
     try:
-        print(f"   🔄 Exporting upper half STL...")
-        upper_assembly_obj.Shape.exportStl(upper_stl_path)
+        print(f"   🔄 Exporting upper foil half STL...")
+        upper_foil_obj.Shape.exportStl(upper_stl_path)
         upper_size = os.path.getsize(upper_stl_path)
-        print(f"   ✅ Upper half: {upper_stl_path} ({upper_size/1024/1024:.1f} MB)")
+        print(f"   ✅ Upper foil: {upper_stl_path} ({upper_size/1024/1024:.1f} MB)")
     except Exception as e:
         print(f"   ❌ Upper STL export failed: {e}")
     
-    # Export lower half  
-    lower_stl_path = f"{DEMO_FOLDER}/{BOAT_NAME}_Demo_Lower.stl"
+    # Export lower foil half  
+    lower_stl_path = f"{DEMO_FOLDER}/{BOAT_NAME}_Demo_Lower_Foil.stl"
     try:
-        print(f"   🔄 Exporting lower half STL...")
-        lower_assembly_obj.Shape.exportStl(lower_stl_path)
+        print(f"   🔄 Exporting lower foil half STL...")
+        lower_foil_obj.Shape.exportStl(lower_stl_path)
         lower_size = os.path.getsize(lower_stl_path)
-        print(f"   ✅ Lower half: {lower_stl_path} ({lower_size/1024/1024:.1f} MB)")
+        print(f"   ✅ Lower foil: {lower_stl_path} ({lower_size/1024/1024:.1f} MB)")
     except Exception as e:
         print(f"   ❌ Lower STL export failed: {e}")
+        
+    # Export stock separately
+    stock_stl_path = f"{DEMO_FOLDER}/{BOAT_NAME}_Demo_Stock.stl"
+    try:
+        print(f"   🔄 Exporting stock STL...")
+        stock_obj.Shape.exportStl(stock_stl_path)
+        stock_size = os.path.getsize(stock_stl_path)
+        print(f"   ✅ Stock: {stock_stl_path} ({stock_size/1024/1024:.1f} MB)")
+    except Exception as e:
+        print(f"   ❌ Stock STL export failed: {e}")
 
     # PERFORMANCE: Final recompute to ensure everything is up to date
     print(f"\n🔄 Final recomputation and view setup...")
     doc.recompute()
     
-    # Show both assembly halves with slight offset for better visualization
-    upper_assembly_obj.ViewObject.Visibility = True
-    lower_assembly_obj.ViewObject.Visibility = True
+    # Show all three separate components
+    upper_foil_obj.ViewObject.Visibility = True
+    lower_foil_obj.ViewObject.Visibility = True
+    stock_obj.ViewObject.Visibility = True
     
     # Finalize view
     Gui.SendMsgToActiveView("ViewFit")
@@ -393,7 +442,9 @@ def run():
     # Summary
     print(f"\n🎭 {BOAT_NAME} demo model complete!")
     print(f"📏 Working at FULL SIZE - scale STL files as needed for printing")
+    print(f"🔧 Stock clearance: {STOCK_CLEARANCE}mm for realistic assembly tolerances")
     print(f"🖨️ Ready for printing:")
-    print(f"   📁 Upper half: {BOAT_NAME}_Demo_Upper.stl")
-    print(f"   📁 Lower half: {BOAT_NAME}_Demo_Lower.stl")
-    print(f"⚡ Clean visualization with intermediate objects removed!")
+    print(f"   📁 Upper foil: {BOAT_NAME}_Demo_Upper_Foil.stl (with clearance cavity)")
+    print(f"   📁 Lower foil: {BOAT_NAME}_Demo_Lower_Foil.stl (with clearance cavity)")
+    print(f"   📁 Stock: {BOAT_NAME}_Demo_Stock.stl (demonstration reference)")
+    print(f"🔧 Foil cavities sized for real-world assembly with clearance!")
