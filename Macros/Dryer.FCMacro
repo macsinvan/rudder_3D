@@ -209,12 +209,12 @@ def create_spiral_tunnel_module():
                                                               OUTER_DIAMETER, pitch, 
                                                               z_offset, spiral_height, NUM_LOOPS)
         # Create visible objects for inspection
-        entry_obj = doc.addObject("Part::Feature", "Step2_EntryTunnel")
+        entry_obj = doc.addObject("Part::Feature", "Tunnel_Entry")
         entry_obj.Shape = entry_tunnel
         entry_obj.ViewObject.ShapeColor = (0.0, 1.0, 0.0)
         entry_obj.ViewObject.Transparency = 30
         
-        exit_obj = doc.addObject("Part::Feature", "Step2_ExitTunnel")
+        exit_obj = doc.addObject("Part::Feature", "Tunnel_Exit")
         exit_obj.Shape = exit_tunnel
         exit_obj.ViewObject.ShapeColor = (1.0, 0.0, 0.0)
         exit_obj.ViewObject.Transparency = 30
@@ -232,7 +232,7 @@ def create_spiral_tunnel_module():
         print(f"{'='*60}")
         main_shape = create_main_cylinder(OUTER_DIAMETER, MODULE_HEIGHT, CENTER_HOLE_DIAMETER, WALL_THICKNESS)
         # Create visible object for inspection
-        main_obj = doc.addObject("Part::Feature", "Step3_MainCylinder")
+        main_obj = doc.addObject("Part::Feature", "Main_Cylinder")
         main_obj.Shape = main_shape
         main_obj.ViewObject.ShapeColor = (0.5, 0.5, 0.8)
         main_obj.ViewObject.Transparency = 70
@@ -249,7 +249,7 @@ def create_spiral_tunnel_module():
         print(f"{'='*60}")
         cutout_box = create_cutout_box(spiral_height, z_offset, WALL_THICKNESS, OUTER_DIAMETER)
         # Create visible object for inspection
-        cutout_obj = doc.addObject("Part::Feature", "Step4_CutoutBox")
+        cutout_obj = doc.addObject("Part::Feature", "Airflow_Cutout")
         cutout_obj.Shape = cutout_box
         cutout_obj.ViewObject.ShapeColor = (1.0, 1.0, 0.0)
         cutout_obj.ViewObject.Transparency = 50
@@ -266,7 +266,7 @@ def create_spiral_tunnel_module():
         print(f"{'='*60}")
         chute_box = create_chute_box(MODULE_HEIGHT, WALL_THICKNESS)
         # Create visible object for inspection
-        chute_obj = doc.addObject("Part::Feature", "Step5_ChuteBox")
+        chute_obj = doc.addObject("Part::Feature", "Airflow_Chute")
         chute_obj.Shape = chute_box
         chute_obj.ViewObject.ShapeColor = (0.0, 1.0, 1.0)
         chute_obj.ViewObject.Transparency = 50
@@ -300,7 +300,7 @@ def create_spiral_tunnel_module():
                                        chute_box, air_holes, entry_tunnel, exit_tunnel)
             # Hide individual components after combining
             for obj in doc.Objects:
-                if obj.Name.startswith("Step") and obj.Name != "ModuleWithTunnel":
+                if obj.Name != "FinalModule":  # Hide all intermediate components
                     obj.ViewObject.Visibility = False
             components_created.append("Final Assembly")
         else:
@@ -355,10 +355,10 @@ def create_spiral_body(doc, SPIRAL_RADIUS, TUNNEL_DIAMETER, spiral_height, pitch
     """Create the spiral tunnel body using PartDesign"""
     
     # Create PartDesign Body for tunnel
-    body = doc.addObject('PartDesign::Body', 'TunnelBody')
+    body = doc.addObject('PartDesign::Body', 'Spiral_Body')
     
     # Create sketch for circular profile
-    sketch = body.newObject('Sketcher::SketchObject', 'CircleProfile')
+    sketch = body.newObject('Sketcher::SketchObject', 'Spiral_Profile')
     
     # Position the sketch at the bottom with wall thickness offset
     sketch.Placement = FreeCAD.Placement(
@@ -388,7 +388,7 @@ def create_spiral_body(doc, SPIRAL_RADIUS, TUNNEL_DIAMETER, spiral_height, pitch
     # Create Additive Helix
     helix_created = False
     try:
-        helix = body.newObject("PartDesign::AdditiveHelix", "SpiralTunnel")
+        helix = body.newObject("PartDesign::AdditiveHelix", "Spiral_Helix")
         helix.Profile = sketch
         
         # Set helix parameters
@@ -571,7 +571,7 @@ def combine_and_cut(doc, body, helix_created, main_shape, cutout_box,
             for hole in air_holes:
                 final_shape = final_shape.cut(hole)
             
-            final_obj = doc.addObject("Part::Feature", "ModuleWithTunnel")
+            final_obj = doc.addObject("Part::Feature", "FinalModule")
             final_obj.Shape = final_shape
             final_obj.Label = "Filament Dryer Module"
             
@@ -589,14 +589,14 @@ def combine_and_cut(doc, body, helix_created, main_shape, cutout_box,
             print(f"❌ Cut operation failed: {e}")
             print("Creating main cylinder without tunnel")
             
-            final_obj = doc.addObject("Part::Feature", "MainCylinder")
+            final_obj = doc.addObject("Part::Feature", "FinalModule_NoTunnel")
             final_obj.Shape = main_shape
             final_obj.Label = "Main Cylinder (No Tunnel)"
     else:
         # If helix failed, just create the main cylinder
         print("Creating main cylinder without tunnel")
         
-        final_obj = doc.addObject("Part::Feature", "MainCylinder")
+        final_obj = doc.addObject("Part::Feature", "FinalModule_NoTunnel")
         final_obj.Shape = main_shape
         final_obj.Label = "Main Cylinder (No Tunnel)"
         
