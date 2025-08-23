@@ -107,6 +107,7 @@ Parameters:
 TODO List:
 ----------
 [ ] Implement box cutout in cylinder wall
+[ ] Add air inlet chute
 [ ] Add radial air holes from center to spiral
 [ ] Design removable insert piece
 [ ] Add insert retention features
@@ -127,16 +128,21 @@ import Sketcher
 import PartDesign
 import math
 
+# Handle FreeCADGui import safely
+try:
+    import FreeCADGui
+    GUI_AVAILABLE = True
+except ImportError:
+    GUI_AVAILABLE = False
+
 # ============================================================================
 # EXECUTION CONTROL - CHANGE THIS TO CONTROL BUILD STEPS
 # ============================================================================
-EXECUTE_UP_TO_STEP = 3  # Set to step number to pause at that step
+EXECUTE_UP_TO_STEP = 999  # Set to step number to pause at that step
                           # 1 = Spiral body only
                           # 2 = Add entry/exit tunnels (coil extensions)
                           # 3 = Add main cylinder  
                           # 4 = Add cutout box
-                          # 5 = Add chute box
-                          # 6 = Add air holes (placeholder)
                           # 7 = Final assembly (combine & cut)
                           # 999 = Build everything (default)
 # ============================================================================
@@ -146,7 +152,7 @@ def create_spiral_tunnel_module():
     Create filament dryer module using proper PartDesign Additive Helix method
     """
     
-    # Parameters
+    # Base Parameters
     OUTER_DIAMETER = 150.0      # mm - module outer diameter
     CENTER_HOLE_DIAMETER = 35.0 # mm - central heating core
     MODULE_HEIGHT = 50.0        # mm - module height
@@ -154,13 +160,25 @@ def create_spiral_tunnel_module():
     TUNNEL_DIAMETER = 3.0      # mm - tunnel for 1.75mm filament + clearance
     WALL_THICKNESS = 5.0       # mm - minimum wall thickness on all sides
     
-    # Calculated parameters
-    # Spiral radius must account for tunnel radius to maintain wall thickness
+    # Calculated parameters - all in one place
     SPIRAL_RADIUS = (OUTER_DIAMETER/2) - WALL_THICKNESS - (TUNNEL_DIAMETER/2)
-    # Height must account for tunnel diameter at top and bottom
     spiral_height = MODULE_HEIGHT - (2 * WALL_THICKNESS) - TUNNEL_DIAMETER
     pitch = spiral_height / NUM_LOOPS  # Height per loop
     z_offset = WALL_THICKNESS + (TUNNEL_DIAMETER/2)  # Start spiral center up from bottom
+    
+    # Create parameters dictionary for consistent passing
+    params = {
+        'OUTER_DIAMETER': OUTER_DIAMETER,
+        'CENTER_HOLE_DIAMETER': CENTER_HOLE_DIAMETER,
+        'MODULE_HEIGHT': MODULE_HEIGHT,
+        'NUM_LOOPS': NUM_LOOPS,
+        'TUNNEL_DIAMETER': TUNNEL_DIAMETER,
+        'WALL_THICKNESS': WALL_THICKNESS,
+        'SPIRAL_RADIUS': SPIRAL_RADIUS,
+        'spiral_height': spiral_height,
+        'pitch': pitch,
+        'z_offset': z_offset
+    }
     
     print(f"FreeCAD Spiral Tunnel Creator v2.1")
     print(f"Creating spiral tunnel module using PartDesign Additive Helix:")
@@ -191,8 +209,7 @@ def create_spiral_tunnel_module():
         print(f"\n{'='*60}")
         print(f"STEP {current_step}: Creating spiral tunnel body")
         print(f"{'='*60}")
-        body, helix_created = create_spiral_body(doc, SPIRAL_RADIUS, TUNNEL_DIAMETER, 
-                                                 spiral_height, pitch, z_offset, NUM_LOOPS)
+        body, helix_created = create_spiral_body(doc, params)
         components_created.append("Spiral Body")
     else:
         print(f"\n⏸ PAUSED: Execution stopped before step {current_step} (EXECUTE_UP_TO_STEP = {EXECUTE_UP_TO_STEP})")
@@ -205,19 +222,7 @@ def create_spiral_tunnel_module():
         print(f"\n{'='*60}")
         print(f"STEP {current_step}: Creating entry/exit tunnels (coil extensions)")
         print(f"{'='*60}")
-        entry_tunnel, exit_tunnel = create_entry_exit_tunnels(SPIRAL_RADIUS, TUNNEL_DIAMETER, 
-                                                              OUTER_DIAMETER, pitch, 
-                                                              z_offset, spiral_height, NUM_LOOPS)
-        # Create visible objects for inspection
-        entry_obj = doc.addObject("Part::Feature", "Tunnel_Entry")
-        entry_obj.Shape = entry_tunnel
-        entry_obj.ViewObject.ShapeColor = (0.0, 1.0, 0.0)
-        entry_obj.ViewObject.Transparency = 30
-        
-        exit_obj = doc.addObject("Part::Feature", "Tunnel_Exit")
-        exit_obj.Shape = exit_tunnel
-        exit_obj.ViewObject.ShapeColor = (1.0, 0.0, 0.0)
-        exit_obj.ViewObject.Transparency = 30
+        entry_tunnel, exit_tunnel = create_entry_exit_tunnels(doc, params)
         components_created.append("Entry/Exit Tunnels")
     else:
         print(f"\n⏸ PAUSED: Execution stopped before step {current_step} (EXECUTE_UP_TO_STEP = {EXECUTE_UP_TO_STEP})")
@@ -230,12 +235,7 @@ def create_spiral_tunnel_module():
         print(f"\n{'='*60}")
         print(f"STEP {current_step}: Creating main cylinder")
         print(f"{'='*60}")
-        main_shape = create_main_cylinder(OUTER_DIAMETER, MODULE_HEIGHT, CENTER_HOLE_DIAMETER, WALL_THICKNESS)
-        # Create visible object for inspection
-        main_obj = doc.addObject("Part::Feature", "Main_Cylinder")
-        main_obj.Shape = main_shape
-        main_obj.ViewObject.ShapeColor = (0.5, 0.5, 0.8)
-        main_obj.ViewObject.Transparency = 70
+        main_shape = create_main_cylinder(doc, params)
         components_created.append("Main Cylinder")
     else:
         print(f"\n⏸ PAUSED: Execution stopped before step {current_step} (EXECUTE_UP_TO_STEP = {EXECUTE_UP_TO_STEP})")
@@ -247,49 +247,14 @@ def create_spiral_tunnel_module():
         print(f"\n{'='*60}")
         print(f"STEP {current_step}: Creating cutout box")
         print(f"{'='*60}")
-        cutout_box = create_cutout_box(spiral_height, z_offset, WALL_THICKNESS, OUTER_DIAMETER)
-        # Create visible object for inspection
-        cutout_obj = doc.addObject("Part::Feature", "Airflow_Cutout")
-        cutout_obj.Shape = cutout_box
-        cutout_obj.ViewObject.ShapeColor = (1.0, 1.0, 0.0)
-        cutout_obj.ViewObject.Transparency = 50
+        cutout_box = create_cutout_box(doc, params)
         components_created.append("Cutout Box")
     else:
         print(f"\n⏸ PAUSED: Execution stopped before step {current_step} (EXECUTE_UP_TO_STEP = {EXECUTE_UP_TO_STEP})")
         cutout_box = None
     
-    # Step 5: Create chute box
-    current_step += 1
-    if current_step <= EXECUTE_UP_TO_STEP:
-        print(f"\n{'='*60}")
-        print(f"STEP {current_step}: Creating air inlet chute")
-        print(f"{'='*60}")
-        chute_box = create_chute_box(MODULE_HEIGHT, WALL_THICKNESS)
-        # Create visible object for inspection
-        chute_obj = doc.addObject("Part::Feature", "Airflow_Chute")
-        chute_obj.Shape = chute_box
-        chute_obj.ViewObject.ShapeColor = (0.0, 1.0, 1.0)
-        chute_obj.ViewObject.Transparency = 50
-        components_created.append("Chute Box")
-    else:
-        print(f"\n⏸ PAUSED: Execution stopped before step {current_step} (EXECUTE_UP_TO_STEP = {EXECUTE_UP_TO_STEP})")
-        chute_box = None
-    
-    # Step 6: Create air holes (placeholder for now)
-    current_step += 1
-    if current_step <= EXECUTE_UP_TO_STEP:
-        print(f"\n{'='*60}")
-        print(f"STEP {current_step}: Creating air holes (placeholder)")
-        print(f"{'='*60}")
-        air_holes = []  # TODO: Implement according to development strategy
-        print("  ⚠ Air holes not yet implemented")
-        components_created.append("Air Holes (placeholder)")
-    else:
-        print(f"\n⏸ PAUSED: Execution stopped before step {current_step} (EXECUTE_UP_TO_STEP = {EXECUTE_UP_TO_STEP})")
-        air_holes = []
-    
     # Step 7: Combine and cut everything
-    current_step += 1
+    current_step += 3
     if current_step <= EXECUTE_UP_TO_STEP:
         print(f"\n{'='*60}")
         print(f"STEP {current_step}: Final assembly - combining and cutting")
@@ -297,7 +262,7 @@ def create_spiral_tunnel_module():
         # Only combine if we have all necessary components
         if body and main_shape:
             final_obj = combine_and_cut(doc, body, helix_created, main_shape, cutout_box, 
-                                       chute_box, air_holes, entry_tunnel, exit_tunnel)
+                                       entry_tunnel, exit_tunnel, params)
             # Hide individual components after combining
             for obj in doc.Objects:
                 if obj.Name != "FinalModule":  # Hide all intermediate components
@@ -312,12 +277,12 @@ def create_spiral_tunnel_module():
     
     # Final cleanup
     doc.recompute()
-    try:
-        import FreeCADGui
-        FreeCADGui.SendMsgToActiveView("ViewFit")
-        FreeCADGui.activeDocument().activeView().viewAxonometric()
-    except:
-        pass
+    if GUI_AVAILABLE:
+        try:
+            FreeCADGui.SendMsgToActiveView("ViewFit")
+            FreeCADGui.activeDocument().activeView().viewAxonometric()
+        except:
+            pass
     
     # Report execution status
     print("\n" + "="*60)
@@ -340,8 +305,8 @@ def create_spiral_tunnel_module():
         print("  - Spiral tunnel successfully integrated")
     elif EXECUTE_UP_TO_STEP >= 1:
         print("  - Main cylinder created (tunnel creation failed)")
-    print(f"  - Dimensions: {OUTER_DIAMETER}mm × {MODULE_HEIGHT}mm")
-    print(f"  - Center hole: {CENTER_HOLE_DIAMETER}mm")
+    print(f"  - Dimensions: {params['OUTER_DIAMETER']}mm × {params['MODULE_HEIGHT']}mm")
+    print(f"  - Center hole: {params['CENTER_HOLE_DIAMETER']}mm")
     
     # Return the final object if it was created, otherwise return the last created component
     if EXECUTE_UP_TO_STEP >= 7 and final_obj:
@@ -351,8 +316,16 @@ def create_spiral_tunnel_module():
         return doc.Objects[-1] if doc.Objects else None
 
 
-def create_spiral_body(doc, SPIRAL_RADIUS, TUNNEL_DIAMETER, spiral_height, pitch, z_offset, NUM_LOOPS):
+def create_spiral_body(doc, params):
     """Create the spiral tunnel body using PartDesign"""
+    
+    # Extract parameters
+    SPIRAL_RADIUS = params['SPIRAL_RADIUS']
+    TUNNEL_DIAMETER = params['TUNNEL_DIAMETER']
+    spiral_height = params['spiral_height']
+    pitch = params['pitch']
+    z_offset = params['z_offset']
+    NUM_LOOPS = params['NUM_LOOPS']
     
     # Create PartDesign Body for tunnel
     body = doc.addObject('PartDesign::Body', 'Spiral_Body')
@@ -422,8 +395,14 @@ def create_spiral_body(doc, SPIRAL_RADIUS, TUNNEL_DIAMETER, spiral_height, pitch
     return body, helix_created
 
 
-def create_main_cylinder(OUTER_DIAMETER, MODULE_HEIGHT, CENTER_HOLE_DIAMETER, WALL_THICKNESS):
+def create_main_cylinder(doc, params):
     """Create the main cylinder with center hole - preserves bottom wall thickness"""
+    
+    # Extract parameters
+    OUTER_DIAMETER = params['OUTER_DIAMETER']
+    MODULE_HEIGHT = params['MODULE_HEIGHT']
+    CENTER_HOLE_DIAMETER = params['CENTER_HOLE_DIAMETER']
+    WALL_THICKNESS = params['WALL_THICKNESS']
     
     # Position cylinder centered on origin
     outer_cylinder = Part.makeCylinder(
@@ -441,6 +420,12 @@ def create_main_cylinder(OUTER_DIAMETER, MODULE_HEIGHT, CENTER_HOLE_DIAMETER, WA
     
     main_shape = outer_cylinder.cut(center_hole)
     
+    # Create visible object for inspection
+    main_obj = doc.addObject("Part::Feature", "Main_Cylinder")
+    main_obj.Shape = main_shape
+    main_obj.ViewObject.ShapeColor = (0.5, 0.5, 0.8)
+    main_obj.ViewObject.Transparency = 70
+    
     print(f"✓ Created main cylinder with center hole")
     print(f"  - Outer: ⌀{OUTER_DIAMETER}mm × {MODULE_HEIGHT}mm")
     print(f"  - Center hole: ⌀{CENTER_HOLE_DIAMETER}mm × {MODULE_HEIGHT - WALL_THICKNESS}mm")
@@ -449,8 +434,14 @@ def create_main_cylinder(OUTER_DIAMETER, MODULE_HEIGHT, CENTER_HOLE_DIAMETER, WA
     return main_shape
 
 
-def create_cutout_box(spiral_height, z_offset, WALL_THICKNESS, OUTER_DIAMETER):
+def create_cutout_box(doc, params):
     """Create box cutout for air flow"""
+    
+    # Extract parameters
+    spiral_height = params['spiral_height']
+    z_offset = params['z_offset']
+    WALL_THICKNESS = params['WALL_THICKNESS']
+    OUTER_DIAMETER = params['OUTER_DIAMETER']
     
     # Simple rectangular cut through the cylinder wall
     cutout_width = 60.0  # Width of cutout (circumferential)
@@ -465,37 +456,29 @@ def create_cutout_box(spiral_height, z_offset, WALL_THICKNESS, OUTER_DIAMETER):
         FreeCAD.Vector(0, -cutout_width/2, z_offset)  # Centered on Y, aligned with spiral
     )
     
+    # Create visible object for inspection
+    cutout_obj = doc.addObject("Part::Feature", "Airflow_Cutout")
+    cutout_obj.Shape = cutout_box
+    cutout_obj.ViewObject.ShapeColor = (1.0, 1.0, 0.0)
+    cutout_obj.ViewObject.Transparency = 50
+    
     print(f"✓ Created cutout box: {cutout_width}mm wide × {cutout_height}mm high")
     print(f"  Preserving {WALL_THICKNESS}mm walls top and bottom")
     
     return cutout_box
 
 
-def create_chute_box(MODULE_HEIGHT, WALL_THICKNESS):
-    """Create air inlet chute for hair dryer"""
-    
-    # Rectangular hole from top going down to spiral area
-    chute_width = 50.0  # Standard hair dryer nozzle ~45-50mm
-    chute_length = 40.0  # Depth of chute
-    chute_height = WALL_THICKNESS + 5.0  # Through top wall plus a bit
-    
-    # Position at top of cylinder, offset to side
-    chute_box = Part.makeBox(
-        chute_length,
-        chute_width,
-        chute_height,
-        FreeCAD.Vector(20, -chute_width/2, MODULE_HEIGHT - chute_height)
-    )
-    
-    print(f"✓ Created air inlet chute: {chute_width}mm × {chute_length}mm")
-    
-    return chute_box
-
-
-def create_entry_exit_tunnels(SPIRAL_RADIUS, TUNNEL_DIAMETER, OUTER_DIAMETER, 
-                              pitch, z_offset, spiral_height, NUM_LOOPS):
+def create_entry_exit_tunnels(doc, params):
     """Create tangential entry and exit tunnels"""
-    import math
+    
+    # Extract parameters
+    SPIRAL_RADIUS = params['SPIRAL_RADIUS']
+    TUNNEL_DIAMETER = params['TUNNEL_DIAMETER']
+    OUTER_DIAMETER = params['OUTER_DIAMETER']
+    pitch = params['pitch']
+    z_offset = params['z_offset']
+    spiral_height = params['spiral_height']
+    NUM_LOOPS = params['NUM_LOOPS']
     
     def calculate_tangent_vector(angle, pitch, radius):
         """Helper function to calculate normalized tangent vector at given angle"""
@@ -544,6 +527,17 @@ def create_entry_exit_tunnels(SPIRAL_RADIUS, TUNNEL_DIAMETER, OUTER_DIAMETER,
         exit_tangent
     )
     
+    # Create visible objects for inspection
+    entry_obj = doc.addObject("Part::Feature", "Tunnel_Entry")
+    entry_obj.Shape = entry_tunnel
+    entry_obj.ViewObject.ShapeColor = (0.0, 1.0, 0.0)
+    entry_obj.ViewObject.Transparency = 30
+    
+    exit_obj = doc.addObject("Part::Feature", "Tunnel_Exit")
+    exit_obj.Shape = exit_tunnel
+    exit_obj.ViewObject.ShapeColor = (1.0, 0.0, 0.0)
+    exit_obj.ViewObject.Transparency = 30
+    
     print(f"✓ Created tangential entry tunnel at angle 0° at height {entry_z:.1f}mm")
     print(f"✓ Created tangential exit tunnel at angle {math.degrees(exit_angle):.1f}° at height {exit_z:.1f}mm")
     print(f"  Calculated clearance: {clearance_length:.1f}mm + 20mm extension = {tunnel_length:.1f}mm total")
@@ -552,7 +546,7 @@ def create_entry_exit_tunnels(SPIRAL_RADIUS, TUNNEL_DIAMETER, OUTER_DIAMETER,
 
 
 def combine_and_cut(doc, body, helix_created, main_shape, cutout_box, 
-                    chute_box, air_holes, entry_tunnel, exit_tunnel):
+                    entry_tunnel, exit_tunnel, params):
     """Combine all elements and perform final cuts"""
     
     if helix_created and body.Shape.isValid():
@@ -565,11 +559,6 @@ def combine_and_cut(doc, body, helix_created, main_shape, cutout_box,
             
             # Now cut the airflow features
             final_shape = final_shape.cut(cutout_box)
-            final_shape = final_shape.cut(chute_box)
-            
-            # Cut the radial air holes
-            for hole in air_holes:
-                final_shape = final_shape.cut(hole)
             
             final_obj = doc.addObject("Part::Feature", "FinalModule")
             final_obj.Shape = final_shape
