@@ -435,37 +435,58 @@ def create_main_cylinder(doc, params):
 
 
 def create_cutout_box(doc, params):
-    """Create box cutout for air flow"""
+    """Create trapezoidal cutout for radial air flow"""
     
     # Extract parameters
     spiral_height = params['spiral_height']
     z_offset = params['z_offset']
     WALL_THICKNESS = params['WALL_THICKNESS']
     OUTER_DIAMETER = params['OUTER_DIAMETER']
+    CENTER_HOLE_DIAMETER = params['CENTER_HOLE_DIAMETER']
     
-    # Simple rectangular cut through the cylinder wall
-    cutout_width = 60.0  # Width of cutout (circumferential)
-    cutout_height = spiral_height  # Height of cutout (same as spiral active zone)
-    cutout_depth = OUTER_DIAMETER  # Use parameter instead of hardcoded value
+    # Create trapezoidal shape for radial air flow
+    inner_radius = CENTER_HOLE_DIAMETER / 2
+    outer_radius = OUTER_DIAMETER / 2
+    inner_width = CENTER_HOLE_DIAMETER  # Width at inner edge
+    outer_width = 1.5 * CENTER_HOLE_DIAMETER  # Width at outer edge
     
-    # Position cutout to align with spiral section
-    cutout_box = Part.makeBox(
-        cutout_depth,
-        cutout_width,
-        cutout_height,
-        FreeCAD.Vector(-cutout_depth, -cutout_width/2, z_offset)  # Moved to opposite side (negative X)
+    # Create trapezoidal profile points - starts at centerline (X=0) and expands outward
+    points = [
+        FreeCAD.Vector(0, inner_width/2, 0),               # Centerline, top
+        FreeCAD.Vector(outer_radius, outer_width/2, 0),    # Outer cylinder edge, top
+        FreeCAD.Vector(outer_radius, -outer_width/2, 0),   # Outer cylinder edge, bottom
+        FreeCAD.Vector(0, -inner_width/2, 0),              # Centerline, bottom
+        FreeCAD.Vector(0, inner_width/2, 0)                # Close the shape
+    ]
+    
+    # Create the trapezoidal face
+    edges = []
+    for i in range(len(points)-1):
+        edges.append(Part.makeLine(points[i], points[i+1]))
+    
+    wire = Part.Wire(edges)
+    face = Part.Face(wire)
+    
+    # Extrude the trapezoid to create 3D shape
+    cutout_trapezoid = face.extrude(FreeCAD.Vector(0, 0, spiral_height))
+    
+    # Position trapezoid on the back side (negative X) and align with spiral section
+    cutout_trapezoid.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(0, 0, z_offset),
+        FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), 180)  # Rotate 180° to face negative X
     )
     
     # Create visible object for inspection
     cutout_obj = doc.addObject("Part::Feature", "Airflow_Cutout")
-    cutout_obj.Shape = cutout_box
+    cutout_obj.Shape = cutout_trapezoid
     cutout_obj.ViewObject.ShapeColor = (1.0, 1.0, 0.0)
     cutout_obj.ViewObject.Transparency = 50
     
-    print(f"✓ Created cutout box: {cutout_width}mm wide × {cutout_height}mm high")
-    print(f"  Preserving {WALL_THICKNESS}mm walls top and bottom")
+    print(f"✓ Created trapezoidal cutout for radial air flow:")
+    print(f"  Inner width: {inner_width:.1f}mm, Outer width: {outer_width:.1f}mm")
+    print(f"  Height: {spiral_height:.1f}mm, Depth: {outer_radius - inner_radius:.1f}mm")
     
-    return cutout_box
+    return cutout_trapezoid
 
 
 def create_entry_exit_tunnels(doc, params):
