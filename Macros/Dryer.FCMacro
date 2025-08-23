@@ -453,7 +453,7 @@ def create_cutout_box(doc, params):
         cutout_depth,
         cutout_width,
         cutout_height,
-        FreeCAD.Vector(0, -cutout_width/2, z_offset)  # Centered on Y, aligned with spiral
+        FreeCAD.Vector(-cutout_depth, -cutout_width/2, z_offset)  # Moved to opposite side (negative X)
     )
     
     # Create visible object for inspection
