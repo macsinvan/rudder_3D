@@ -22,9 +22,7 @@ class StepFileError(Exception):
 class StepHandler:
     """Class-based approach for managing STEP operations with state"""
     
-    def __init__(self, base_path=None, verbose=True):
-        self.base_path = Path(base_path) if base_path else project_root / "output"
-        self.base_path.mkdir(parents=True, exist_ok=True)
+    def __init__(self, verbose=True):
         self.verbose = verbose
         self.last_operation = {}
     
@@ -32,22 +30,21 @@ class StepHandler:
         if self.verbose:
             print(message)
     
-    def save(self, objects, filename, relative_path=None):
+    def save(self, objects, filepath):
         """Save objects to STEP file"""
-        return save_step(objects, filename, relative_path or self.base_path, self.verbose)
+        return save_step(objects, filepath, self.verbose)
     
-    def load(self, filename, doc_name=None, relative_path=None):
+    def load(self, filepath, doc_name=None):
         """Load STEP file into document"""
-        return load_step(filename, doc_name, relative_path or self.base_path, self.verbose)
+        return load_step(filepath, doc_name, self.verbose)
 
-def save_step(objects, filename, output_dir=None, verbose=True):
+def save_step(objects, filepath, verbose=True):
     """
     Export FreeCAD objects to STEP format
     
     Args:
         objects: Single object or list of FreeCAD objects to export
-        filename: Output filename (with or without .step extension)
-        output_dir: Directory to save file (defaults to ~/Rudder_Code/output)
+        filepath: Full path to output file (with or without .step extension)
         verbose: Print status messages
     
     Returns:
@@ -76,17 +73,14 @@ def save_step(objects, filename, output_dir=None, verbose=True):
             raise StepFileError("No valid objects to export")
         
         # Setup file path
-        if output_dir is None:
-            output_dir = project_root / "output"
-        
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        filepath = Path(filepath)
         
         # Ensure .step extension
-        if not filename.lower().endswith(('.step', '.stp')):
-            filename += '.step'
+        if not filepath.suffix.lower() in ['.step', '.stp']:
+            filepath = filepath.with_suffix('.step')
         
-        filepath = output_dir / filename
+        # Create directory if it doesn't exist
+        filepath.parent.mkdir(parents=True, exist_ok=True)
         
         # Export to STEP
         start_time = time.time()
@@ -113,14 +107,13 @@ def save_step(objects, filename, output_dir=None, verbose=True):
     except Exception as e:
         raise StepFileError(f"STEP export failed: {e}")
 
-def load_step(filename, doc_name=None, input_dir=None, verbose=True):
+def load_step(filepath, doc_name=None, verbose=True):
     """
     Import STEP file into FreeCAD document
     
     Args:
-        filename: STEP filename to import
+        filepath: Full path to STEP file
         doc_name: FreeCAD document name (created if doesn't exist)
-        input_dir: Directory containing STEP file (defaults to ~/Rudder_Code/output)
         verbose: Print status messages
     
     Returns:
@@ -134,16 +127,7 @@ def load_step(filename, doc_name=None, input_dir=None, verbose=True):
         import Import
         
         # Setup file path
-        if input_dir is None:
-            input_dir = project_root / "output"
-        
-        input_dir = Path(input_dir)
-        
-        # Handle different filename formats
-        if not filename.lower().endswith(('.step', '.stp')):
-            filename += '.step'
-        
-        filepath = input_dir / filename
+        filepath = Path(filepath)
         
         # Verify file exists
         if not filepath.exists():
