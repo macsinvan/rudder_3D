@@ -2,9 +2,11 @@
 Build Display Macro - GUI Logic Only
 Lightweight wrapper that handles only FreeCAD GUI display and interaction
 All computation logic delegated to Stock.stock_builder_core module
+Now includes V-groove filling for cutout tool generation
 
 This file goes in: FreeCAD Macros folder
 Main code is in: ~/Rudder_Code/stock/stock_builder_core.py
+V-fill code is in: ~/Rudder_Code/stock/fill_V.py
 """
 import sys
 import os
@@ -19,8 +21,24 @@ if project.exists():
 try:
     from stock.stock_builder_core import StockBuilderCore
 except ImportError:
-    print("❌ Cannot import Stock.stock_builder_core module")
-    print("Make sure stock_builder_core.py is in ~/Rudder_Code/Stock/")
+    print("❌ Cannot import stock.stock_builder_core module")
+    print("Make sure stock_builder_core.py is in ~/Rudder_Code/stock/")
+    sys.exit(1)
+
+# Import the V-fill module
+try:
+    from stock.fill_V import fill_v_grooves
+except ImportError:
+    print("❌ Cannot import stock.fill_V module")
+    print("Make sure fill_V.py is in ~/Rudder_Code/stock/")
+    sys.exit(1)
+
+# Import STEP save functionality
+try:
+    from helpers.step_save_load import save_step
+except ImportError:
+    print("❌ Cannot import STEP helper")
+    print("Make sure step_save_load.py is in ~/Rudder_Code/helpers/")
     sys.exit(1)
 
 try:
@@ -154,7 +172,30 @@ class StockDisplayManager:
         except Exception as e:
             print(f"⚠️  Could not enhance visual appearance: {e}")
     
-    def run_with_gui(self, csv_path=None, **kwargs):
+    def export_stock_stl(self, stock_obj, boat_name="MackenSea"):
+        """Export stock as STL for 3D printing"""
+        try:
+            # Set up output paths
+            output_dir = project / "boats" / boat_name / "output" / "stock"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            stock_stl_file = output_dir / f"{boat_name}_Stock.stl"
+            
+            # Export stock as STL for 3D printing
+            print(f"\n📤 Exporting stock as STL (for 3D printing)...")
+            import Mesh
+            Mesh.export([stock_obj], str(stock_stl_file))
+            print(f"   Saved to: {stock_stl_file}")
+            
+            return True
+                
+        except Exception as e:
+            print(f"❌ Export failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def run_with_gui(self, csv_path=None, boat_name="MackenSea", **kwargs):
         """Main execution with full GUI integration"""
         print("🔧 Starting Stock 3D Display Macro...")
         
@@ -177,6 +218,12 @@ class StockDisplayManager:
                 print("❌ No stock object created")
                 return False
             
+            # Export stock STL
+            export_success = self.export_stock_stl(stock_obj, boat_name)
+            
+            # Create filled cutout object
+            cutout_obj = fill_v_grooves(stock_obj)
+            
             # Handle GUI-specific updates
             print("🖥️  Updating GUI display...")
             self.update_gui_view(doc)
@@ -187,6 +234,9 @@ class StockDisplayManager:
             summary = self.core.get_build_summary()
             print(f"\n✅ Display macro completed!")
             print(f"⏱️  Build time: {summary['stats'].get('build_time', 0):.2f} seconds")
+            
+            if export_success:
+                print("📦 Stock STL exported successfully for 3D printing!")
             
             return True
             
