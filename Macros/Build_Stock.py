@@ -1,12 +1,10 @@
 """
 Build Display Macro - GUI Logic Only
 Lightweight wrapper that handles only FreeCAD GUI display and interaction
-All computation logic delegated to Stock.stock_builder_core module
-Now includes V-groove filling for cutout tool generation
+All computation logic delegated to stock.stock_builder_core module
 
 This file goes in: FreeCAD Macros folder
 Main code is in: ~/Rudder_Code/stock/stock_builder_core.py
-V-fill code is in: ~/Rudder_Code/stock/fill_V.py
 """
 import sys
 import os
@@ -23,14 +21,6 @@ try:
 except ImportError:
     print("❌ Cannot import stock.stock_builder_core module")
     print("Make sure stock_builder_core.py is in ~/Rudder_Code/stock/")
-    sys.exit(1)
-
-# Import the V-fill module
-try:
-    from stock.fill_V import fill_v_grooves
-except ImportError:
-    print("❌ Cannot import stock.fill_V module")
-    print("Make sure fill_V.py is in ~/Rudder_Code/stock/")
     sys.exit(1)
 
 # Import STEP save functionality
@@ -220,9 +210,6 @@ class StockDisplayManager:
             
             # Export stock STL
             export_success = self.export_stock_stl(stock_obj, boat_name)
-            
-            # Create filled cutout object
-            cutout_obj = fill_v_grooves(stock_obj)
             
             # Handle GUI-specific updates
             print("🖥️  Updating GUI display...")
