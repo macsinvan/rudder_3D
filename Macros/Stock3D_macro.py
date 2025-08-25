@@ -1,4 +1,3 @@
-# Macros/stock_3D_macro.py
 """
 Stock 3D Macro - Complete GUI Integration
 Builds 3D rudder stock geometry with proper FreeCAD GUI setup
