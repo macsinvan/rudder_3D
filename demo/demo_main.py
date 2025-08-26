@@ -1,4 +1,3 @@
-# demo/demo_main.py
 """
 Demo Model Generator - Step 5A
 Creates scaled-down demo model with breakaway connections for single-print assembly demonstration.
@@ -237,52 +236,7 @@ def position_stock_in_cavity(upper_foil_obj, lower_foil_obj, stock_obj, doc):
         print(f"❌ Failed to position stock: {e}")
         return False
 
-
-def create_stock_clearance_cutter(stock_obj, doc):
-    """
-    Create enlarged stock shape for cutting clearance cavities.
-    Uses bounding box expansion method for reliability with complex geometries.
-    """
-    try:
-        print(f"🔧 Creating stock clearance cutter with {STOCK_CLEARANCE}mm clearance...")
-        
-        # Get stock bounding box
-        stock_bbox = stock_obj.Shape.BoundBox
-        
-        # Create enlarged bounding box with clearance
-        clearance_box = Part.makeBox(
-            stock_bbox.XLength + (2 * STOCK_CLEARANCE),  # Add clearance on both sides
-            stock_bbox.YLength + (2 * STOCK_CLEARANCE),  # Add clearance on both sides
-            stock_bbox.ZLength + (2 * STOCK_CLEARANCE),  # Add clearance on both sides
-            Vector(
-                stock_bbox.XMin - STOCK_CLEARANCE,       # Shift origin to maintain centering
-                stock_bbox.YMin - STOCK_CLEARANCE,
-                stock_bbox.ZMin - STOCK_CLEARANCE
-            )
-        )
-        
-        # Create clearance cutter object (hidden - only for cutting)
-        clearance_cutter = doc.addObject("Part::Feature", f"{BOAT_NAME}_Demo_Stock_Clearance")
-        clearance_cutter.Shape = clearance_box
-        clearance_cutter.ViewObject.Visibility = False  # Hidden - only for cutting
-        
-        # Get enlarged dimensions for verification
-        clearance_bbox = clearance_box.BoundBox
-        
-        print(f"   ✅ Created clearance cutter using bounding box method")
-        print(f"   📏 Original stock: {stock_bbox.XLength:.1f} x {stock_bbox.YLength:.1f} x {stock_bbox.ZLength:.1f}mm")
-        print(f"   📏 Clearance cutter: {clearance_bbox.XLength:.1f} x {clearance_bbox.YLength:.1f} x {clearance_bbox.ZLength:.1f}mm")
-        print(f"   📐 Clearance expansion: {STOCK_CLEARANCE}mm on all edges")
-        print(f"   🔧 Using box method for reliability with complex stock geometry")
-        
-        return clearance_cutter
-        
-    except Exception as e:
-        print(f"❌ Failed to create clearance cutter: {e}")
-        return None
-
-
-def create_demo_assembly_clean(upper_foil_obj, lower_foil_obj, stock_obj, clearance_cutter, doc):
+def create_demo_assembly_clean(upper_foil_obj, lower_foil_obj, stock_obj, doc):
     """
     Create clean demo visualization with separate components.
     Shows split foil halves with cavities and stock as separate object.
@@ -362,6 +316,29 @@ def run():
         print("❌ Cannot proceed without stock. Run Step 2 first.")
         return
 
+    # DEBUG: Make objects visible and exit
+    print(f"\n🔍 DEBUG MODE: Showing imported objects and exiting...")
+    
+    # Force opaque appearance for debugging
+    cut_foil_obj.ViewObject.Visibility = True
+    cut_foil_obj.ViewObject.Transparency = 0  # Force opaque
+    cut_foil_obj.ViewObject.ShapeColor = (0.5, 0.5, 0.5)  # Medium grey
+    cut_foil_obj.ViewObject.DisplayMode = "Shaded"
+    
+    stock_obj.ViewObject.Visibility = True
+    stock_obj.ViewObject.Transparency = 0  # Force opaque
+    stock_obj.ViewObject.ShapeColor = (0.8, 0.8, 0.9)  # Light steel
+    stock_obj.ViewObject.DisplayMode = "Shaded"
+    
+    doc.recompute()
+    Gui.SendMsgToActiveView("ViewFit")
+    Gui.activeDocument().activeView().viewIsometric()
+    print(f"✅ Debug view complete - Cut foil and Stock are visible")
+    print(f"📏 Cut foil bounds: {cut_foil_obj.Shape.BoundBox}")
+    print(f"📏 Stock bounds: {stock_obj.Shape.BoundBox}")
+    print(f"🎨 Forced opaque appearance (Transparency = 0)")
+    return
+
     # Step 3: Split foil for visualization (through chord along Y-axis)
     print(f"\n✂️ STEP 3: Splitting foil through chord for visualization...")
     upper_foil_obj, lower_foil_obj = split_foil_for_visualization(cut_foil_obj, doc)
@@ -379,16 +356,9 @@ def run():
         print("❌ Failed to position stock.")
         return
 
-    # Step 5: Create clearance cutter for realistic assembly tolerances
-    print(f"\n🔧 STEP 5: Creating clearance cutter...")
-    clearance_cutter = create_stock_clearance_cutter(stock_obj, doc)
-    if not clearance_cutter:
-        print("❌ Failed to create clearance cutter.")
-        return
-
     # Step 6: Create clean demo visualization with clearance cavities
     print(f"\n🔧 STEP 6: Creating clean demo visualization with clearance...")
-    upper_foil_obj, lower_foil_obj, stock_obj = create_demo_assembly_clean(upper_foil_obj, lower_foil_obj, stock_obj, clearance_cutter, doc)
+    upper_foil_obj, lower_foil_obj, stock_obj = create_demo_assembly_clean(upper_foil_obj, lower_foil_obj, stock_obj, doc)
     if not upper_foil_obj or not lower_foil_obj or not stock_obj:
         print("❌ Failed to create demo visualization.")
         return

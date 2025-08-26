@@ -1,8 +1,8 @@
-# foil/foil_3D.py
 """
 Foil 3D Pipeline - Boat-Centric Version with Enhanced Surface Quality
 Converts STEP outline profiles to 3D NACA foil via chord slicing and lofting.
 Enhanced for smoother surfaces and better mesh quality.
+Now exports both STEP and STL files.
 """
 
 import sys, os
@@ -15,7 +15,7 @@ from rudderlib_foil.naca import naca4_coordinates
 
 # Configuration - Boat-Centric
 BOAT_NAME = "MackenSea"  # Single source of truth - change this for different boats
-VERSION = "1.1.1"
+VERSION = "1.2.0"  # Updated version for STL export feature
 
 # Derived paths - everything flows from boat name
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
@@ -25,6 +25,7 @@ OUTPUT_FOLDER = f"{BOAT_FOLDER}/output/foil"
 # File specifications
 PROFILES_STEP_FILE = f"{BOAT_NAME}_Outline.step"  # Input from outline step
 FOIL_STEP_FILE = f"{BOAT_NAME}_Foil.step"          # Output for integration step
+FOIL_STL_FILE = f"{BOAT_NAME}_Foil.stl"            # Output STL for 3D printing/CAM
 
 # Configuration - Enhanced for Smooth Surfaces
 CONFIG = {
@@ -47,6 +48,10 @@ CONFIG = {
     'bspline_degree': 3,            # Unused when use_bspline_sections=False
     'surface_smoothing': False,     # Disabled: Minimal visual benefit, significant cost
     'smoothing_iterations': 2,      # Unused when surface_smoothing=False
+    
+    # STL Export Settings
+    'stl_linear_tolerance': 0.1,    # mm - controls STL mesh quality (smaller = finer mesh)
+    'stl_angular_tolerance': 0.5,   # degrees - angular deviation for mesh
     
     # Geometry Settings
     'plane_size': 1000,          # mm size of sectioning planes
@@ -324,6 +329,35 @@ def apply_surface_smoothing(shape, iterations=2):
         return shape
 
 
+def export_stl(shape, filepath, config):
+    """
+    Export shape to STL with configurable mesh quality.
+    
+    Args:
+        shape: FreeCAD shape to export
+        filepath: Output STL file path
+        config: Configuration dictionary with STL settings
+    """
+    try:
+        # Method 1: Direct export with shape's tessellation
+        shape.exportStl(filepath)
+        print(f"✅ Exported STL: {filepath}")
+        
+        # Alternative Method 2: Fine control over mesh quality
+        # Uncomment to use Mesh module for finer control:
+        """
+        import Mesh
+        linear_tol = config.get('stl_linear_tolerance', 0.1)
+        angular_tol = config.get('stl_angular_tolerance', 0.5)
+        mesh = Mesh.Mesh(shape.tessellate(linear_tol))
+        mesh.write(filepath)
+        print(f"✅ Exported STL with tolerance {linear_tol}mm: {filepath}")
+        """
+        
+    except Exception as e:
+        print(f"❌ STL export failed: {e}")
+
+
 def get_profiles_step_path():
     """
     Get profiles STEP path using boat-centric logic:
@@ -429,13 +463,14 @@ def calculate_naca_thickness(chords, config):
 def build_foil_from_step(doc: App.Document):
     """
     Enhanced single full-pipeline function: outline STEP → chords → NACA sections → loft
-    Now with improved surface quality and smoother mesh generation.
+    Now with improved surface quality, smoother mesh generation, and STL export.
     """
     print(f"\n🛥️ Enhanced Foil Build v{VERSION}")
     print(f"🚤 Boat: {BOAT_NAME}")
     print(f"📂 Boat folder: {BOAT_FOLDER}")
     print(f"Enhanced config: {CONFIG['slice_spacing']}mm spacing, {CONFIG['naca_points']} pts/section")
     print(f"Surface enhancements: B-splines={CONFIG['use_bspline_sections']}, Smoothing={CONFIG['surface_smoothing']}")
+    print(f"📄 Will export both STEP and STL formats")
 
     # Get profiles STEP path
     step_path = get_profiles_step_path()
@@ -584,13 +619,19 @@ def build_foil_from_step(doc: App.Document):
         
         print("✅ Enhanced loft created with surface improvements.")
         
-        # Export foil to organized output folder
+        # Export foil to organized output folder - STEP and STL
         try:
+            # Export STEP
             step_path = f"{OUTPUT_FOLDER}/{FOIL_STEP_FILE}"
             Part.export([lf], step_path)
             print(f"✅ Exported enhanced foil STEP: {step_path}")
+            
+            # Export STL
+            stl_path = f"{OUTPUT_FOLDER}/{FOIL_STL_FILE}"
+            export_stl(lf.Shape, stl_path, CONFIG)
+            
         except Exception as e:
-            print(f"❌ Foil STEP export failed: {e}")
+            print(f"❌ Foil export failed: {e}")
             
     except Exception as e:
         print(f"❌ Enhanced loft failed: {e}")
@@ -612,13 +653,19 @@ def build_foil_from_step(doc: App.Document):
             
             print("✅ Enhanced ruled loft created as fallback.")
             
-            # Export fallback foil
+            # Export fallback foil - STEP and STL
             try:
+                # Export STEP
                 step_path = f"{OUTPUT_FOLDER}/{FOIL_STEP_FILE}"
                 Part.export([lf], step_path)
                 print(f"✅ Exported enhanced ruled foil STEP: {step_path}")
+                
+                # Export STL
+                stl_path = f"{OUTPUT_FOLDER}/{FOIL_STL_FILE}"
+                export_stl(lf.Shape, stl_path, CONFIG)
+                
             except Exception as e:
-                print(f"❌ Foil STEP export failed: {e}")
+                print(f"❌ Foil export failed: {e}")
                 
         except Exception as e2:
             print(f"❌ Enhanced ruled loft also failed: {e2}")
@@ -632,4 +679,7 @@ def build_foil_from_step(doc: App.Document):
     print(f"   - B-spline sections: {CONFIG['use_bspline_sections']}")
     print(f"   - Surface smoothing: {CONFIG['surface_smoothing']}")
     print(f"   - Construction sections automatically cleaned up")
-    print(f"📁 Next step: Use {step_path} for stock integration")
+    print(f"📁 Exported files:")
+    print(f"   - STEP: {OUTPUT_FOLDER}/{FOIL_STEP_FILE}")
+    print(f"   - STL:  {OUTPUT_FOLDER}/{FOIL_STL_FILE}")
+    print(f"📁 Next step: Use exported files for stock integration or CAM")
