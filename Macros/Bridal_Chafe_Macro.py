@@ -1,139 +1,149 @@
-# FreeCAD Macro for 1x19 Wire Rope Model
-# Version 7.0 - Refactored with function and parameters
+# FreeCAD Macro for 12 Individual Wires
+# Testing 100mm pitch with 12 separate wires
 
 import FreeCAD
 import Part
 from FreeCAD import Base
+import math
 
-def create_wire_rope_1x19(
-    length,                  # Length of rope to model (mm)
-    overall_diameter,        # Total rope diameter (mm)
-    wire_diameter,          # Individual wire diameter (mm)
-    num_outer_wires=12,     # Number of outer spiral wires (default 12 for 1x19)
-    spacing=0.2             # Gap between wire wraps (mm)
-):
+def create_wire_rope_cutting_tool(length, overall_diameter, wire_diameter, helix_pitch, num_wires, core_diameter):
     """
-    Create a 1x19 wire rope model for use as cutting tool in chafe protector.
-    
-    1x19 Construction breakdown:
-    - 1 center wire (straight)
-    - 6 inner layer wires (not modeled)
-    - 12 outer layer wires (these create the spiral we model)
-    - Total: 19 wires
-    
-    We only model the outer 12 wires as they create the visible spiral pattern
-    that will form the groove in our chafe protector.
+    Create a wire rope cutting tool with specified parameters.
     
     Parameters:
-    - length: Length of wire rope to model in mm
-    - overall_diameter: Total diameter of the wire rope in mm  
-    - wire_diameter: Diameter of individual outer wires in mm
-    - num_outer_wires: Number of outer spiral wires (default 12 for 1x19)
-    - spacing: Gap between adjacent wire wraps in mm (default 0.2)
+    - length: Length of wire rope in mm
+    - overall_diameter: Total diameter of the wire rope in mm
+    - wire_diameter: Diameter of individual wires in mm
+    - helix_pitch: Pitch of the helix in mm
+    - num_wires: Number of outer wires
+    - core_diameter: Diameter of the solid core cylinder in mm
     
-    Returns: Fused solid of all outer wire strands
+    Returns: doc - The FreeCAD document with all created objects
     """
     
-    # Calculate derived parameters
-    # Inner core diameter for 1x19 is typically 2/3 of overall diameter
-    core_diameter = overall_diameter * (2/3)  # Approximately 4mm for 6mm rope
-    core_radius = core_diameter / 2
+    # Calculate helix radius (distance from center to wire center)
+    core_radius_calc = (overall_diameter * (2/3)) / 2
+    helix_radius = core_radius_calc + (wire_diameter / 2)
     
-    # Helix radius: from rope center to center of outer wire
-    # This is core radius plus half the wire diameter
-    helix_radius = core_radius + (wire_diameter / 2)
+    # Angular spacing between wires
+    angular_spacing = 360.0 / num_wires  # degrees
     
-    # Vertical spacing between strands
-    strand_spacing = wire_diameter + spacing
+    # Vertical offset between adjacent wires
+    vertical_offset = helix_pitch / num_wires
     
-    # Pitch: distance for one complete spiral revolution
-    # All outer wires complete one turn, spaced vertically
-    helix_pitch = num_outer_wires * strand_spacing
-    
-    print(f"Creating 1x19 wire rope model:")
-    print(f"  Core diameter: {core_diameter:.2f}mm")
+    print(f"Creating {num_wires} wires:")
     print(f"  Helix radius: {helix_radius:.2f}mm")
     print(f"  Helix pitch: {helix_pitch:.2f}mm")
-    print(f"  Strand spacing: {strand_spacing:.2f}mm")
+    print(f"  Wire diameter: {wire_diameter}mm")
+    print(f"  Angular spacing: {angular_spacing:.1f} degrees")
+    print(f"  Vertical offset: {vertical_offset:.2f}mm")
     
-    # Create the first wire strand
-    # Create the helix path
+    # Create document
+    doc = FreeCAD.newDocument("WireRope_12Wires")
+    
+    # Create the first wire as reference
     helix_path = Part.makeHelix(
         helix_pitch,         # pitch
         length,              # height  
         helix_radius         # radius
     )
     
-    # Get the start point of the helix
+    # Get the start point
     start_point = helix_path.Vertexes[0].Point
     
-    # For a helix starting at radius on X axis, the tangent points in Y direction
-    tangent_vector = Base.Vector(0, 1, 0)  # Initial tangent direction for helix
+    # Initial tangent
+    tangent_z = helix_pitch / (2 * math.pi * helix_radius)
+    tangent_vector = Base.Vector(0, 1, tangent_z).normalize()
     
-    # Create circle perpendicular to the helix tangent
+    # Create circle profile
     circle = Part.makeCircle(
-        wire_diameter / 2,      # radius
-        start_point,            # center
-        tangent_vector          # normal vector (perpendicular to profile)
+        wire_diameter / 2,   # radius
+        start_point,         # center
+        tangent_vector       # normal vector
     )
     
     # Convert to wire
     circle_wire = Part.Wire([circle])
     
-    # Create the sweep using makePipeShell
+    # Create the first sweep
     path_wire = Part.Wire(helix_path)
     first_strand = path_wire.makePipeShell(
-        [circle_wire],    # list of profiles
+        [circle_wire],    # profiles
         True,             # makeSolid
         True              # isFrenet
     )
     
-    # Create all strands by copying and translating
-    all_strands = [first_strand]
+    # Add first wire
+    wire_object = doc.addObject("Part::Feature", "Wire_00")
+    wire_object.Shape = first_strand
     
-    for i in range(1, num_outer_wires):
+    print(f"  Created wire 0 at angle 0.0°")
+    
+    # Create remaining wires by just translating vertically
+    for i in range(1, num_wires):
         # Copy the first strand
-        strand_copy = first_strand.copy()
+        wire_copy = first_strand.copy()
         
-        # Move it up by the calculated strand spacing
-        z_offset = i * strand_spacing
-        strand_copy.translate(Base.Vector(0, 0, z_offset))
+        # Only translate vertically to stagger the wires
+        # The vertical offset creates the angular distribution naturally
+        z_offset = i * vertical_offset
+        wire_copy.translate(Base.Vector(0, 0, z_offset))
         
-        all_strands.append(strand_copy)
-        print(f"  Created strand {i} at z={z_offset:.2f}mm")
+        # Add to document as separate object
+        wire_object = doc.addObject("Part::Feature", f"Wire_{i:02d}")
+        wire_object.Shape = wire_copy
+        
+        print(f"  Created wire {i} at z-offset {z_offset:.2f}mm")
     
-    # Fuse all strands together into single solid
-    print("Fusing all strands into single solid...")
-    wire_rope = all_strands[0]
-    for strand in all_strands[1:]:
-        wire_rope = wire_rope.fuse(strand)
-    
-    print(f"Wire rope model created successfully")
-    return wire_rope
-
-# ============================================
-# Main execution
-# ============================================
-
-if __name__ == "__main__":
-    # Clear existing document or create new
-    doc = FreeCAD.newDocument("WireRope")
-    
-    # Call function with our default parameters
-    wire_rope = create_wire_rope_1x19(
-        length=250.0,           # 250mm length
-        overall_diameter=6.0,   # 6mm total diameter
-        wire_diameter=1.0,      # 1mm individual wire
-        num_outer_wires=12,     # 12 outer wires (standard for 1x19)
-        spacing=0.2            # 0.2mm gap between wraps
+    # Create center core cylinder
+    core_cylinder = Part.makeCylinder(
+        core_diameter / 2,         # radius
+        length,                     # height
+        Base.Vector(0, 0, 0),      # position
+        Base.Vector(0, 0, 1)       # direction
     )
     
-    # Display the result
-    rope_object = doc.addObject("Part::Feature", "WireRope_1x19")
-    rope_object.Shape = wire_rope
+    # Add core cylinder to document
+    core_object = doc.addObject("Part::Feature", "Core_Cylinder")
+    core_object.Shape = core_cylinder
     
-    # Recompute and fit view
+    print(f"  Created {core_diameter}mm core cylinder")
+    
+    # Fuse all parts into a single cutting tool
+    print(f"\nFusing all parts into single cutting tool...")
+    
+    # Start fusion with the core cylinder
+    cutting_tool = core_cylinder.copy()
+    
+    # Get all wire shapes from the document objects
+    for i in range(num_wires):
+        wire_name = f"Wire_{i:02d}"
+        wire_obj = doc.getObject(wire_name)
+        if wire_obj:
+            cutting_tool = cutting_tool.fuse(wire_obj.Shape)
+        
+    # Add the fused cutting tool to document
+    cutting_tool_object = doc.addObject("Part::Feature", "CuttingTool_Complete")
+    cutting_tool_object.Shape = cutting_tool
+    
+    print(f"  Created fused cutting tool with {num_wires} wires")
+    
     doc.recompute()
     FreeCADGui.ActiveDocument.ActiveView.fitAll()
     
-    print("\nModel complete and displayed")
+    print(f"\n{num_wires} separate wires + core cylinder created")
+    print(f"Fused cutting tool created as 'CuttingTool_Complete'")
+    
+    return doc
+
+# Main execution
+if __name__ == "__main__":
+    # Call function with hardcoded values
+    doc = create_wire_rope_cutting_tool(
+        length=250.0,           # Length of wire (mm)
+        overall_diameter=6.0,   # Total rope diameter (mm)
+        wire_diameter=1.0,      # Individual wire diameter (mm)
+        helix_pitch=100.0,      # 100mm pitch
+        num_wires=12,           # Number of wires
+        core_diameter=5.0       # Core cylinder diameter (mm)
+    )

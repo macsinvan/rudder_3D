@@ -1,4 +1,3 @@
-# outline/outline_main.py
 """
 Comprehensive Rudder Outline Builder - Boat-Centric Version
 Processes both Profile and Outline CSV files with explicit geometry.
@@ -303,27 +302,11 @@ def process_csv_file(csv_filename, object_prefix, colors, doc):
     try:
         print(f"   🔧 Creating shrunk wire with {OFFSET_DIST}mm offset...")
         
-        # Try different makeOffset2D parameters for better curve handling
-        try:
-            # Method 1: High precision offset with join type specified
-            print(f"   🎯 Attempting high-precision offset...")
-            shrunk_wire_raw = wire.makeOffset2D(OFFSET_DIST, 0.01, True, True, False)  # offset, tol, fill, openResult, intersection
-            print(f"   ✅ High-precision offset successful")
-        except:
-            try:
-                # Method 2: Standard precision with different parameters
-                print(f"   🎯 Attempting standard offset with join settings...")
-                shrunk_wire_raw = wire.makeOffset2D(OFFSET_DIST, 0.1, True, True)  # offset, tolerance, fill, openResult
-                print(f"   ✅ Standard offset successful")
-            except:
-                try:
-                    # Method 3: Simple offset (original method)
-                    print(f"   🎯 Falling back to simple offset...")
-                    shrunk_wire_raw = wire.makeOffset2D(OFFSET_DIST)
-                    print(f"   ✅ Simple offset successful")
-                except Exception as e:
-                    print(f"   ❌ All offset methods failed: {e}")
-                    return None, None
+        # Single offset method - no fallbacks
+        # Using simple offset with default parameters
+        # If this fails, we want to know immediately
+        shrunk_wire_raw = wire.makeOffset2D(OFFSET_DIST)
+        print(f"   ✅ Offset operation successful")
         
         # DEBUG: Create a visual object for the raw shrunk wire to inspect shape
         print(f"   🔍 Creating debug object for raw shrunk wire inspection...")
@@ -347,13 +330,17 @@ def process_csv_file(csv_filename, object_prefix, colors, doc):
             print(f"      Shrunk: {len(shrunk_wire.Edges)} edges")
             print(f"      Difference: {len(shrunk_wire.Edges) - len(wire.Edges)} edges")
         
-        # Check closure consistency
+        # Check closure consistency - ERROR OUT if shrunk wire isn't closed
         if wire.isClosed() and not shrunk_wire.isClosed():
-            warning_msg = f"SHRUNK WIRE WARNING: Closure mismatch!\n"
-            warning_msg += f"  Original wire: CLOSED\n"
-            warning_msg += f"  Shrunk wire: OPEN\n"
-            warning_msg += f"  This will cause foil generation problems!"
-            print(f"   ⚠️ {warning_msg}")
+            error_msg = f"SHRUNK WIRE ERROR: Wire is not closed!\n"
+            error_msg += f"  Original wire: CLOSED\n"
+            error_msg += f"  Shrunk wire: OPEN\n"
+            error_msg += f"  This will cause foil generation to fail!\n"
+            error_msg += f"  The offset operation created an unclosed wire that cannot be used downstream."
+            print(f"   ❌ {error_msg}")
+            from PySide2 import QtWidgets
+            QtWidgets.QMessageBox.critical(None, "Shrunk Wire Closure Error", error_msg)
+            return None, None
             
         # Check bounding box consistency
         orig_bb = wire.BoundBox
@@ -391,10 +378,14 @@ def process_csv_file(csv_filename, object_prefix, colors, doc):
         print(f"   🔍 INSPECT: Compare magenta debug object vs normal shrunk object")
         
     except Exception as e:
-        error_msg = f"SHRUNK WIRE ERROR: Offset operation failed: {e}"
+        error_msg = f"SHRUNK WIRE ERROR: Offset operation failed: {e}\n"
+        error_msg += f"  Wire edges: {len(wire.Edges)}\n"
+        error_msg += f"  Offset distance: {OFFSET_DIST}mm\n"
+        error_msg += f"  This is a critical geometry error that must be fixed."
         print(f"   ❌ {error_msg}")
         from PySide2 import QtWidgets
-        QtWidgets.QMessageBox.warning(None, "Shrunk Wire Error", error_msg)
+        QtWidgets.QMessageBox.critical(None, "Shrunk Wire Creation Failed", error_msg)
+        return None, None
 
     # Get all points for grid calculation
     all_points = []
