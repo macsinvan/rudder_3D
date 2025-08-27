@@ -155,43 +155,39 @@ def calculate_wire_curvature(wire, num_samples=50):
     Returns:
         List of (parameter, curvature) tuples
     """
-    try:
-        curvatures = []
-        for i in range(num_samples):
-            param = i / (num_samples - 1)
-            # Sample three close points to estimate curvature
-            if param < 0.01:
-                p1 = wire.valueAt(0)
-                p2 = wire.valueAt(0.01)
-                p3 = wire.valueAt(0.02)
-            elif param > 0.99:
-                p1 = wire.valueAt(0.98)
-                p2 = wire.valueAt(0.99)
-                p3 = wire.valueAt(1.0)
-            else:
-                p1 = wire.valueAt(param - 0.01)
-                p2 = wire.valueAt(param)
-                p3 = wire.valueAt(param + 0.01)
-            
-            # Estimate curvature using three-point method
-            a = (p2 - p1).Length
-            b = (p3 - p2).Length
-            c = (p3 - p1).Length
-            
-            if a > 0 and b > 0 and c > 0:
-                # Area of triangle
-                s = (a + b + c) / 2
-                area = math.sqrt(max(0, s * (s - a) * (s - b) * (s - c)))
-                curvature = 4 * area / (a * b * c) if (a * b * c) > 0 else 0
-            else:
-                curvature = 0
-                
-            curvatures.append((param, curvature))
+    curvatures = []
+    for i in range(num_samples):
+        param = i / (num_samples - 1)
+        # Sample three close points to estimate curvature
+        if param < 0.01:
+            p1 = wire.valueAt(0)
+            p2 = wire.valueAt(0.01)
+            p3 = wire.valueAt(0.02)
+        elif param > 0.99:
+            p1 = wire.valueAt(0.98)
+            p2 = wire.valueAt(0.99)
+            p3 = wire.valueAt(1.0)
+        else:
+            p1 = wire.valueAt(param - 0.01)
+            p2 = wire.valueAt(param)
+            p3 = wire.valueAt(param + 0.01)
         
-        return curvatures
-    except:
-        # Fallback to uniform distribution if curvature calculation fails
-        return [(i / (num_samples - 1), 0.1) for i in range(num_samples)]
+        # Estimate curvature using three-point method
+        a = (p2 - p1).Length
+        b = (p3 - p2).Length
+        c = (p3 - p1).Length
+        
+        if a > 0 and b > 0 and c > 0:
+            # Area of triangle
+            s = (a + b + c) / 2
+            area = math.sqrt(max(0, s * (s - a) * (s - b) * (s - c)))
+            curvature = 4 * area / (a * b * c) if (a * b * c) > 0 else 0
+        else:
+            curvature = 0
+            
+        curvatures.append((param, curvature))
+    
+    return curvatures
 
 
 def generate_adaptive_slice_levels(wire, config):
@@ -216,46 +212,36 @@ def generate_adaptive_slice_levels(wire, config):
             levels.append(bb.ZMax)
         return levels
     
-    try:
-        # Calculate curvature along the wire
-        curvatures = calculate_wire_curvature(wire)
-        curvature_threshold = config.get('curvature_threshold', 0.1)
-        base_spacing = config['slice_spacing']
+    # Calculate curvature along the wire
+    curvatures = calculate_wire_curvature(wire)
+    curvature_threshold = config.get('curvature_threshold', 0.1)
+    base_spacing = config['slice_spacing']
+    
+    levels = [bb.ZMin]
+    current_z = bb.ZMin
+    
+    for i, (param, curvature) in enumerate(curvatures[1:], 1):
+        # Adapt spacing based on curvature
+        if curvature > curvature_threshold:
+            spacing = base_spacing * 0.5  # Finer spacing at high curvature
+        else:
+            spacing = base_spacing
         
-        levels = [bb.ZMin]
-        current_z = bb.ZMin
+        # Map parameter to Z coordinate
+        target_z = bb.ZMin + param * total_height
         
-        for i, (param, curvature) in enumerate(curvatures[1:], 1):
-            # Adapt spacing based on curvature
-            if curvature > curvature_threshold:
-                spacing = base_spacing * 0.5  # Finer spacing at high curvature
-            else:
-                spacing = base_spacing
-            
-            # Map parameter to Z coordinate
-            target_z = bb.ZMin + param * total_height
-            
-            # Add intermediate levels if needed
-            while current_z + spacing < target_z:
-                current_z += spacing
-                if current_z <= bb.ZMax:
-                    levels.append(current_z)
+        # Add intermediate levels if needed
+        while current_z + spacing < target_z:
+            current_z += spacing
+            if current_z <= bb.ZMax:
+                levels.append(current_z)
+    
+    # Always include the end
+    if levels[-1] != bb.ZMax:
+        levels.append(bb.ZMax)
         
-        # Always include the end
-        if levels[-1] != bb.ZMax:
-            levels.append(bb.ZMax)
-            
-        print(f"🎯 Adaptive slicing: {len(levels)} levels (avg spacing: {total_height/(len(levels)-1):.1f}mm)")
-        return levels
-        
-    except Exception as e:
-        print(f"⚠️ Adaptive slicing failed, falling back to uniform: {e}")
-        # Fallback to uniform spacing
-        num_levels = int(total_height / config['slice_spacing']) + 1
-        levels = [bb.ZMin + i * config['slice_spacing'] for i in range(num_levels)]
-        if levels[-1] != bb.ZMax:
-            levels.append(bb.ZMax)
-        return levels
+    print(f"🎯 Adaptive slicing: {len(levels)} levels (avg spacing: {total_height/(len(levels)-1):.1f}mm)")
+    return levels
 
 
 def create_bspline_section(points, degree=3):
@@ -269,19 +255,15 @@ def create_bspline_section(points, degree=3):
     Returns:
         FreeCAD Wire object with B-spline curve
     """
-    try:
-        if len(points) < degree + 1:
-            # Fall back to polygon if insufficient points
-            return Part.makePolygon(points)
-        
-        # Create B-spline curve
-        bspline = Part.BSplineCurve()
-        bspline.interpolate(points)
-        edge = Part.Edge(bspline)
-        return Part.Wire([edge])
-    except:
-        # Fallback to polygon if B-spline creation fails
+    if len(points) < degree + 1:
+        # Fall back to polygon if insufficient points
         return Part.makePolygon(points)
+    
+    # Create B-spline curve
+    bspline = Part.BSplineCurve()
+    bspline.interpolate(points)
+    edge = Part.Edge(bspline)
+    return Part.Wire([edge])
 
 
 def cleanup_sections(doc, sections):
@@ -292,12 +274,9 @@ def cleanup_sections(doc, sections):
         doc: FreeCAD document
         sections: List of section feature objects to remove
     """
-    try:
-        for section in sections:
-            doc.removeObject(section.Name)
-        print(f"🧹 Cleaned up {len(sections)} construction sections")
-    except Exception as e:
-        print(f"⚠️ Section cleanup failed: {e}")
+    for section in sections:
+        doc.removeObject(section.Name)
+    print(f"🧹 Cleaned up {len(sections)} construction sections")
 
 
 def apply_surface_smoothing(shape, iterations=2):
@@ -311,22 +290,18 @@ def apply_surface_smoothing(shape, iterations=2):
     Returns:
         Smoothed shape
     """
-    try:
-        smoothed = shape
-        for i in range(iterations):
-            # Apply different smoothing techniques
-            if hasattr(smoothed, 'smooth'):
-                smoothed = smoothed.smooth()
-            elif hasattr(smoothed, 'makeOffsetShape'):
-                # Alternative: small offset and back
-                temp = smoothed.makeOffsetShape(0.01, 0.01)
-                smoothed = temp.makeOffsetShape(-0.01, 0.01)
-        
-        print(f"✅ Applied {iterations} smoothing iterations")
-        return smoothed
-    except Exception as e:
-        print(f"⚠️ Surface smoothing failed: {e}")
-        return shape
+    smoothed = shape
+    for i in range(iterations):
+        # Apply different smoothing techniques
+        if hasattr(smoothed, 'smooth'):
+            smoothed = smoothed.smooth()
+        elif hasattr(smoothed, 'makeOffsetShape'):
+            # Alternative: small offset and back
+            temp = smoothed.makeOffsetShape(0.01, 0.01)
+            smoothed = temp.makeOffsetShape(-0.01, 0.01)
+    
+    print(f"✅ Applied {iterations} smoothing iterations")
+    return smoothed
 
 
 def export_stl(shape, filepath, config):
