@@ -323,6 +323,91 @@ def process_csv_file(csv_filename, object_prefix, colors, doc):
         # Final validation
         print(f"   📊 Final shrunk wire: {len(shrunk_wire.Edges)} edges, closed: {shrunk_wire.isClosed()}")
         
+        # SHRUNK WIRE VALIDATION SUITE
+        print(f"   🔍 Performing comprehensive shrunk wire validation...")
+        
+        # 1. Check for degenerate (tiny) edges
+        min_edge_length = 0.01  # mm threshold
+        degenerate_edges = []
+        for i, edge in enumerate(shrunk_wire.Edges):
+            edge_length = edge.Length
+            if edge_length < min_edge_length:
+                degenerate_edges.append((i, edge_length))
+                print(f"      ⚠️ Edge {i}: Length = {edge_length:.6f}mm (below {min_edge_length}mm threshold)")
+        
+        if degenerate_edges:
+            error_msg = f"SHRUNK WIRE ERROR: Contains {len(degenerate_edges)} degenerate edges!\n"
+            error_msg += f"  Edges shorter than {min_edge_length}mm will cause mesh problems.\n"
+            for i, length in degenerate_edges[:5]:  # Show first 5
+                error_msg += f"  Edge {i}: {length:.6f}mm\n"
+            print(f"   ❌ {error_msg}")
+            from PySide2 import QtWidgets
+            QtWidgets.QMessageBox.critical(None, "Degenerate Edges in Shrunk Wire", error_msg)
+            return None, None
+        else:
+            print(f"      ✅ No degenerate edges (all > {min_edge_length}mm)")
+        
+        # 2. Check for self-intersections
+        print(f"      🔍 Checking for self-intersections...")
+        try:
+            # Try to create a face - this will fail if wire self-intersects
+            test_face = Part.Face(shrunk_wire)
+            if test_face.isValid():
+                print(f"      ✅ No self-intersections detected (face creation successful)")
+            else:
+                error_msg = "SHRUNK WIRE ERROR: Wire creates invalid face (possible self-intersection)!"
+                print(f"   ❌ {error_msg}")
+                from PySide2 import QtWidgets
+                QtWidgets.QMessageBox.critical(None, "Invalid Shrunk Wire Face", error_msg)
+                return None, None
+        except Exception as e:
+            error_msg = f"SHRUNK WIRE ERROR: Cannot create face from wire (likely self-intersecting)!\n"
+            error_msg += f"  Error: {str(e)}"
+            print(f"   ❌ {error_msg}")
+            from PySide2 import QtWidgets
+            QtWidgets.QMessageBox.critical(None, "Shrunk Wire Self-Intersection", error_msg)
+            return None, None
+        
+        # 3. Check wire orientation consistency
+        print(f"      🔍 Checking wire orientation...")
+        try:
+            orig_face = Part.Face(wire)
+            shrunk_face = Part.Face(shrunk_wire)
+            
+            # Check if normals point in same direction
+            orig_normal = orig_face.normalAt(0.5, 0.5)
+            shrunk_normal = shrunk_face.normalAt(0.5, 0.5)
+            dot_product = orig_normal.dot(shrunk_normal)
+            
+            if dot_product < 0:
+                warning_msg = f"SHRUNK WIRE WARNING: Wire orientation reversed!\n"
+                warning_msg += f"  Original and shrunk wires have opposite winding directions.\n"
+                warning_msg += f"  This may cause issues in downstream operations."
+                print(f"   ⚠️ {warning_msg}")
+                # Not a critical error, but log it
+            else:
+                print(f"      ✅ Wire orientation consistent (normals aligned)")
+        except Exception as e:
+            print(f"      ⚠️ Could not verify orientation: {e}")
+        
+        # 4. Check for duplicate vertices (points too close together)
+        print(f"      🔍 Checking for duplicate vertices...")
+        vertex_threshold = 0.001  # mm
+        vertices = [v.Point for edge in shrunk_wire.Edges for v in edge.Vertexes]
+        duplicate_vertices = []
+        for i in range(len(vertices)):
+            for j in range(i+1, len(vertices)):
+                dist = vertices[i].distanceToPoint(vertices[j])
+                if dist < vertex_threshold and dist > 0:  # Exclude exact matches (shared vertices)
+                    duplicate_vertices.append((i, j, dist))
+        
+        if duplicate_vertices:
+            print(f"      ⚠️ Found {len(duplicate_vertices)} near-duplicate vertices")
+            for i, j, dist in duplicate_vertices[:3]:  # Show first 3
+                print(f"         Vertices {i} and {j}: {dist:.6f}mm apart")
+        else:
+            print(f"      ✅ No duplicate vertices (all separated by > {vertex_threshold}mm)")
+        
         # Check edge count consistency
         if len(shrunk_wire.Edges) != len(wire.Edges):
             print(f"   📊 Edge count comparison:")
