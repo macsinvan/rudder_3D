@@ -339,23 +339,49 @@ def export_stl(shape, filepath, config):
         config: Configuration dictionary with STL settings
     """
     try:
-        # Method 1: Direct export with shape's tessellation
-        shape.exportStl(filepath)
-        print(f"✅ Exported STL: {filepath}")
-        
-        # Alternative Method 2: Fine control over mesh quality
-        # Uncomment to use Mesh module for finer control:
-        """
+        # Import Mesh module for better control
         import Mesh
-        linear_tol = config.get('stl_linear_tolerance', 0.1)
-        angular_tol = config.get('stl_angular_tolerance', 0.5)
-        mesh = Mesh.Mesh(shape.tessellate(linear_tol))
-        mesh.write(filepath)
-        print(f"✅ Exported STL with tolerance {linear_tol}mm: {filepath}")
-        """
+        
+        # Use tighter tolerance for better mesh quality
+        linear_tol = 0.05  # Tighter than original 0.1mm for better vertex matching
+        angular_tol = 0.5  # Keep angular tolerance as configured
+        
+        # Create mesh with controlled tessellation
+        mesh_obj = Mesh.Mesh(shape.tessellate(linear_tol))
+        
+        # Check mesh validity and report status
+        # Try different API methods for open edges
+        try:
+            # Method 1: Check if solid (closed mesh)
+            is_solid = mesh_obj.isSolid()
+            if not is_solid:
+                # Try to count non-manifold edges if available
+                print(f"⚠️ Warning: Mesh is NOT watertight (has open/naked edges)")
+            else:
+                print(f"✅ Mesh is watertight (no open edges)")
+        except:
+            # If isSolid doesn't exist, just report mesh created
+            print(f"📊 Mesh created (validity check not available)")
+        
+        # Report mesh statistics - these should work
+        try:
+            print(f"📊 Mesh stats: {mesh_obj.CountPoints} vertices, {mesh_obj.CountFacets} facets")
+        except:
+            print(f"📊 Mesh created successfully")
+        
+        # Write mesh to file
+        mesh_obj.write(filepath)
+        print(f"✅ Exported STL with {linear_tol}mm tolerance: {filepath}")
         
     except Exception as e:
         print(f"❌ STL export failed: {e}")
+        # Fallback to original simple method
+        try:
+            print(f"🔄 Attempting fallback export method...")
+            shape.exportStl(filepath)
+            print(f"✅ Exported STL using fallback method: {filepath}")
+        except Exception as e2:
+            print(f"❌ Fallback export also failed: {e2}")
 
 
 def get_profiles_step_path():
@@ -549,8 +575,8 @@ def build_foil_from_step(doc: App.Document):
     section_shapes = []  # Keep shapes separate from display objects
     
     for idx, ((x1, z1), (x2, z2)) in enumerate(chords):       
-        p_le = Vector(x2, 0.0, z1)  # trailing edge (minimum x)
-        p_te = Vector(x1, 0.0, z2)  # leading edge (maximum x)
+        p_le = Vector(x2, 0.0, z1)  # trailing edge of the rudder(minimum x)
+        p_te = Vector(x1, 0.0, z2)  # leading edge of the rudder (maximum x)
         vec = p_te.sub(p_le)
         length = vec.Length
         ux = vec.normalize()
@@ -565,6 +591,10 @@ def build_foil_from_step(doc: App.Document):
         )
         
         pts3 = [p_le + ux * x + uy * z for x, z in coords]
+        
+        # ENSURE CLOSED POLYGON: Add first point at end to close the loop
+        if pts3[0] != pts3[-1]:  # Only add if not already closed
+            pts3.append(pts3[0])
         
         # Enhanced: Create B-spline sections for smoother curves
         if CONFIG['use_bspline_sections']:
