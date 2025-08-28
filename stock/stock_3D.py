@@ -7,7 +7,6 @@ import FreeCAD as App
 import Part
 from FreeCAD import Vector
 from PySide2 import QtWidgets
-
 from stock.io import read_stock_csv_sectioned
 from stock.geom import radius_at as _radius_at_core, append_post_segment_from_row
 from stock.draw import create_drawing_page, calculate_uniform_scale
@@ -184,13 +183,7 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
     body.Shape = compound
     doc.recompute()
 
-    # Export stock geometry to organized output folder
-    try:
-        step_path = f"{OUTPUT_FOLDER}/{STOCK_STEP_FILE}"
-        Part.export([body], step_path)
-        print(f"✅ Exported stock STEP: {step_path}")
-    except Exception as e:
-        print(f"❌ Stock STEP export failed: {e}")
+    # STEP export removed - handled by Stock Builder Core
 
     try:
         bbox = body.Shape.BoundBox
@@ -202,6 +195,5 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
         print(f"Could not compute bbox summary: {e}")
 
     print(f"⚓ {BOAT_NAME} stock geometry complete!")
-    print(f"📁 Next step: Use {step_path} for foil integration")
 
     return body
