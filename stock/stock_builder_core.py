@@ -272,17 +272,18 @@ class StockBuilderCore:
         return features
     
     def generate_approval_pdf(self, stock_obj, doc, customer_info=None, output_filename=None):
-        """Generate basic PDF using FreeCAD's built-in export"""
+        """Generate approval image with text info using FreeCAD's built-in export"""
         try:
             import FreeCADGui
             from datetime import datetime
+            from PySide import QtGui, QtCore
             
             # Extract boat name from stock object
             boat_name = stock_obj.Name.replace("_RudderStock", "")
             
             # Set output path using boat-specific structure
             if output_filename is None:
-                output_filename = f"{boat_name}_Stock_Approval.pdf"
+                output_filename = f"{boat_name}_Stock_Approval.png"
             
             pdf_path = self.project_path / "boats" / boat_name / "output" / "stock" / output_filename
             pdf_path.parent.mkdir(parents=True, exist_ok=True)
@@ -291,21 +292,87 @@ class StockBuilderCore:
             FreeCADGui.activeDocument().activeView().viewFront()
             FreeCADGui.activeDocument().activeView().fitAll()
             
-            # Export current view directly to PDF using FreeCAD's export
+            # Capture the base image
             FreeCADGui.activeDocument().activeView().saveImage(
-                str(pdf_path).replace('.pdf', '.png'), 1920, 1080, 'White'
+                str(pdf_path), 1920, 1080, 'White'
             )
             
-            # Note: Direct PDF export from 3D view may not be available,
-            # so we're saving as PNG which can be converted or used directly
-            actual_path = str(pdf_path).replace('.pdf', '.png')
+            # Now add text overlay using Qt
+            image = QtGui.QImage(str(pdf_path))
+            painter = QtGui.QPainter(image)
             
-            self.log(f"📄 Generated approval image: {actual_path}")
-            self.log(f"   Dimensions: {stock_obj.Shape.BoundBox.ZLength:.1f}mm height")
-            return actual_path
+            # Set up font
+            font = QtGui.QFont("Arial", 14)
+            font_bold = QtGui.QFont("Arial", 16, QtGui.QFont.Bold)
+            painter.setPen(QtGui.QPen(QtCore.Qt.black, 2))
+            
+            # Add title
+            painter.setFont(font_bold)
+            painter.drawText(1320, 50, "RUDDER STOCK APPROVAL")
+            
+            # Add boat info
+            painter.setFont(font)
+            y_pos = 100
+            line_height = 30
+            x_pos = 1320  # Right side position
+            
+            # Customer info
+            if customer_info:
+                painter.drawText(x_pos, y_pos, f"Customer: {customer_info.get('customer', boat_name)}")
+                y_pos += line_height
+                painter.drawText(x_pos, y_pos, f"Part: {customer_info.get('part_number', 'RS-001')}")
+                y_pos += line_height
+                painter.drawText(x_pos, y_pos, f"Date: {datetime.now().strftime('%Y-%m-%d')}")
+                y_pos += line_height * 2
+            
+            # Get dimensions
+            bbox = stock_obj.Shape.BoundBox
+            
+            painter.setFont(font_bold)
+            painter.drawText(x_pos, y_pos, "DIMENSIONS:")
+            y_pos += line_height
+            
+            painter.setFont(font)
+            painter.drawText(x_pos, y_pos, f"Height: {bbox.ZLength:.1f} mm")
+            y_pos += line_height
+            painter.drawText(x_pos, y_pos, f"Max Width: {max(bbox.XLength, bbox.YLength):.1f} mm")
+            y_pos += line_height
+            painter.drawText(x_pos, y_pos, f"Min Width: {min(bbox.XLength, bbox.YLength):.1f} mm")
+            y_pos += line_height
+            
+            # Add volume and surface area
+            y_pos += line_height
+            painter.setFont(font_bold)
+            painter.drawText(x_pos, y_pos, "PROPERTIES:")
+            y_pos += line_height
+            
+            painter.setFont(font)
+            painter.drawText(x_pos, y_pos, f"Volume: {stock_obj.Shape.Volume:.0f} mm³")
+            y_pos += line_height
+            painter.drawText(x_pos, y_pos, f"Surface Area: {stock_obj.Shape.Area:.0f} mm²")
+            
+            # Add approval checkboxes at bottom
+            y_pos = 880  # Near bottom
+            painter.setFont(font)
+            painter.drawRect(x_pos, y_pos, 20, 20)
+            painter.drawText(x_pos + 30, y_pos + 15, "APPROVED")
+            
+            y_pos += 40
+            painter.drawRect(x_pos, y_pos, 20, 20)
+            painter.drawText(x_pos + 30, y_pos + 15, "CHANGES REQUIRED")
+            
+            # Finish painting and save
+            painter.end()
+            image.save(str(pdf_path))
+            
+            self.log(f"📄 Generated approval image: {pdf_path}")
+            self.log(f"   Dimensions: {bbox.ZLength:.1f}mm height")
+            return str(pdf_path)
             
         except Exception as e:
-            self.log(f"⚠️ PDF/image generation failed: {e}")
+            self.log(f"⚠️ Image generation failed: {e}")
+            import traceback
+            traceback.print_exc()
             return None
         
         # Capture front view
