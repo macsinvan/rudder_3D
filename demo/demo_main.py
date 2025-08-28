@@ -134,6 +134,38 @@ def run():
     cut_foil_obj.ViewObject.Visibility = True
     stock_obj.ViewObject.Visibility = True
     
+    # Recompute to ensure positioning is complete
+    print(f"\n🔄 Recomputing to ensure positioning is complete...")
+    doc.recompute()
+    print(f"   ✅ Recompute done, ready for boolean operation")
+    
+    # Perform single boolean cut to hollow out the foil
+    print(f"\n🔧 Creating cavity with boolean cut...")
+    print(f"   ⏳ This may take a moment for complex geometry...")
+    try:
+        # Perform the cut operation
+        hollowed_shape = cut_foil_obj.Shape.cut(stock_obj.Shape)
+        
+        # Create new hollowed foil object
+        hollowed_foil_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Hollowed_Foil")
+        hollowed_foil_obj.Shape = hollowed_shape
+        hollowed_foil_obj.ViewObject.Visibility = True
+        hollowed_foil_obj.ViewObject.ShapeColor = (0.3, 0.3, 0.4)  # Dark grey
+        hollowed_foil_obj.ViewObject.Transparency = 70  # Make transparent to see cavity
+        
+        # Hide original foil
+        cut_foil_obj.ViewObject.Visibility = False
+        
+        # Keep stock visible for reference
+        stock_obj.ViewObject.ShapeColor = (0.8, 0.8, 0.9)  # Light steel
+        
+        print(f"   ✅ Cavity created successfully")
+        print(f"   Original foil faces: {len(cut_foil_obj.Shape.Faces)}")
+        print(f"   Hollowed foil faces: {len(hollowed_shape.Faces)}")
+        
+    except Exception as e:
+        print(f"   ❌ Boolean cut failed: {e}")
+    
     # Update view
     doc.recompute()
     Gui.SendMsgToActiveView("ViewFit")
