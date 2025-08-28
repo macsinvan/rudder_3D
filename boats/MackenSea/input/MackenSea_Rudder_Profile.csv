@@ -43,7 +43,9 @@ Size 440mm X 1100
 Version,1.5
 Date,2025-08-15
 Parameter,Value
-StockDiameter_mm,22
+Stock_Position_X, 323
+Stock_Position_Y, 79
+StockDiameter_mm,44
 StockPenetration_mm,180
 ThicknessRatio,0.16
 
