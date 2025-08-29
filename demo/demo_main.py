@@ -16,6 +16,9 @@ POST_CENTRE_X = 323  # mm - X position for post centre
 POST_TOP_Z = -79     # mm - Z position for top of post
 POST_DIAMETER = 44   # mm - diameter of the post
 
+# Clearance for 3D printing
+CLEARANCE = 1.0      # mm - clearance in each direction
+
 # Paths
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
 OUTPUT_FOLDER = f"{BOAT_FOLDER}/output"
@@ -137,18 +140,74 @@ def run():
     # Recompute to ensure positioning is complete
     print(f"\n🔄 Recomputing to ensure positioning is complete...")
     doc.recompute()
-    print(f"   ✅ Recompute done, ready for boolean operation")
+    print(f"   ✅ Recompute done, ready for boolean operations")
     
-    # Perform single boolean cut to hollow out the foil
-    print(f"\n🔧 Creating cavity with boolean cut...")
-    print(f"   ⏳ This may take a moment for complex geometry...")
+    # Perform 6 jogs for clearance in all directions
+    print(f"\n🔧 Creating cavity with {CLEARANCE}mm clearance using 6 jogs...")
+    print(f"   ⏳ This will take time - performing 6 separate cut operations...")
+    
+    # Start with the original foil shape
+    result_shape = cut_foil_obj.Shape
+    
     try:
-        # Perform the cut operation
-        hollowed_shape = cut_foil_obj.Shape.cut(stock_obj.Shape)
+        # Jog 1: Move stock +X and cut
+        print(f"\n   Jog 1/6: +X by {CLEARANCE}mm")
+        offset_x_plus = Vector(CLEARANCE, 0, 0)
+        matrix_x_plus = App.Matrix()
+        matrix_x_plus.move(offset_x_plus)
+        stock_x_plus = stock_obj.Shape.transformGeometry(matrix_x_plus)
+        result_shape = result_shape.cut(stock_x_plus)
+        print(f"      ✅ Cut complete")
         
-        # Create new hollowed foil object
+        # Jog 2: Move stock -X and cut
+        print(f"\n   Jog 2/6: -X by {CLEARANCE}mm")
+        offset_x_minus = Vector(-CLEARANCE, 0, 0)
+        matrix_x_minus = App.Matrix()
+        matrix_x_minus.move(offset_x_minus)
+        stock_x_minus = stock_obj.Shape.transformGeometry(matrix_x_minus)
+        result_shape = result_shape.cut(stock_x_minus)
+        print(f"      ✅ Cut complete")
+        
+        # Jog 3: Move stock +Y and cut
+        print(f"\n   Jog 3/6: +Y by {CLEARANCE}mm")
+        offset_y_plus = Vector(0, CLEARANCE, 0)
+        matrix_y_plus = App.Matrix()
+        matrix_y_plus.move(offset_y_plus)
+        stock_y_plus = stock_obj.Shape.transformGeometry(matrix_y_plus)
+        result_shape = result_shape.cut(stock_y_plus)
+        print(f"      ✅ Cut complete")
+        
+        # Jog 4: Move stock -Y and cut
+        print(f"\n   Jog 4/6: -Y by {CLEARANCE}mm")
+        offset_y_minus = Vector(0, -CLEARANCE, 0)
+        matrix_y_minus = App.Matrix()
+        matrix_y_minus.move(offset_y_minus)
+        stock_y_minus = stock_obj.Shape.transformGeometry(matrix_y_minus)
+        result_shape = result_shape.cut(stock_y_minus)
+        print(f"      ✅ Cut complete")
+        
+        # Jog 5: Move stock +Z and cut
+        print(f"\n   Jog 5/6: +Z by {CLEARANCE}mm")
+        offset_z_plus = Vector(0, 0, CLEARANCE)
+        matrix_z_plus = App.Matrix()
+        matrix_z_plus.move(offset_z_plus)
+        stock_z_plus = stock_obj.Shape.transformGeometry(matrix_z_plus)
+        result_shape = result_shape.cut(stock_z_plus)
+        print(f"      ✅ Cut complete")
+        
+        # Jog 6: Move stock -Z and cut
+        print(f"\n   Jog 6/6: -Z by {CLEARANCE}mm")
+        offset_z_minus = Vector(0, 0, -CLEARANCE)
+        matrix_z_minus = App.Matrix()
+        matrix_z_minus.move(offset_z_minus)
+        stock_z_minus = stock_obj.Shape.transformGeometry(matrix_z_minus)
+        result_shape = result_shape.cut(stock_z_minus)
+        print(f"      ✅ Cut complete")
+        
+        # Create the hollowed foil object
+        print(f"\n   Creating hollowed foil object...")
         hollowed_foil_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Hollowed_Foil")
-        hollowed_foil_obj.Shape = hollowed_shape
+        hollowed_foil_obj.Shape = result_shape
         hollowed_foil_obj.ViewObject.Visibility = True
         hollowed_foil_obj.ViewObject.ShapeColor = (0.3, 0.3, 0.4)  # Dark grey
         hollowed_foil_obj.ViewObject.Transparency = 70  # Make transparent to see cavity
@@ -159,21 +218,21 @@ def run():
         # Keep stock visible for reference
         stock_obj.ViewObject.ShapeColor = (0.8, 0.8, 0.9)  # Light steel
         
-        print(f"   ✅ Cavity created successfully")
+        print(f"\n   ✅ All 6 jogs complete - cavity created with {CLEARANCE}mm clearance in all directions")
         print(f"   Original foil faces: {len(cut_foil_obj.Shape.Faces)}")
-        print(f"   Hollowed foil faces: {len(hollowed_shape.Faces)}")
+        print(f"   Hollowed foil faces: {len(result_shape.Faces)}")
         
     except Exception as e:
-        print(f"   ❌ Boolean cut failed: {e}")
+        print(f"\n   ❌ Boolean cut failed at jog: {e}")
     
     # Update view
     doc.recompute()
     Gui.SendMsgToActiveView("ViewFit")
     Gui.activeDocument().activeView().viewIsometric()
     
-    print(f"\n✅ Import complete!")
-    print(f"   • Cut Foil: {cut_foil_obj.Name}")
-    print(f"   • Stock: {stock_obj.Name} (rotated and positioned by post location)")
+    print(f"\n✅ Import and cavity creation complete!")
+    print(f"   • Hollowed Foil: with {CLEARANCE}mm clearance in all directions")
+    print(f"   • Stock: positioned for reference")
 
 
 # Run the script
