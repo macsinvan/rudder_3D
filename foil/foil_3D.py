@@ -13,6 +13,9 @@ import math
 BOAT_NAME = "MackenSea"  # Single source of truth
 VERSION = "1.3.0"  # Simplified version
 
+# COMPLEXITY CONTROL - Set to 1 for full quality, higher for faster processing
+COMPLEXITY_REDUCTION = 3  # Reduces point count and increases spacing
+
 # Paths
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
 INPUT_FOLDER = f"{BOAT_FOLDER}/output/outline"
@@ -23,15 +26,20 @@ PROFILES_STEP_FILE = f"{BOAT_NAME}_Outline.step"
 FOIL_STEP_FILE = f"{BOAT_NAME}_Foil.step"
 FOIL_STL_FILE = f"{BOAT_NAME}_Foil.stl"
 
-# Configuration
+# Configuration with complexity reduction
 CONFIG = {
     'apex_at_top': 64.0,        # mm measured thickness at top
-    'naca_points': 80,           # Points per section
-    'slice_spacing': 3.0,        # mm between slices
+    'naca_points': max(20, 80 // COMPLEXITY_REDUCTION),  # 26 points (was 80)
+    'slice_spacing': 3.0 * COMPLEXITY_REDUCTION,  # 9mm (was 3mm)
     'min_chord_length': 10.0,    # mm minimum chord to include
-    'stl_tolerance': 0.05,       # mm for STL tessellation
+    'stl_tolerance': min(0.2, 0.05 * COMPLEXITY_REDUCTION),  # 0.15mm (was 0.05)
     'plane_size': 1000,          # mm sectioning plane size
 }
+
+print(f"🔧 Complexity reduction: {COMPLEXITY_REDUCTION}x")
+print(f"   Points per section: {CONFIG['naca_points']} (was 80)")
+print(f"   Slice spacing: {CONFIG['slice_spacing']}mm (was 3.0mm)")
+print(f"   STL tolerance: {CONFIG['stl_tolerance']}mm (was 0.05mm)")
 
 
 def naca_coordinates(chord_length, thickness_percent, num_pts=80):
@@ -156,7 +164,7 @@ def build_foil_from_step(doc):
     levels = [z_min + i * CONFIG['slice_spacing'] for i in range(num_levels)]
     if levels[-1] != z_max:
         levels.append(z_max)
-    print(f"🔪 Slicing at {len(levels)} levels")
+    print(f"🔪 Slicing at {len(levels)} levels (every {CONFIG['slice_spacing']}mm)")
     
     # Slice into chords
     chords = []
@@ -205,7 +213,9 @@ def build_foil_from_step(doc):
         wire = Part.makePolygon(pts3d)
         section_wires.append(wire)
     
-    print(f"✅ Generated {len(section_wires)} NACA sections")
+    print(f"✅ Generated {len(section_wires)} NACA sections with {CONFIG['naca_points']} points each")
+    estimated_points = len(section_wires) * CONFIG['naca_points']
+    print(f"📊 Estimated total points: ~{estimated_points:,} (vs ~{200*80:,} at full quality)")
     
     # Loft sections
     loft = Part.makeLoft(section_wires, solid=True, ruled=False)
@@ -222,4 +232,12 @@ def build_foil_from_step(doc):
     export_geometry(foil, BOAT_NAME + "_Foil")
     
     doc.recompute()
-    print(f"🛥️ {BOAT_NAME} foil complete!\n")
+    print(f"🛥️ {BOAT_NAME} foil complete with {COMPLEXITY_REDUCTION}x complexity reduction!\n")
+
+
+# Run the build
+if __name__ == "__main__" or __name__ == "__builtin__":
+    doc = App.ActiveDocument
+    if not doc:
+        doc = App.newDocument("FoilBuild")
+    build_foil_from_step(doc)

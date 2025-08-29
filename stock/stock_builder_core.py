@@ -119,8 +119,24 @@ class StockBuilderCore:
         else:
             raise Exception("Stock creation failed")
     
+    def ensure_merged_solid(self, stock_obj):
+        """Ensure the stock is a single merged solid before export"""
+        if hasattr(stock_obj, 'Shape'):
+            if len(stock_obj.Shape.Solids) > 1:
+                self.log(f"⚠️ Multiple solids detected ({len(stock_obj.Shape.Solids)}), merging...")
+                # Fuse all solids into one
+                merged = stock_obj.Shape.Solids[0]
+                for solid in stock_obj.Shape.Solids[1:]:
+                    merged = merged.fuse(solid)
+                stock_obj.Shape = merged
+                self.log("✅ Merged into single solid")
+        return stock_obj
+    
     def export_stock_step(self, stock_obj, filename=None, stage_name="stock"):
         """Export to STEP format"""
+        # Ensure merged solid before export
+        stock_obj = self.ensure_merged_solid(stock_obj)
+        
         # Extract boat name from stock object name (e.g., "MackenSea_RudderStock" -> "MackenSea")
         boat_name = stock_obj.Name.replace("_RudderStock", "")
         
