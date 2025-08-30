@@ -1,6 +1,6 @@
 """
 Stock Builder Core - Simplified
-Creates 3D rudder stock geometry
+Creates 3D rudder stock geometry from provided dimensions
 """
 import sys
 import os
@@ -50,8 +50,10 @@ class StockBuilderCore:
         
         try:
             import stock.stock_3D as stock_3D
-            if not hasattr(stock_3D, 'build_stock_from_csv'):
-                errors.append("stock_3D missing build_stock_from_csv")
+            if not hasattr(stock_3D, 'build_stock_from_dimensions'):
+                # Check for new dimension-based method
+                if not hasattr(stock_3D, 'build_stock_from_csv'):
+                    errors.append("stock_3D missing build methods")
         except ImportError as e:
             errors.append(f"Cannot import stock_3D: {e}")
         
@@ -76,32 +78,97 @@ class StockBuilderCore:
         self.log(f"📄 Document: {doc_name}")
         return doc
     
-    def build_stock_geometry(self, doc, csv_path=None, **kwargs):
-        """Build stock geometry"""
+    def _get_object_name(self, stock_obj):
+        """Get the intended object name from various possible sources"""
+        # Check for our custom property first
+        if hasattr(stock_obj, 'IntendedName') and stock_obj.IntendedName:
+            return stock_obj.IntendedName
+        # Then check Label
+        if hasattr(stock_obj, 'Label') and stock_obj.Label:
+            return stock_obj.Label
+        # Finally fall back to Name
+        return stock_obj.Name
+    
+    def _extract_boat_name(self, object_name):
+        """Extract boat name from object name"""
+        # Handle both "MackenSea_Stock" and "MackenSea_Stock_Cutout" formats
+        if "_Stock_Cutout" in object_name:
+            return object_name.replace("_Stock_Cutout", "")
+        elif "_Stock" in object_name:
+            return object_name.replace("_Stock", "")
+        elif "_RudderStock" in object_name:
+            return object_name.replace("_RudderStock", "")
+        return object_name
+    
+    def build_stock_geometry(self, doc, dimensions=None, object_name=None, csv_path=None, **kwargs):
+        """Build stock geometry from dimensions or CSV
+        
+        Args:
+            doc: FreeCAD document
+            dimensions: Dictionary of dimensions (if provided, takes precedence)
+            object_name: Name for the object (e.g., "MackenSea_Stock" or "MackenSea_Stock_Cutout")
+            csv_path: Path to CSV file (fallback if dimensions not provided)
+            **kwargs: Additional parameters
+        """
         import stock.stock_3D as stock_3D
         
         self.log("🏗️ Building stock...")
         start = time.time()
         
-        if csv_path:
-            stock_obj = stock_3D.build_stock_from_csv(doc, csv_path, **kwargs)
+        # Determine which method to use
+        if dimensions is not None:
+            # Use dimension-based method if available
+            if hasattr(stock_3D, 'build_stock_from_dimensions'):
+                stock_obj = stock_3D.build_stock_from_dimensions(doc, dimensions, **kwargs)
+            else:
+                # Fallback: pass dimensions through kwargs if old method doesn't support direct dimensions
+                self.log("⚠️ Using CSV method with dimension override")
+                stock_obj = stock_3D.build_stock_from_csv(doc, csv_path, dimensions=dimensions, **kwargs)
         else:
-            stock_obj = stock_3D.build_stock_from_csv(doc, **kwargs)
+            # Use CSV-based method - don't pass object_name since it's not supported
+            if csv_path:
+                stock_obj = stock_3D.build_stock_from_csv(doc, csv_path, **kwargs)
+            else:
+                stock_obj = stock_3D.build_stock_from_csv(doc, **kwargs)
         
         if stock_obj:
+            # Set the name after creation if provided
+            if object_name:
+                try:
+                    # Try to rename the object
+                    original_name = stock_obj.Name
+                    stock_obj.Label = object_name
+                    
+                    # In FreeCAD, Name is read-only after creation, but Label can be changed
+                    # The Label is what users see in the tree view
+                    self.log(f"   Set object label: {object_name}")
+                    
+                    # Store the intended name for our use
+                    if hasattr(stock_obj, 'addProperty'):
+                        try:
+                            stock_obj.addProperty("App::PropertyString", "IntendedName", "Base", "Intended object name")
+                            stock_obj.IntendedName = object_name
+                        except:
+                            pass  # Property might already exist or not be supported
+                except Exception as e:
+                    self.log(f"⚠️ Could not set object name: {e}")
+            
+            # For stats and further processing, use the intended name or fall back to actual name
+            display_name = object_name if object_name else stock_obj.Label if stock_obj.Label else stock_obj.Name
+            
             # Set minimal stats for compatibility with display macro
             self.build_stats = {
                 'build_time': time.time() - start,
-                'object_name': stock_obj.Name,
-                'mode': 'freecad'
+                'object_name': display_name,
+                'mode': 'dimensions' if dimensions else 'csv'
             }
-            self.log(f"✅ Stock created: {stock_obj.Name}")
+            self.log(f"✅ Stock created: {display_name}")
             
-            # Export to STEP format
-            self.export_stock_step(stock_obj)
+            # Export to STEP format - pass the intended name
+            self.export_stock_step(stock_obj, object_name=object_name)
             
             # Generate PDF approval report
-            boat_name = stock_obj.Name.replace("_RudderStock", "")
+            boat_name = self._extract_boat_name(display_name)
             customer_info = {
                 'customer': boat_name,
                 'part_number': f"{boat_name}-RS-001",
@@ -109,7 +176,7 @@ class StockBuilderCore:
             }
             try:
                 image_path = self.generate_approval_pdf(stock_obj, doc, customer_info, 
-                                                      output_filename=f"{boat_name}_Stock_Approval.png")
+                                                      output_filename=f"{display_name}_Approval.png")
                 if image_path:
                     self.log(f"📸 Generated approval image")
             except Exception as e:
@@ -132,19 +199,29 @@ class StockBuilderCore:
                 self.log("✅ Merged into single solid")
         return stock_obj
     
-    def export_stock_step(self, stock_obj, filename=None, stage_name="stock"):
+    def export_stock_step(self, stock_obj, filename=None, object_name=None, stage_name="stock"):
         """Export to STEP format"""
         # Ensure merged solid before export
         stock_obj = self.ensure_merged_solid(stock_obj)
         
-        # Extract boat name from stock object name (e.g., "MackenSea_RudderStock" -> "MackenSea")
-        boat_name = stock_obj.Name.replace("_RudderStock", "")
+        # Use provided object_name or extract from stock object
+        if not object_name:
+            object_name = self._get_object_name(stock_obj)
+        
+        boat_name = self._extract_boat_name(object_name)
+        base_name = object_name
         
         if not filename:
-            filename = f"{boat_name}_Stock.step"
+            filename = f"{base_name}.step"
+        
+        # Determine subdirectory based on object type
+        if "_Cutout" in base_name:
+            subdir = "cutout"
+        else:
+            subdir = "stock"
         
         # Use boat-specific path structure
-        filepath = self.project_path / "boats" / boat_name / "output" / "stock" / filename
+        filepath = self.project_path / "boats" / boat_name / "output" / subdir / filename
         filepath.parent.mkdir(parents=True, exist_ok=True)
         
         Part.export([stock_obj], str(filepath))
@@ -165,13 +242,27 @@ class StockBuilderCore:
         self.log(f"📥 Imported: {stock_obj.Name}")
         return doc, stock_obj
     
-    def build_and_export_pipeline(self, csv_path=None, export_filename=None, stage_name="initial", **kwargs):
-        """Build and export pipeline"""
+    def build_and_export_pipeline(self, dimensions=None, object_name=None, csv_path=None, 
+                                 export_filename=None, stage_name="initial", **kwargs):
+        """Build and export pipeline
+        
+        Args:
+            dimensions: Dictionary of dimensions (if provided, takes precedence)
+            object_name: Name for the object (e.g., "MackenSea_Stock")
+            csv_path: Path to CSV file (fallback if dimensions not provided)
+            export_filename: Custom export filename
+            stage_name: Stage name for export
+            **kwargs: Additional parameters
+        """
         doc = self.create_document()
-        stock_obj = self.build_stock_geometry(doc, csv_path, **kwargs)
+        stock_obj = self.build_stock_geometry(doc, dimensions=dimensions, 
+                                             object_name=object_name, 
+                                             csv_path=csv_path, **kwargs)
         
         if export_filename or stage_name:
-            exported_path = self.export_stock_step(stock_obj, export_filename, stage_name)
+            exported_path = self.export_stock_step(stock_obj, export_filename, 
+                                                  object_name=object_name, 
+                                                  stage_name=stage_name)
             return stock_obj, exported_path
         
         return stock_obj, None
@@ -213,7 +304,10 @@ class StockBuilderCore:
         from PySide import QtGui
         
         if output_path is None:
-            output_path = self.project_path / "output" / "stock_front_view.png"
+            # Extract boat name for path
+            object_name = self._get_object_name(stock_obj)
+            boat_name = self._extract_boat_name(object_name)
+            output_path = self.project_path / "boats" / boat_name / "output" / "stock_front_view.png"
         
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -258,7 +352,8 @@ class StockBuilderCore:
         
         try:
             # Parse the stock object name to get boat info
-            boat_name = stock_obj.Name.replace("_RudderStock", "")
+            object_name = self._get_object_name(stock_obj)
+            boat_name = self._extract_boat_name(object_name)
             
             # Try to extract from the shape's solids
             if hasattr(stock_obj, 'Shape') and hasattr(stock_obj.Shape, 'Solids'):
@@ -288,14 +383,18 @@ class StockBuilderCore:
             from datetime import datetime
             from PySide import QtGui, QtCore
             
-            # Extract boat name from stock object
-            boat_name = stock_obj.Name.replace("_RudderStock", "")
+            # Extract boat name and determine type from stock object
+            object_name = self._get_object_name(stock_obj)
+            boat_name = self._extract_boat_name(object_name)
+            is_cutout = "_Cutout" in object_name
             
             # Set output path using boat-specific structure
             if output_filename is None:
-                output_filename = f"{boat_name}_Stock_Approval.png"
+                output_filename = f"{object_name}_Approval.png"
             
-            pdf_path = self.project_path / "boats" / boat_name / "output" / "stock" / output_filename
+            # Determine subdirectory based on type
+            subdir = "cutout" if is_cutout else "stock"
+            pdf_path = self.project_path / "boats" / boat_name / "output" / subdir / output_filename
             pdf_path.parent.mkdir(parents=True, exist_ok=True)
             
             # Set view to show the stock nicely
@@ -318,7 +417,8 @@ class StockBuilderCore:
             
             # Add title
             painter.setFont(font_bold)
-            painter.drawText(1320, 50, "RUDDER STOCK APPROVAL")
+            title = "RUDDER STOCK CUTOUT APPROVAL" if is_cutout else "RUDDER STOCK APPROVAL"
+            painter.drawText(1320, 50, title)
             
             # Add boat info
             painter.setFont(font)
@@ -330,7 +430,8 @@ class StockBuilderCore:
             if customer_info:
                 painter.drawText(x_pos, y_pos, f"Customer: {customer_info.get('customer', boat_name)}")
                 y_pos += line_height
-                painter.drawText(x_pos, y_pos, f"Part: {customer_info.get('part_number', 'RS-001')}")
+                part_suffix = "-CUT" if is_cutout else "-RS"
+                painter.drawText(x_pos, y_pos, f"Part: {customer_info.get('part_number', f'{boat_name}{part_suffix}-001')}")
                 y_pos += line_height
                 painter.drawText(x_pos, y_pos, f"Date: {datetime.now().strftime('%Y-%m-%d')}")
                 y_pos += line_height * 2
@@ -361,6 +462,12 @@ class StockBuilderCore:
             y_pos += line_height
             painter.drawText(x_pos, y_pos, f"Surface Area: {stock_obj.Shape.Area:.0f} mm²")
             y_pos += line_height
+            
+            # Add type indicator if cutout
+            if is_cutout:
+                y_pos += line_height
+                painter.setFont(font_bold)
+                painter.drawText(x_pos, y_pos, "TYPE: FOIL CUTOUT TOOL")
             
             # Add component/tang positions
             components = self.extract_component_positions(stock_obj)
@@ -398,162 +505,30 @@ class StockBuilderCore:
             import traceback
             traceback.print_exc()
             return None
-        
-        # Capture front view
-        image_path = self.capture_front_view(doc, stock_obj)
-        
-        # Extract dimensions and features
-        dimensions = self.extract_stock_dimensions(stock_obj)
-        features = self.extract_feature_positions(stock_obj)
-        
-        # Create PDF
-        pdf = SimpleDocTemplate(str(pdf_path), pagesize=letter)
-        story = []
-        styles = getSampleStyleSheet()
-        
-        # Title style
-        title_style = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=24,
-            textColor=colors.HexColor('#003366'),
-            spaceAfter=30,
-            alignment=TA_CENTER
-        )
-        
-        # Header
-        story.append(Paragraph("RUDDER STOCK - APPROVAL DRAWING", title_style))
-        story.append(Spacer(1, 0.2*inch))
-        
-        # Customer info table
-        if customer_info is None:
-            customer_info = {
-                'customer': '_______________',
-                'part_number': '_______________',
-                'date': datetime.now().strftime('%Y-%m-%d'),
-                'revision': 'A'
-            }
-        
-        info_data = [
-            ['Customer:', customer_info.get('customer', '_______________'), 
-             'Date:', customer_info.get('date', datetime.now().strftime('%Y-%m-%d'))],
-            ['Part Number:', customer_info.get('part_number', '_______________'),
-             'Revision:', customer_info.get('revision', 'A')]
-        ]
-        
-        info_table = Table(info_data, colWidths=[1.5*inch, 2*inch, 1*inch, 1.5*inch])
-        info_table.setStyle(TableStyle([
-            ('FONT', (0, 0), (-1, -1), 'Helvetica-Bold', 10),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ]))
-        story.append(info_table)
-        story.append(Spacer(1, 0.3*inch))
-        
-        # Main image
-        if Path(image_path).exists():
-            img = Image(image_path, width=6*inch, height=4*inch)
-            story.append(img)
-        story.append(Spacer(1, 0.3*inch))
-        
-        # Dimensions table
-        story.append(Paragraph("INTERPRETED DIMENSIONS", styles['Heading2']))
-        dim_data = [['Parameter', 'Value']]
-        for key, value in dimensions.items():
-            label = key.replace('_', ' ').title()
-            if isinstance(value, float):
-                value_str = f"{value:.2f} mm"
-            else:
-                value_str = str(value)
-            dim_data.append([label, value_str])
-        
-        dim_table = Table(dim_data, colWidths=[3*inch, 2*inch])
-        dim_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 12),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ]))
-        story.append(dim_table)
-        story.append(Spacer(1, 0.3*inch))
-        
-        # Features section if present
-        if features['posts'] or features['tangs']:
-            story.append(Paragraph("CRITICAL FEATURES", styles['Heading2']))
-            
-            if features['posts']:
-                story.append(Paragraph("Post Positions:", styles['Heading3']))
-                post_data = [['Post Name', 'Position (mm from base)']]
-                for post in features['posts']:
-                    post_data.append([post.get('name', 'N/A'), 
-                                     f"{post.get('position', 'N/A'):.2f}" if isinstance(post.get('position'), (int, float)) else 'N/A'])
-                
-                post_table = Table(post_data, colWidths=[3*inch, 2*inch])
-                post_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                ]))
-                story.append(post_table)
-                story.append(Spacer(1, 0.2*inch))
-            
-            if features['tangs']:
-                story.append(Paragraph("Tang Positions:", styles['Heading3']))
-                tang_data = [['Tang Name', 'Position (mm from base)']]
-                for tang in features['tangs']:
-                    tang_data.append([tang.get('name', 'N/A'),
-                                     f"{tang.get('position', 'N/A'):.2f}" if isinstance(tang.get('position'), (int, float)) else 'N/A'])
-                
-                tang_table = Table(tang_data, colWidths=[3*inch, 2*inch])
-                tang_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                ]))
-                story.append(tang_table)
-            
-            story.append(Spacer(1, 0.3*inch))
-        
-        # Approval section
-        story.append(Spacer(1, 0.5*inch))
-        approval_data = [
-            ['☐ APPROVED - Proceed to Manufacturing'],
-            ['☐ CHANGES REQUIRED - See marked corrections'],
-            [''],
-            ['Signature: _________________________    Date: _____________'],
-            [''],
-            ['Print Name: ________________________    Title: _____________']
-        ]
-        
-        approval_table = Table(approval_data, colWidths=[6*inch])
-        approval_table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica', 12),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-            ('BACKGROUND', (0, 0), (-1, 1), colors.lightgrey),
-        ]))
-        story.append(approval_table)
-        
-        # Build PDF
-        pdf.build(story)
-        self.log(f"📄 Generated approval PDF: {pdf_path}")
-        return str(pdf_path)
     
-    def quick_approval_report(self, csv_path=None, customer_info=None, **kwargs):
-        """Quick method to build stock and generate approval PDF in one go"""
+    def quick_approval_report(self, dimensions=None, object_name=None, csv_path=None, 
+                            customer_info=None, **kwargs):
+        """Quick method to build stock and generate approval PDF in one go
+        
+        Args:
+            dimensions: Dictionary of dimensions (if provided, takes precedence)
+            object_name: Name for the object (e.g., "MackenSea_Stock")
+            csv_path: Path to CSV file (fallback if dimensions not provided)
+            customer_info: Customer information for the report
+            **kwargs: Additional parameters
+        """
         # Build the stock
         doc = self.create_document()
-        stock_obj = self.build_stock_geometry(doc, csv_path, **kwargs)
+        stock_obj = self.build_stock_geometry(doc, dimensions=dimensions, 
+                                             object_name=object_name, 
+                                             csv_path=csv_path, **kwargs)
         
         # Generate the PDF
         pdf_path = self.generate_approval_pdf(stock_obj, doc, customer_info)
         
         # Also save the STEP file
-        step_path = self.export_stock_step(stock_obj, stage_name="for_approval")
+        step_path = self.export_stock_step(stock_obj, object_name=object_name, 
+                                          stage_name="for_approval")
         
         return {
             'stock_object': stock_obj,
@@ -574,6 +549,7 @@ def main():
     
     try:
         doc = builder.create_document()
+        # Test with default CSV method (backward compatibility)
         stock_obj = builder.build_stock_geometry(doc)
         builder.save_document(doc)
         print("✅ Complete")
