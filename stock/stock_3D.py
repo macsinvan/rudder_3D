@@ -1,15 +1,14 @@
-# stock/stock_3D.py
-# Main module for building rudder stock geometry from CSV data - Boat-Centric Version
+"""
+stock_3D.py - Clean Version
+Builds 3D rudder stock geometry from dimensions dictionary ONLY
+No CSV knowledge whatsoever
+"""
 
-import os
-import math
 import FreeCAD as App
 import Part
-from FreeCAD import Vector
-from PySide2 import QtWidgets
-from stock.io import read_stock_csv_sectioned
+
+# Import geometry builders
 from stock.geom import radius_at as _radius_at_core, append_post_segment_from_row
-from stock.draw import create_drawing_page, calculate_uniform_scale
 from stock.wedge import build_wedge
 from stock.plate import build_plate
 from stock.cylinder import build_cylinder
@@ -17,76 +16,40 @@ from stock.taper import build_taper
 from stock.wedge_angled import build_wedge as build_wedge_angled
 from stock.heel_cutter import apply_heel_cutter_workflow
 
-# Configuration - Boat-Centric
-BOAT_NAME = "MackenSea"  # Single source of truth - change this for different boats
-VERSION = "1.3.0"
 
-# Derived paths - everything flows from boat name
-BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
-INPUT_FOLDER = f"{BOAT_FOLDER}/input"
-OUTPUT_FOLDER = f"{BOAT_FOLDER}/output/stock"
-
-# File specifications
-STOCK_CSV_FILE = f"{BOAT_NAME}_Stock.csv"
-STOCK_STEP_FILE = f"{BOAT_NAME}_Stock.step"
-
-
-def get_stock_csv_path():
+def build_stock_from_dimensions(doc: App.Document, dimensions: dict) -> App.DocumentObject:
     """
-    Get stock CSV path using boat-centric logic:
-    1. Try organized location first
-    2. Fall back to file dialog if not found
+    Build stock geometry from dimensions dictionary
+    
+    Args:
+        doc: FreeCAD document
+        dimensions: Dictionary with structure:
+            {
+                'boat_name': str,
+                'posts': [
+                    {'type': 'cylinder'|'taper', 'start': float, 'end': float, 
+                     'diameter_start': float, 'diameter_end': float, 'label': str}
+                ],
+                'tines': [
+                    {'type': 'wedge'|'plate', 'start': float, 'width': float,
+                     'length': float, 'plate_thickness': float, 'angle': float, 'label': str}
+                ]
+            }
+    
+    Returns:
+        FreeCAD DocumentObject containing the stock geometry
     """
-    organized_path = f"{INPUT_FOLDER}/{STOCK_CSV_FILE}"
+    boat_name = dimensions.get('boat_name', 'Stock')
+    print(f"\n⚓ Building {boat_name} Stock from Dimensions")
     
-    if os.path.exists(organized_path):
-        print(f"📁 Using organized stock file: {organized_path}")
-        return organized_path
-    else:
-        print(f"📁 {STOCK_CSV_FILE} not found in organized location")
-        print(f"   Expected: {organized_path}")
-        print(f"📁 Opening file dialog for manual selection...")
-        
-        # Fall back to file dialog
-        dlg = QtWidgets.QFileDialog()
-        dlg.setWindowTitle(f"Select {BOAT_NAME} Stock CSV")
-        dlg.setNameFilter("CSV files (*.csv)")
-        dlg.setFileMode(QtWidgets.QFileDialog.ExistingFile)
-        
-        if dlg.exec_():
-            manual_path = dlg.selectedFiles()[0]
-            print(f"📁 User selected: {manual_path}")
-            return manual_path
-        else:
-            print("❌ No stock file selected. Aborting.")
-            return None
-
-
-def ensure_output_folder():
-    """Ensure output folder exists for this boat"""
-    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-
-
-def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
-    print(f"\n⚓ Stock Build v{VERSION}")
-    print(f"🚤 Boat: {BOAT_NAME}")
-    print(f"📂 Boat folder: {BOAT_FOLDER}")
-
-    # Get CSV file path
-    csv_path = get_stock_csv_path()
-    if not csv_path:
-        raise FileNotFoundError("No stock CSV file selected")
-    
-    # Ensure output folder exists
-    ensure_output_folder()
-
-    body = doc.addObject("Part::Feature", f"{BOAT_NAME}_RudderStock")
+    # Create the main body object
+    body = doc.addObject("Part::Feature", f"{boat_name}_RudderStock")
     compound_shapes = []
-
+    
     # Track post segments for radius queries
     post_segments = []
     _radius_debug_done = False
-
+    
     def _radius_at(z_world: float) -> float:
         nonlocal _radius_debug_done
         if not _radius_debug_done:
@@ -96,27 +59,30 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                       f"R[{seg['r_bot']:.2f},{seg['r_top']:.2f}]")
             _radius_debug_done = True
         return _radius_at_core(z_world, post_segments)
-
-    rows, meta_info = read_stock_csv_sectioned(csv_path)
+    
     summaries = []
-
+    
     # Track which shapes belong to post vs non-post
     post_shape_indices = []
     non_post_shape_indices = []
-
-    for row_dict in rows:
-        shape_type = (row_dict.get('type') or '').strip().lower()
-        if not shape_type:
-            if 'plate' in row_dict:
-                shape_type = 'plate'
-            elif 'wedge' in row_dict:
-                shape_type = 'wedge'
-
+    
+    # Process posts (cylinders and tapers)
+    for post in dimensions.get('posts', []):
         try:
-            # Track compound_shapes length before adding new shapes
             shapes_before = len(compound_shapes)
-
-            if shape_type == 'cylinder':
+            
+            # Convert to row_dict format expected by builders
+            row_dict = {
+                'type': post['type'],
+                'start': post['start'],
+                'end': post['end'],
+                'diameter': post.get('diameter_start'),  # For cylinder
+                'diameter_start': post.get('diameter_start'),  # For taper
+                'diameter_end': post.get('diameter_end'),  # For taper
+                'label': post.get('label', '')
+            }
+            
+            if post['type'] == 'cylinder':
                 parts, summary = build_cylinder(row_dict)
                 compound_shapes.extend(parts)
                 summaries.append(summary)
@@ -125,8 +91,8 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                 new_indices = list(range(shapes_before, shapes_after))
                 post_shape_indices.extend(new_indices)
                 append_post_segment_from_row(post_segments, row_dict)
-
-            elif shape_type == 'taper':
+                
+            elif post['type'] == 'taper':
                 parts, summary = build_taper(row_dict)
                 compound_shapes.extend(parts)
                 summaries.append(summary)
@@ -135,8 +101,30 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                 new_indices = list(range(shapes_before, shapes_after))
                 post_shape_indices.extend(new_indices)
                 append_post_segment_from_row(post_segments, row_dict)
-
-            elif shape_type == 'plate':
+            
+            else:
+                print(f"  Unknown post type: {post['type']}")
+                
+        except Exception as e:
+            print(f"  Error building post {post}: {e}")
+    
+    # Process tines (wedges and plates)
+    for tine in dimensions.get('tines', []):
+        try:
+            shapes_before = len(compound_shapes)
+            
+            # Convert to row_dict format expected by builders
+            row_dict = {
+                'type': tine['type'],
+                'start': tine['start'],
+                'width': tine.get('width'),
+                'length': tine.get('length'),
+                'plate_thickness': tine.get('plate_thickness', 5),
+                'angle': tine.get('angle', 90),
+                'label': tine.get('label', '')
+            }
+            
+            if tine['type'] == 'plate':
                 plate_parts, plate_summary = build_plate(row_dict, _radius_at)
                 compound_shapes.extend(plate_parts)
                 summaries.append(plate_summary)
@@ -144,12 +132,9 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                 shapes_after = len(compound_shapes)
                 new_indices = list(range(shapes_before, shapes_after))
                 non_post_shape_indices.extend(new_indices)
-
-            elif shape_type == 'wedge':
-                try:
-                    angle_val = float(row_dict.get('angle', '90') or 90.0)
-                except Exception:
-                    angle_val = 90.0
+                
+            elif tine['type'] == 'wedge':
+                angle_val = float(tine.get('angle', 90))
                 if abs(angle_val - 90.0) < 1e-9:
                     wedge_parts, wedge_summary = build_wedge(row_dict, _radius_at)
                 else:
@@ -160,31 +145,31 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
                 shapes_after = len(compound_shapes)
                 new_indices = list(range(shapes_before, shapes_after))
                 non_post_shape_indices.extend(new_indices)
-
+            
             else:
-                print(f"  Unknown type in row: {row_dict}")
-
+                print(f"  Unknown tine type: {tine['type']}")
+                
         except Exception as e:
-            print(f"  Error parsing row {row_dict} -> {e}")
-
+            print(f"  Error building tine {tine}: {e}")
+    
     # Apply smart heel cutting with visibility control
-    compound_shapes = apply_heel_cutter_workflow(doc, post_segments, summaries, compound_shapes, 
-                                                post_shape_indices, non_post_shape_indices, 
-                                                debug_visible=False)
-
-    if meta_info:
-        print(f"Meta: {meta_info}")
+    compound_shapes = apply_heel_cutter_workflow(
+        doc, post_segments, summaries, compound_shapes,
+        post_shape_indices, non_post_shape_indices,
+        debug_visible=False
+    )
+    
     print(f"Components: {', '.join(summaries) if summaries else 'none'}")
-
+    
     if not compound_shapes:
-        raise ValueError("No valid stock geometry found in CSV.")
-
+        raise ValueError("No valid stock geometry found in dimensions.")
+    
+    # Create compound shape
     compound = Part.makeCompound(compound_shapes)
     body.Shape = compound
     doc.recompute()
-
-    # STEP export removed - handled by Stock Builder Core
-
+    
+    # Print summary
     try:
         bbox = body.Shape.BoundBox
         print(f"Solids: {len(compound_shapes)}  "
@@ -193,7 +178,7 @@ def build_stock_from_csv(doc: App.Document) -> App.DocumentObject:
               f"Z[{bbox.ZMin:.1f},{bbox.ZMax:.1f}]")
     except Exception as e:
         print(f"Could not compute bbox summary: {e}")
-
-    print(f"⚓ {BOAT_NAME} stock geometry complete!")
-
+    
+    print(f"⚓ {boat_name} stock geometry complete!")
+    
     return body

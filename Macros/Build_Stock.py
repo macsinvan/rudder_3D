@@ -15,20 +15,12 @@ project = Path.home() / "Rudder_Code"
 if project.exists():
     sys.path.insert(0, str(project))
 
-# Import the headless core module from Stock folder
+# Import the core module
 try:
     from stock.stock_builder_core import StockBuilderCore
 except ImportError:
     print("❌ Cannot import stock.stock_builder_core module")
     print("Make sure stock_builder_core.py is in ~/Rudder_Code/stock/")
-    sys.exit(1)
-
-# Import STEP save functionality
-try:
-    from helpers.step_save_load import save_step
-except ImportError:
-    print("❌ Cannot import STEP helper")
-    print("Make sure step_save_load.py is in ~/Rudder_Code/helpers/")
     sys.exit(1)
 
 try:
@@ -84,7 +76,6 @@ class StockDisplayManager:
                 Gui.activeDocument().activeView().viewAxonometric()
             except:
                 try:
-                    # Alternative view setting
                     Gui.activeDocument().activeView().viewIsometric()
                 except:
                     print("⚠️  Could not set 3D view")
@@ -104,23 +95,23 @@ class StockDisplayManager:
             print(f"⚠️  GUI update error: {e}")
             return False
     
-    def display_object_properties(self, stock_obj):
+    def display_object_properties(self, obj, obj_type="Stock"):
         """Display object properties in the GUI"""
         try:
-            if not stock_obj:
+            if not obj:
                 return
             
-            print(f"\n📦 Object Properties:")
-            print(f"   Name: {stock_obj.Name}")
-            print(f"   Label: {stock_obj.Label}")
-            print(f"   Type: {type(stock_obj).__name__}")
+            print(f"\n📦 {obj_type} Object Properties:")
+            print(f"   Name: {obj.Name}")
+            print(f"   Label: {obj.Label}")
+            print(f"   Type: {type(obj).__name__}")
             
             # Check for our custom property
-            if hasattr(stock_obj, 'IntendedName') and stock_obj.IntendedName:
-                print(f"   Intended Name: {stock_obj.IntendedName}")
+            if hasattr(obj, 'IntendedName') and obj.IntendedName:
+                print(f"   Intended Name: {obj.IntendedName}")
             
-            if hasattr(stock_obj, 'Shape') and stock_obj.Shape:
-                shape = stock_obj.Shape
+            if hasattr(obj, 'Shape') and obj.Shape:
+                shape = obj.Shape
                 print(f"   Volume: {shape.Volume:.2f} mm³")
                 print(f"   Surface Area: {shape.Area:.2f} mm²")
                 
@@ -134,8 +125,9 @@ class StockDisplayManager:
             
             # Select the object for easy identification
             try:
-                Gui.Selection.clearSelection()
-                Gui.Selection.addSelection(stock_obj)
+                if obj_type == "Stock":
+                    Gui.Selection.clearSelection()
+                Gui.Selection.addSelection(obj)
             except:
                 pass
                 
@@ -167,15 +159,11 @@ class StockDisplayManager:
         except Exception as e:
             print(f"⚠️  Could not enhance visual appearance: {e}")
     
-    def export_stock_stl(self, stock_obj, object_name=None):
-        """Export stock as STL for 3D printing"""
+    def export_stl(self, obj, object_name):
+        """Export object as STL for 3D printing"""
         try:
-            # Get the object name
-            if not object_name:
-                object_name = self.core._get_object_name(stock_obj)
-            
             # Extract boat name from object name
-            boat_name = self.core._extract_boat_name(object_name)
+            boat_name = object_name.split("_")[0]
             
             # Determine if this is a cutout
             is_cutout = "_Cutout" in object_name
@@ -186,30 +174,28 @@ class StockDisplayManager:
             output_dir.mkdir(parents=True, exist_ok=True)
             
             stl_filename = f"{object_name}.stl"
-            stock_stl_file = output_dir / stl_filename
+            stl_file = output_dir / stl_filename
             
-            # Export stock as STL for 3D printing
-            print(f"\n📤 Exporting as STL (for 3D printing)...")
+            # Export as STL
+            print(f"\n📤 Exporting {object_name} as STL...")
             import Mesh
-            Mesh.export([stock_obj], str(stock_stl_file))
-            print(f"   Saved to: {stock_stl_file}")
+            Mesh.export([obj], str(stl_file))
+            print(f"   Saved to: {stl_file}")
             
             return True
                 
         except Exception as e:
-            print(f"❌ Export failed: {e}")
+            print(f"❌ STL export failed: {e}")
             import traceback
             traceback.print_exc()
             return False
     
-    def run_with_gui(self, dimensions=None, object_name=None, csv_path=None, **kwargs):
+    def run_with_gui(self, csv_path=None, **kwargs):
         """Main execution with full GUI integration
         
         Args:
-            dimensions: Dictionary of dimensions (if provided, takes precedence)
-            object_name: Name for the object (e.g., "MackenSea_Stock" or "MackenSea_Stock_Cutout")
-            csv_path: Path to CSV file (fallback if dimensions not provided)
-            **kwargs: Additional parameters
+            csv_path: Path to CSV file (shows dialog if not provided)
+            **kwargs: Additional parameters (e.g., cutout_tolerance_mm)
         """
         print("🔧 Starting Stock 3D Display Macro...")
         
@@ -217,41 +203,57 @@ class StockDisplayManager:
         self.setup_workbench()
         
         try:
-            # Use core module for all computation
+            # Create document
             doc = self.core.create_document(clear_existing=True)
             
             if not doc:
                 print("❌ Failed to create document")
                 return False
             
-            # Build geometry using headless core
-            print("🏗️  Building geometry (delegated to core module)...")
-            stock_obj = self.core.build_stock_geometry(doc, dimensions=dimensions,
-                                                      object_name=object_name,
-                                                      csv_path=csv_path, **kwargs)
+            # Use the unified build method - NO dimensions parameter!
+            print("🏗️  Building geometry...")
+            results = self.core.build(doc=doc, csv_path=csv_path, **kwargs)
+            
+            # Check what we got
+            stock_obj = results.get('stock')
+            cutout_obj = results.get('cutout')
             
             if not stock_obj:
                 print("❌ No stock object created")
                 return False
             
-            # Export stock STL
-            export_success = self.export_stock_stl(stock_obj, object_name)
+            # Export STL files
+            print("\n📦 Exporting STL files for 3D printing...")
+            stock_name = self.core._get_object_name(stock_obj)
+            self.export_stl(stock_obj, stock_name)
+            
+            if cutout_obj:
+                cutout_name = self.core._get_object_name(cutout_obj)
+                self.export_stl(cutout_obj, cutout_name)
             
             # Handle GUI-specific updates
-            print("🖥️  Updating GUI display...")
+            print("\n🖥️  Updating GUI display...")
             self.update_gui_view(doc)
-            self.display_object_properties(stock_obj)
+            
+            # Display properties for both objects
+            self.display_object_properties(stock_obj, "Stock")
+            if cutout_obj:
+                self.display_object_properties(cutout_obj, "Cutout")
+            
             self.setup_lighting_and_materials()
             
             # Show build summary
-            summary = self.core.get_build_summary()
             print(f"\n✅ Display macro completed!")
-            print(f"⏱️  Build time: {summary['stats'].get('build_time', 0):.2f} seconds")
-            print(f"🏗️  Build mode: {summary['stats'].get('mode', 'unknown')}")
-            print(f"📦 Object: {summary['stats'].get('object_name', 'unknown')}")
+            print(f"📊 Build Summary:")
+            print(f"   Boat: {results['boat_name']}")
+            print(f"   Style: {results['style']}")
+            print(f"   Objects created: {results['stats']['objects_created']}")
+            print(f"   Build time: {results['stats']['total_time']:.2f} seconds")
             
-            if export_success:
-                print("📦 STL exported successfully for 3D printing!")
+            if results['style'] == 'wedge':
+                print("   ✓ Stock and cutout created (wedge style)")
+            else:
+                print(f"   ✓ Stock only created ({results['style']} style)")
             
             return True
             
@@ -262,16 +264,16 @@ class StockDisplayManager:
             return False
 
 
-def run(dimensions=None, object_name=None):
+def run(csv_path=None, **kwargs):
     """Main entry point for the macro
     
     Args:
-        dimensions: Optional dictionary of dimensions
-        object_name: Optional object name (e.g., "MackenSea_Stock")
+        csv_path: Optional path to CSV file
+        **kwargs: Additional parameters (e.g., cutout_tolerance_mm)
     """
     try:
         display_manager = StockDisplayManager()
-        return display_manager.run_with_gui(dimensions=dimensions, object_name=object_name)
+        return display_manager.run_with_gui(csv_path=csv_path, **kwargs)
     except Exception as e:
         print(f"💥 Fatal error: {e}")
         return False
@@ -279,26 +281,14 @@ def run(dimensions=None, object_name=None):
 
 def run_with_custom_csv(csv_path):
     """Run with custom CSV file path (backward compatibility)"""
-    try:
-        display_manager = StockDisplayManager()
-        return display_manager.run_with_gui(csv_path=csv_path)
-    except Exception as e:
-        print(f"💥 Fatal error with custom CSV: {e}")
-        return False
+    return run(csv_path=csv_path)
 
 
 # Auto-run when executed as macro
 if __name__ == "__main__":
-    # For testing: can pass dimensions here
-    # dimensions = {"diameter": 100, "height": 500, ...}
-    # success = run(dimensions=dimensions, object_name="TestBoat_Stock")
-    
-    # Default: run with CSV (backward compatible)
+    # Default: run (will show file dialog if no CSV specified)
     success = run()
     if success:
         print("🎉 Macro completed successfully!")
     else:
         print("💥 Macro completed with errors")
-else:
-    # Also run when imported (for macro compatibility)
-    run()
