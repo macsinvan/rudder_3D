@@ -17,9 +17,6 @@ POST_CENTRE_X = 323  # mm - X position for post centre
 POST_TOP_Z = -79     # mm - Z position for top of post
 POST_DIAMETER = 44   # mm - diameter of the post
 
-# Clearance for 3D printing
-CLEARANCE = 1.0      # mm - clearance in each direction
-
 # Paths
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
 OUTPUT_FOLDER = f"{BOAT_FOLDER}/output"
@@ -143,6 +140,76 @@ def run():
    doc.recompute()
    print(f"   ✅ Recompute done, ready for boolean operation")
    
+   # Pre-Boolean operation checks
+   print(f"\n🔍 Performing pre-Boolean operation checks...")
+   
+   # Check 1: Validate shapes
+   if not cut_foil_obj.Shape.isValid():
+       print(f"❌ Cut foil shape is not valid!")
+       print(f"   The geometry has errors that prevent boolean operations.")
+       print(f"   Please check the source STEP file for issues.")
+       return
+   
+   if not stock_obj.Shape.isValid():
+       print(f"❌ Stock shape is not valid!")
+       print(f"   The geometry has errors that prevent boolean operations.")
+       print(f"   Please check the source STEP file for issues.")
+       return
+   
+   print(f"   ✅ Both shapes are valid")
+   
+   # Check 2: Ensure shapes are solids
+   if not cut_foil_obj.Shape.ShapeType == "Solid":
+       print(f"❌ Cut foil is not a solid! (Type: {cut_foil_obj.Shape.ShapeType})")
+       print(f"   Boolean cut operations require solid objects.")
+       print(f"   The imported shape may be a shell or open surface.")
+       return
+   
+   if not stock_obj.Shape.ShapeType == "Solid":
+       print(f"❌ Stock is not a solid! (Type: {stock_obj.Shape.ShapeType})")
+       print(f"   Boolean cut operations require solid objects.")
+       print(f"   The imported shape may be a shell or open surface.")
+       return
+   
+   print(f"   ✅ Both shapes are solids")
+   
+   # Check 3: Check for intersection
+   common_volume = cut_foil_obj.Shape.common(stock_obj.Shape)
+   if common_volume.Volume < 0.001:  # Less than 0.001 mm³
+       print(f"❌ No meaningful intersection between shapes!")
+       print(f"   Common volume: {common_volume.Volume:.6f} mm³")
+       print(f"   The stock and foil do not overlap sufficiently for a boolean cut.")
+       print(f"   Check positioning or shape dimensions.")
+       return
+   
+   print(f"   ✅ Shapes intersect properly (common volume: {common_volume.Volume:.2f} mm³)")
+   
+   # Check 4: Check bounding box overlap
+   foil_bbox = cut_foil_obj.Shape.BoundBox
+   stock_bbox = stock_obj.Shape.BoundBox
+   
+   if not (foil_bbox.intersect(stock_bbox)):
+       print(f"❌ Bounding boxes do not intersect!")
+       print(f"   Foil bounds: X({foil_bbox.XMin:.1f}, {foil_bbox.XMax:.1f})")
+       print(f"               Y({foil_bbox.YMin:.1f}, {foil_bbox.YMax:.1f})")
+       print(f"               Z({foil_bbox.ZMin:.1f}, {foil_bbox.ZMax:.1f})")
+       print(f"   Stock bounds: X({stock_bbox.XMin:.1f}, {stock_bbox.XMax:.1f})")
+       print(f"                Y({stock_bbox.YMin:.1f}, {stock_bbox.YMax:.1f})")
+       print(f"                Z({stock_bbox.ZMin:.1f}, {stock_bbox.ZMax:.1f})")
+       return
+   
+   print(f"   ✅ Bounding boxes overlap correctly")
+   
+   # Check 5: Check shape complexity
+   print(f"   ℹ️ Shape complexity:")
+   print(f"      Cut foil: {len(cut_foil_obj.Shape.Faces)} faces, {len(cut_foil_obj.Shape.Edges)} edges")
+   print(f"      Stock: {len(stock_obj.Shape.Faces)} faces, {len(stock_obj.Shape.Edges)} edges")
+   
+   if len(cut_foil_obj.Shape.Faces) > 10000 or len(stock_obj.Shape.Faces) > 10000:
+       print(f"   ⚠️ Warning: High face count detected. Boolean operation may be slow.")
+   
+   print(f"\n✅ All pre-Boolean checks passed successfully!")
+   
    # Perform single boolean cut to hollow out the foil
    print(f"\n🔧 Creating cavity with boolean cut...")
    print(f"   ⏳ This may take a moment for complex geometry...")
@@ -176,7 +243,7 @@ def run():
    Gui.activeDocument().activeView().viewIsometric()
    
    print(f"\n✅ Import and cavity creation complete!")
-   print(f"   • Hollowed Foil: with cavity (no clearance)")
+   print(f"   • Hollowed Foil: with cavity")
    print(f"   • Stock: positioned for reference")
 
 
