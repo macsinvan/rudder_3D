@@ -4,7 +4,7 @@ import math
 import Part
 from FreeCAD import Vector
 
-def build_wedge(row_dict, radius_at_func, solid_v=True):  # Added solid_v parameter
+def build_wedge(row_dict, radius_at_func, solid_v=False):  # Added solid_v parameter
     start = float(row_dict['start'])
     width = float(row_dict['width'])
     length_out = float(row_dict['length'])      # CSV top-edge length

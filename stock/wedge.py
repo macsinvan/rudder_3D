@@ -6,7 +6,7 @@ from FreeCAD import Vector
 from stock.plate import compute_plate_angles
 
 
-def build_wedge(row_dict, radius_at_func, solid_v=True):
+def build_wedge(row_dict, radius_at_func, solid_v=False):
     """
     Build a 'wedge' tine as two steel strips OR a solid wedge.
     

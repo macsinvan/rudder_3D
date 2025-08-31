@@ -32,7 +32,8 @@ def build_stock_from_dimensions(doc: App.Document, dimensions: dict) -> App.Docu
                 ],
                 'tines': [
                     {'type': 'wedge'|'plate', 'start': float, 'width': float,
-                     'length': float, 'plate_thickness': float, 'angle': float, 'label': str}
+                     'length': float, 'plate_thickness': float, 'angle': float, 
+                     'solid_v': bool, 'label': str}
                 ]
             }
     
@@ -134,11 +135,14 @@ def build_stock_from_dimensions(doc: App.Document, dimensions: dict) -> App.Docu
                 non_post_shape_indices.extend(new_indices)
                 
             elif tine['type'] == 'wedge':
+                # Get solid_v from tine dictionary (will be True for cutouts, False for stock)
+                solid_v = tine.get('solid_v', False)
+                
                 angle_val = float(tine.get('angle', 90))
                 if abs(angle_val - 90.0) < 1e-9:
-                    wedge_parts, wedge_summary = build_wedge(row_dict, _radius_at)
+                    wedge_parts, wedge_summary = build_wedge(row_dict, _radius_at, solid_v=solid_v)
                 else:
-                    wedge_parts, wedge_summary = build_wedge_angled(row_dict, _radius_at)
+                    wedge_parts, wedge_summary = build_wedge_angled(row_dict, _radius_at, solid_v=solid_v)
                 compound_shapes.extend(wedge_parts)
                 summaries.append(wedge_summary)
                 # Mark these as non-post shapes
