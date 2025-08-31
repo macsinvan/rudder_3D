@@ -96,11 +96,18 @@ class CSVDimensionParser:
                 return
                 
             # Parse actual meta data - all values after 'meta' tag
-            # meta,MackenSea,1.0.0,wedge -> boat_name=MackenSea, version=1.0.0, style=wedge
-            if len(row) >= 4:
+            # meta,MackenSea,1.0.0,wedge,2 -> boat_name, version, style, cutout_mm
+            if len(row) >= 5:
                 self.dimensions['boat_name'] = row[1].strip()
                 self.dimensions['version'] = row[2].strip()
                 self.dimensions['style'] = row[3].strip()
+                self.dimensions['cutout_mm'] = float(row[4].strip())
+            elif len(row) >= 4:
+                self.dimensions['boat_name'] = row[1].strip()
+                self.dimensions['version'] = row[2].strip()
+                self.dimensions['style'] = row[3].strip()
+                # Default cutout if not specified
+                self.dimensions['cutout_mm'] = 2.0
             elif len(row) == 3:
                 # Old format with just key,value
                 key = row[1].strip()

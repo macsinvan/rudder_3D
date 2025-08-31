@@ -90,14 +90,14 @@ class StockBuilderCore:
         else:
             raise ValueError("No CSV file selected")
     
-    def build(self, doc=None, csv_path=None, cutout_tolerance_mm=2.0, **kwargs):
+    def build(self, doc=None, csv_path=None, cutout_tolerance_mm=None, **kwargs):
         """
         Main build method - builds stock and optionally cutout based on style
         
         Args:
             doc: FreeCAD document (creates one if not provided)
             csv_path: Path to CSV file (shows dialog if not provided)
-            cutout_tolerance_mm: Tolerance for cutout in mm (default 2.0)
+            cutout_tolerance_mm: Tolerance for cutout in mm (overrides CSV value if provided)
             **kwargs: Additional parameters passed to stock_3D
         
         Returns:
@@ -134,8 +134,14 @@ class StockBuilderCore:
         results['boat_name'] = dimensions.get('boat_name', 'Unknown')
         results['style'] = parser.get_stock_style()
         
+        # Get cutout tolerance from CSV or use provided value or default
+        if cutout_tolerance_mm is None:
+            cutout_tolerance_mm = dimensions.get('cutout_mm', 2.0)
+        
         self.log(f"   Boat: {results['boat_name']}")
         self.log(f"   Style: {results['style']}")
+        if results['style'] == 'wedge':
+            self.log(f"   Cutout tolerance: {cutout_tolerance_mm}mm")
         
         # Step 3: Build stock from dimensions
         self.log("\n" + "="*60)
@@ -176,7 +182,8 @@ class StockBuilderCore:
             'total_time': time.time() - overall_start,
             'boat_name': results['boat_name'],
             'style': results['style'],
-            'objects_created': 2 if results['cutout'] else 1
+            'objects_created': 2 if results['cutout'] else 1,
+            'cutout_tolerance_mm': cutout_tolerance_mm if results['cutout'] else None
         }
         
         return results
