@@ -91,14 +91,21 @@ class CSVDimensionParser:
     def _parse_meta_row(self, row):
         """Parse metadata row: meta,key,value"""
         if len(row) >= 3:
-            key = row[1]
-            value = row[2]
-            # Store directly at top level to match existing code
-            self.dimensions[key] = value
-            
-            # If style is specified in meta, store it
-            if key == 'style':
-                self.dimensions['style'] = value
+            # Skip header row
+            if row[1] == 'boat_name' and row[2] == 'version':
+                return
+                
+            # Parse actual meta data - all values after 'meta' tag
+            # meta,MackenSea,1.0.0,wedge -> boat_name=MackenSea, version=1.0.0, style=wedge
+            if len(row) >= 4:
+                self.dimensions['boat_name'] = row[1].strip()
+                self.dimensions['version'] = row[2].strip()
+                self.dimensions['style'] = row[3].strip()
+            elif len(row) == 3:
+                # Old format with just key,value
+                key = row[1].strip()
+                value = row[2].strip()
+                self.dimensions[key] = value
     
     def _parse_post_row(self, row):
         """Parse post row: post,type,start,end,diameter_start,[diameter_end],label"""
