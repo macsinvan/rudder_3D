@@ -1,6 +1,7 @@
 """
 Demo Model Generator - Step 5A (Bare Bones)
 Imports the Cut Foil and Stock and prepares for demo print
+Now includes splitting into two halves for 3D printing
 """
 import os
 import FreeCAD as App
@@ -10,7 +11,7 @@ import Part
 print("Imports the Cut Foil and Stock and prepares for demo print")
 # Configuration
 BOAT_NAME = "MackenSea"
-VERSION = "1.0.1"
+VERSION = "1.0.3"  # Updated version
 
 # Stock positioning parameters
 POST_CENTRE_X = 323  # mm - X position for post centre
@@ -24,6 +25,7 @@ OUTPUT_FOLDER = f"{BOAT_FOLDER}/output"
 CUT_FOIL_FOLDER = f"{OUTPUT_FOLDER}/cut_foil"
 STOCK_FOLDER = f"{OUTPUT_FOLDER}/stock"
 CUTOUT_FOLDER = f"{OUTPUT_FOLDER}/cutout"
+PRINT_FOLDER = f"{OUTPUT_FOLDER}/3d_print"  # New folder for 3D print files
 
 # Input files
 CUT_FOIL_STEP = f"{BOAT_NAME}_Cut_Foil.step"
@@ -115,7 +117,7 @@ def run():
    print(f"   Post top target: Z={POST_TOP_Z}mm")
    print(f"   Post diameter: {POST_DIAMETER}mm")
    
-   from FreeCAD import Vector
+   from FreeCAD import Vector, Base
    
    # Get current bounding box of stock
    current_bbox = stock_obj.Shape.BoundBox
@@ -298,15 +300,124 @@ def run():
        
    except Exception as e:
        print(f"   ❌ Boolean cut failed: {e}")
+       return
+   
+   # Split the hollowed foil into two halves - FIXED METHOD
+   print(f"\n✂️ Splitting hollowed foil into two halves for 3D printing...")
+   
+   try:
+       # Get bounding box for reference
+       bbox = hollowed_foil_obj.Shape.BoundBox
+       print(f"   Hollowed foil bounds:")
+       print(f"      X: {bbox.XMin:.1f} to {bbox.XMax:.1f}")
+       print(f"      Y: {bbox.YMin:.1f} to {bbox.YMax:.1f}")
+       print(f"      Z: {bbox.ZMin:.1f} to {bbox.ZMax:.1f}")
+       
+       # Create two boxes with slight overlap at Y=0 to ensure clean cut
+       overlap = 0.5  # Small overlap to ensure proper intersection
+       
+       # Box for positive Y side (starboard) - from slightly negative to beyond YMax
+       box_positive_y = Part.makeBox(
+           bbox.XLength + 200,                    # Width in X - make it bigger
+           bbox.YMax + 100 + overlap,             # From slightly before Y=0 to well beyond YMax
+           bbox.ZLength + 200,                    # Height in Z - make it bigger
+           Base.Vector(bbox.XMin - 100, -overlap, bbox.ZMin - 100)  # Starting slightly before Y=0
+       )
+       
+       print(f"   Positive Y box bounds: {box_positive_y.BoundBox}")
+       
+       # Box for negative Y side (port) - from YMin to slightly positive
+       box_negative_y = Part.makeBox(
+           bbox.XLength + 200,                    # Width in X - make it bigger
+           abs(bbox.YMin) + 100 + overlap,        # From well before YMin to slightly past Y=0
+           bbox.ZLength + 200,                    # Height in Z - make it bigger
+           Base.Vector(bbox.XMin - 100, bbox.YMin - 100, bbox.ZMin - 100)  # Starting well before YMin
+       )
+       
+       print(f"   Negative Y box bounds: {box_negative_y.BoundBox}")
+       
+       # Use common() operation to get intersection with each half-space
+       print(f"   Creating port half (negative Y side)...")
+       port_half = hollowed_foil_obj.Shape.common(box_negative_y)
+       
+       print(f"   Creating starboard half (positive Y side)...")
+       starboard_half = hollowed_foil_obj.Shape.common(box_positive_y)
+       
+       # Verify the splits worked
+       if port_half.isNull() or len(port_half.Faces) == 0:
+           print(f"   ❌ Port half is empty! Debug info:")
+           print(f"      Hollowed shape type: {hollowed_foil_obj.Shape.ShapeType}")
+           print(f"      Hollowed shape valid: {hollowed_foil_obj.Shape.isValid()}")
+           # Try alternative method
+           print(f"   Trying alternative split method...")
+           port_half = hollowed_foil_obj.Shape.cut(box_positive_y)
+       
+       if starboard_half.isNull() or len(starboard_half.Faces) == 0:
+           print(f"   ❌ Starboard half is empty! Debug info:")
+           print(f"      Hollowed shape type: {hollowed_foil_obj.Shape.ShapeType}")
+           print(f"      Hollowed shape valid: {hollowed_foil_obj.Shape.isValid()}")
+           # Try alternative method
+           print(f"   Trying alternative split method...")
+           starboard_half = hollowed_foil_obj.Shape.cut(box_negative_y)
+       
+       # Create objects for both halves
+       port_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Port_Half")
+       port_obj.Shape = port_half
+       port_obj.ViewObject.ShapeColor = (0.2, 0.4, 0.6)  # Blue-ish
+       port_obj.ViewObject.Transparency = 30
+       
+       starboard_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Starboard_Half")
+       starboard_obj.Shape = starboard_half
+       starboard_obj.ViewObject.ShapeColor = (0.4, 0.6, 0.2)  # Green-ish
+       starboard_obj.ViewObject.Transparency = 30
+       
+       # Optionally separate the halves slightly for visualization
+       separation_distance = 10  # mm
+       starboard_obj.Placement.Base.y += separation_distance
+       port_obj.Placement.Base.y -= separation_distance
+       
+       # Hide the original hollowed foil
+       hollowed_foil_obj.ViewObject.Visibility = False
+       
+       print(f"   ✅ Split complete!")
+       print(f"   Port half faces: {len(port_half.Faces)}")
+       print(f"   Starboard half faces: {len(starboard_half.Faces)}")
+       print(f"   Halves separated by {separation_distance*2}mm for visualization")
+       
+       # Create folder for 3D print files if it doesn't exist
+       os.makedirs(PRINT_FOLDER, exist_ok=True)
+       
+       # Export the halves as STEP files for 3D printing
+       port_path = f"{PRINT_FOLDER}/{BOAT_NAME}_Port_Half.step"
+       starboard_path = f"{PRINT_FOLDER}/{BOAT_NAME}_Starboard_Half.step"
+       
+       if len(port_half.Faces) > 0:
+           port_half.exportStep(port_path)
+           print(f"   Port half exported: {port_path}")
+       else:
+           print(f"   ⚠️ Port half not exported (empty shape)")
+       
+       if len(starboard_half.Faces) > 0:
+           starboard_half.exportStep(starboard_path)
+           print(f"   Starboard half exported: {starboard_path}")
+       else:
+           print(f"   ⚠️ Starboard half not exported (empty shape)")
+       
+   except Exception as e:
+       print(f"   ❌ Splitting failed: {e}")
+       import traceback
+       traceback.print_exc()
    
    # Update view
    doc.recompute()
    Gui.SendMsgToActiveView("ViewFit")
    Gui.activeDocument().activeView().viewIsometric()
    
-   print(f"\n✅ Import and cavity creation complete!")
-   print(f"   • Hollowed Foil: with cavity")
+   print(f"\n✅ Import, cavity creation, and splitting complete!")
+   print(f"   • Port Half: ready for 3D printing")
+   print(f"   • Starboard Half: ready for 3D printing")
    print(f"   • Stock: positioned for reference")
+   print(f"\n📁 Files saved to: {PRINT_FOLDER}")
 
 
 # Run the script
