@@ -16,16 +16,19 @@ VERSION = "1.0.1"
 POST_CENTRE_X = 323  # mm - X position for post centre
 POST_TOP_Z = -79     # mm - Z position for top of post
 POST_DIAMETER = 44   # mm - diameter of the post
+POST_DIAMETER_DELTA = 4  # mm - difference in post diameter for cutout stock
 
 # Paths
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
 OUTPUT_FOLDER = f"{BOAT_FOLDER}/output"
 CUT_FOIL_FOLDER = f"{OUTPUT_FOLDER}/cut_foil"
 STOCK_FOLDER = f"{OUTPUT_FOLDER}/stock"
+CUTOUT_FOLDER = f"{OUTPUT_FOLDER}/cutout"
 
 # Input files
 CUT_FOIL_STEP = f"{BOAT_NAME}_Cut_Foil.step"
 STOCK_STEP = f"{BOAT_NAME}_Stock.step"
+STOCK_CUTOUT_STEP = f"{BOAT_NAME}_Stock_Cutout.step"
 
 MACRO_NAME = f"Demo_Model_{BOAT_NAME}"
 
@@ -82,6 +85,14 @@ def run():
        print("❌ Cannot proceed without stock.")
        return
 
+   # Import stock cutout
+   print(f"\n📥 Importing stock cutout...")
+   stock_cutout_path = f"{CUTOUT_FOLDER}/{STOCK_CUTOUT_STEP}"
+   stock_cutout_obj = import_step_file(stock_cutout_path, doc, f"{BOAT_NAME}_Stock_Cutout")
+   if not stock_cutout_obj:
+       print("❌ Cannot proceed without stock cutout.")
+       return
+
    # Rotate stock 180° around Z-axis to orient tangs toward trailing edge
    print(f"\n🔄 Rotating stock 180° to orient tangs correctly...")
    stock_matrix = App.Matrix()
@@ -89,6 +100,14 @@ def run():
    rotated_shape = stock_obj.Shape.transformGeometry(stock_matrix)
    stock_obj.Shape = rotated_shape
    print(f"   ✅ Stock rotated - tangs now point toward trailing edge")
+   
+   # Rotate stock cutout 180° around Z-axis to orient tangs toward trailing edge
+   print(f"\n🔄 Rotating stock cutout 180° to orient tangs correctly...")
+   stock_cutout_matrix = App.Matrix()
+   stock_cutout_matrix.rotateZ(3.14159)  # 180° in radians
+   rotated_cutout_shape = stock_cutout_obj.Shape.transformGeometry(stock_cutout_matrix)
+   stock_cutout_obj.Shape = rotated_cutout_shape
+   print(f"   ✅ Stock cutout rotated - tangs now point toward trailing edge")
    
    # Position the stock based on post location
    print(f"\n📍 Positioning stock based on post location...")
@@ -131,9 +150,51 @@ def run():
    print(f"      Post centre X: {final_post_centre_x:.1f}mm (target: {POST_CENTRE_X}mm)")
    print(f"      Post top Z: {final_post_top_z:.1f}mm (target: {POST_TOP_Z}mm)")
    
+   # Position the stock cutout based on post location (with larger diameter)
+   print(f"\n📍 Positioning stock cutout based on post location...")
+   cutout_post_diameter = POST_DIAMETER + POST_DIAMETER_DELTA
+   # Adjust target X to account for larger post radius
+   cutout_target_x = POST_CENTRE_X - (POST_DIAMETER_DELTA / 2) + (POST_DIAMETER_DELTA/2)
+   print(f"   Post centre target: X={cutout_target_x}mm (adjusted for larger post)")
+   print(f"   Post top target: Z={POST_TOP_Z}mm")
+   print(f"   Post diameter for cutout: {cutout_post_diameter}mm")
+   
+   # Get current bounding box of stock cutout
+   current_cutout_bbox = stock_cutout_obj.Shape.BoundBox
+   
+   # Calculate post centre X position for cutout
+   current_cutout_post_centre_x = current_cutout_bbox.XMax - (cutout_post_diameter / 2)
+   current_cutout_post_top_z = current_cutout_bbox.ZMax
+   
+   print(f"   Current cutout post centre X: {current_cutout_post_centre_x:.1f}mm")
+   print(f"   Current cutout post top Z: {current_cutout_post_top_z:.1f}mm")
+   
+   # Calculate offset needed to move cutout post to adjusted target position
+   cutout_offset = Vector(
+       cutout_target_x - current_cutout_post_centre_x,  # Move post centre to adjusted X
+       0,                                                # Keep Y unchanged
+       POST_TOP_Z - current_cutout_post_top_z           # Move post top to specified Z
+   )
+   
+   # Apply translation to cutout
+   cutout_translation_matrix = App.Matrix()
+   cutout_translation_matrix.move(cutout_offset)
+   positioned_cutout_shape = stock_cutout_obj.Shape.transformGeometry(cutout_translation_matrix)
+   stock_cutout_obj.Shape = positioned_cutout_shape
+   
+   # Report final cutout position
+   final_cutout_bbox = stock_cutout_obj.Shape.BoundBox
+   final_cutout_post_centre_x = final_cutout_bbox.XMax - (cutout_post_diameter / 2)
+   final_cutout_post_top_z = final_cutout_bbox.ZMax
+   
+   print(f"   ✅ Stock cutout positioned:")
+   print(f"      Post centre X: {final_cutout_post_centre_x:.1f}mm (target: {cutout_target_x}mm)")
+   print(f"      Post top Z: {final_cutout_post_top_z:.1f}mm (target: {POST_TOP_Z}mm)")
+   
    # Make objects visible
    cut_foil_obj.ViewObject.Visibility = True
    stock_obj.ViewObject.Visibility = True
+   stock_cutout_obj.ViewObject.Visibility = True
    
    # Recompute to ensure positioning is complete
    print(f"\n🔄 Recomputing to ensure positioning is complete...")
@@ -150,8 +211,8 @@ def run():
        print(f"   Please check the source STEP file for issues.")
        return
    
-   if not stock_obj.Shape.isValid():
-       print(f"❌ Stock shape is not valid!")
+   if not stock_cutout_obj.Shape.isValid():
+       print(f"❌ Stock cutout shape is not valid!")
        print(f"   The geometry has errors that prevent boolean operations.")
        print(f"   Please check the source STEP file for issues.")
        return
@@ -165,8 +226,8 @@ def run():
        print(f"   The imported shape may be a shell or open surface.")
        return
    
-   if not stock_obj.Shape.ShapeType == "Solid":
-       print(f"❌ Stock is not a solid! (Type: {stock_obj.Shape.ShapeType})")
+   if not stock_cutout_obj.Shape.ShapeType == "Solid":
+       print(f"❌ Stock cutout is not a solid! (Type: {stock_cutout_obj.Shape.ShapeType})")
        print(f"   Boolean cut operations require solid objects.")
        print(f"   The imported shape may be a shell or open surface.")
        return
@@ -174,11 +235,11 @@ def run():
    print(f"   ✅ Both shapes are solids")
    
    # Check 3: Check for intersection
-   common_volume = cut_foil_obj.Shape.common(stock_obj.Shape)
+   common_volume = cut_foil_obj.Shape.common(stock_cutout_obj.Shape)
    if common_volume.Volume < 0.001:  # Less than 0.001 mm³
        print(f"❌ No meaningful intersection between shapes!")
        print(f"   Common volume: {common_volume.Volume:.6f} mm³")
-       print(f"   The stock and foil do not overlap sufficiently for a boolean cut.")
+       print(f"   The stock cutout and foil do not overlap sufficiently for a boolean cut.")
        print(f"   Check positioning or shape dimensions.")
        return
    
@@ -186,16 +247,16 @@ def run():
    
    # Check 4: Check bounding box overlap
    foil_bbox = cut_foil_obj.Shape.BoundBox
-   stock_bbox = stock_obj.Shape.BoundBox
+   cutout_bbox = stock_cutout_obj.Shape.BoundBox
    
-   if not (foil_bbox.intersect(stock_bbox)):
+   if not (foil_bbox.intersect(cutout_bbox)):
        print(f"❌ Bounding boxes do not intersect!")
        print(f"   Foil bounds: X({foil_bbox.XMin:.1f}, {foil_bbox.XMax:.1f})")
        print(f"               Y({foil_bbox.YMin:.1f}, {foil_bbox.YMax:.1f})")
        print(f"               Z({foil_bbox.ZMin:.1f}, {foil_bbox.ZMax:.1f})")
-       print(f"   Stock bounds: X({stock_bbox.XMin:.1f}, {stock_bbox.XMax:.1f})")
-       print(f"                Y({stock_bbox.YMin:.1f}, {stock_bbox.YMax:.1f})")
-       print(f"                Z({stock_bbox.ZMin:.1f}, {stock_bbox.ZMax:.1f})")
+       print(f"   Cutout bounds: X({cutout_bbox.XMin:.1f}, {cutout_bbox.XMax:.1f})")
+       print(f"                  Y({cutout_bbox.YMin:.1f}, {cutout_bbox.YMax:.1f})")
+       print(f"                  Z({cutout_bbox.ZMin:.1f}, {cutout_bbox.ZMax:.1f})")
        return
    
    print(f"   ✅ Bounding boxes overlap correctly")
@@ -203,9 +264,9 @@ def run():
    # Check 5: Check shape complexity
    print(f"   ℹ️ Shape complexity:")
    print(f"      Cut foil: {len(cut_foil_obj.Shape.Faces)} faces, {len(cut_foil_obj.Shape.Edges)} edges")
-   print(f"      Stock: {len(stock_obj.Shape.Faces)} faces, {len(stock_obj.Shape.Edges)} edges")
+   print(f"      Stock cutout: {len(stock_cutout_obj.Shape.Faces)} faces, {len(stock_cutout_obj.Shape.Edges)} edges")
    
-   if len(cut_foil_obj.Shape.Faces) > 10000 or len(stock_obj.Shape.Faces) > 10000:
+   if len(cut_foil_obj.Shape.Faces) > 10000 or len(stock_cutout_obj.Shape.Faces) > 10000:
        print(f"   ⚠️ Warning: High face count detected. Boolean operation may be slow.")
    
    print(f"\n✅ All pre-Boolean checks passed successfully!")
@@ -214,8 +275,8 @@ def run():
    print(f"\n🔧 Creating cavity with boolean cut...")
    print(f"   ⏳ This may take a moment for complex geometry...")
    try:
-       # Perform the cut operation
-       hollowed_shape = cut_foil_obj.Shape.cut(stock_obj.Shape)
+       # Perform the cut operation using the cutout stock
+       hollowed_shape = cut_foil_obj.Shape.cut(stock_cutout_obj.Shape)
        
        # Create new hollowed foil object
        hollowed_foil_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Hollowed_Foil")
@@ -224,8 +285,9 @@ def run():
        hollowed_foil_obj.ViewObject.ShapeColor = (0.3, 0.3, 0.4)  # Dark grey
        hollowed_foil_obj.ViewObject.Transparency = 70  # Make transparent to see cavity
        
-       # Hide original foil
+       # Hide original foil and cutout
        cut_foil_obj.ViewObject.Visibility = False
+       stock_cutout_obj.ViewObject.Visibility = False
        
        # Keep stock visible for reference
        stock_obj.ViewObject.ShapeColor = (0.8, 0.8, 0.9)  # Light steel
