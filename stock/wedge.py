@@ -6,7 +6,7 @@ from FreeCAD import Vector
 from stock.plate import compute_plate_angles
 
 
-def build_wedge(row_dict, radius_at_func, solid_v=False):
+def build_wedge(row_dict, radius_at_func, solid_v=True):
     """
     Build a 'wedge' tine as two steel strips OR a solid wedge.
     
@@ -196,43 +196,82 @@ def build_wedge(row_dict, radius_at_func, solid_v=False):
         return parts, summary
 
     # ----- Angled (≠ 90°): existing behavior with Y-rotation, trim, and small strap -----
-    # For angled wedges, we keep the original behavior for now
-    # Could be extended with solid_v support if needed
-    
     t_end = 2.0
     tilt = 90.0 - angle_deg
     rot_deg = -tilt
     rot_rad = math.radians(abs(tilt))
     extra = width * math.tan(rot_rad) if abs(tilt) > 1e-9 else 0.0
     eff_len = length_out + extra
+    
+    if solid_v:
+        # For angled wedge with solid_v: create a single trapezoid
+        # Similar to 90° case but needs to account for the angle
+        
+        # Create trapezoid centered on Y=0
+        # Wide end at post: 2*r (diameter)
+        # Narrow end at tip: 2*t 
+        
+        # Face at post (wide end)
+        post_face_verts = [
+            Vector(r, -r, -start),
+            Vector(r, r, -start),
+            Vector(r, r, -(start + width)),
+            Vector(r, -r, -(start + width))
+        ]
+        post_wire = Part.makePolygon(post_face_verts + [post_face_verts[0]])
+        
+        # Face at tip (narrow end) - positioned at x_cut
+        x_cut = r + length_out * math.cos(math.radians(abs(tilt)))
+        tip_face_verts = [
+            Vector(x_cut, -t, -start),
+            Vector(x_cut, t, -start),
+            Vector(x_cut, t, -(start + width)),
+            Vector(x_cut, -t, -(start + width))
+        ]
+        tip_wire = Part.makePolygon(tip_face_verts + [tip_face_verts[0]])
+        
+        # Create loft between the two faces
+        solid_wedge = Part.makeLoft([post_wire, tip_wire], True, True)
+        
+        # Rotate the entire solid for the angled wedge
+        pivot = Vector(r, 0.0, -start)
+        solid_wedge = solid_wedge.copy()
+        solid_wedge.rotate(pivot, Vector(0, 1, 0), rot_deg)
+        
+        # Add the end strap
+        strap = Part.makeBox(t_end, 3.0 * t, width)
+        strap.Placement.Base = Vector(x_cut - t_end, -1.5 * t, -(start + width))
+        
+        parts.extend([solid_wedge, strap])
+    else:
+        # Original hollow V behavior
+        p_top = Part.makeBox(eff_len, t, width)
+        p_bot = Part.makeBox(eff_len, t, width)
+        p_top.Placement.Base = Vector(r, +t / 2.0, -(start + width))
+        p_bot.Placement.Base = Vector(r, -t - t / 2.0, -(start + width))
 
-    p_top = Part.makeBox(eff_len, t, width)
-    p_bot = Part.makeBox(eff_len, t, width)
-    p_top.Placement.Base = Vector(r, +t / 2.0, -(start + width))
-    p_bot.Placement.Base = Vector(r, -t - t / 2.0, -(start + width))
+        pivot = Vector(r, 0.0, -start)
+        p_top = p_top.copy()
+        p_bot = p_bot.copy()
+        p_top.rotate(pivot, Vector(0, 1, 0), rot_deg)
+        p_bot.rotate(pivot, Vector(0, 1, 0), rot_deg)
 
-    pivot = Vector(r, 0.0, -start)
-    p_top = p_top.copy()
-    p_bot = p_bot.copy()
-    p_top.rotate(pivot, Vector(0, 1, 0), rot_deg)
-    p_bot.rotate(pivot, Vector(0, 1, 0), rot_deg)
+        x_cut = r + length_out * math.cos(math.radians(abs(tilt)))
+        trim = Part.makeBox(
+            x_cut + 10000.0,
+            20000.0,
+            20000.0,
+            Vector(-10000.0, -10000.0, -10000.0),
+        )
+        p_top = p_top.common(trim)
+        p_bot = p_bot.common(trim)
+        if p_top.isNull() or p_bot.isNull():
+            print("  ⚠️ Wedge plates became null after trim; check angle/length inputs and x_cut.")
 
-    x_cut = r + length_out * math.cos(math.radians(abs(tilt)))
-    trim = Part.makeBox(
-        x_cut + 10000.0,
-        20000.0,
-        20000.0,
-        Vector(-10000.0, -10000.0, -10000.0),
-    )
-    p_top = p_top.common(trim)
-    p_bot = p_bot.common(trim)
-    if p_top.isNull() or p_bot.isNull():
-        print("  ⚠️ Wedge plates became null after trim; check angle/length inputs and x_cut.")
+        strap = Part.makeBox(t_end, 3.0 * t, width)
+        strap.Placement.Base = Vector(x_cut - t_end, -1.5 * t, -(start + width))
 
-    strap = Part.makeBox(t_end, 3.0 * t, width)
-    strap.Placement.Base = Vector(x_cut - t_end, -1.5 * t, -(start + width))
-
-    parts.extend([p_top, p_bot, strap])
+        parts.extend([p_top, p_bot, strap])
 
     summary = (
         f"Wedge '{label}' start={start} w={width} len={length_out} t={t} "
