@@ -6,13 +6,19 @@ from FreeCAD import Vector
 from stock.plate import compute_plate_angles
 
 
-def build_wedge(row_dict, radius_at_func):
+def build_wedge(row_dict, radius_at_func, solid_v=False):
     """
-    Build a 'wedge' tine as two steel strips.
-      - If angle == 90°: compute half-angle and pivot each strip at the common tip P
-        so the INSIDE edges (one from each strip) are tangent and meet at the tip.
-      - Else (angled tine): rotate both strips about the post contact line (Y-rotation),
-        trim to a constant-X plane, then add a small end strap.
+    Build a 'wedge' tine as two steel strips OR a solid wedge.
+    
+    Args:
+        row_dict: Dictionary with wedge parameters
+        radius_at_func: Function to get radius at a given Z position
+        solid_v: If True, create a solid wedge. If False, create two strips (hollow V)
+                Defaults to True for testing
+    
+    Returns:
+        parts: List of Part objects
+        summary: String description of what was built
     """
     # Inputs
     start = float(row_dict['start'])
@@ -31,6 +37,40 @@ def build_wedge(row_dict, radius_at_func):
         r = 0.0
 
     parts = []
+    
+    # Helper function to create a strip - either rectangular (hollow) or with angled inner face (filled)
+    def create_strip(length, thickness, height, for_solid_v=False, is_top=True, alpha_deg=0):
+        """
+        Create a strip for the V-wedge.
+        
+        Args:
+            length: Length of the strip (L_in)
+            thickness: Thickness of the strip (t)
+            height: Height of the strip in Z (width)
+            for_solid_v: If True, create a strip with angled inner face for filled V
+            is_top: True for top strip, False for bottom strip
+            alpha_deg: Half-angle of the V
+        
+        Returns:
+            Part object (strip shape)
+        """
+        if not for_solid_v:
+            # Original rectangular strip
+            return Part.makeBox(length, thickness, height)
+        else:
+            # For filled V: create a strip that fills the gap
+            # Simple approach: just make each strip thicker on the inner side
+            
+            if is_top:
+                # Top strip - standard thickness on outside, extends inward at post
+                # Create as a simple tapered box
+                strip = Part.makeBox(length, thickness * 2, height)
+                # This creates a box that's too thick, we'll rely on rotation and positioning
+            else:
+                # Bottom strip - mirror
+                strip = Part.makeBox(length, thickness * 2, height)
+            
+            return strip
 
     if abs(angle_deg - 90.0) < 1e-9:
         # ---- Inside-edge tangent geometry using INSIDE edge length (L_in) ----
@@ -47,36 +87,118 @@ def build_wedge(row_dict, radius_at_func):
         d = math.hypot(R_eff, L_in)  # sqrt(R_eff^2 + L_in^2)
         base_x = d - L_in
 
-        # Place both strips so their INSIDE edges lie on y = 0 and meet at the same tip (y = 0)
-        # Top strip spans y ∈ [0, t]; bottom strip spans y ∈ [-t, 0]
-        p_top = Part.makeBox(L_in, t, width)
-        p_top.Placement.Base = Vector(base_x, 0.0, -(start + width))
-        tip_pivot_top = Vector(d, 0.0, -start)
+        if solid_v:
+            # Create ONE trapezoid for the filled V
+            # Wide end at post: 2*r (diameter of cylinder)
+            # Narrow end at tip: 2*t (combined thickness of two strips)
+            # Length: L_in
+            # Height: width (Z dimension)
+            
+            # Create the trapezoid as a loft between two rectangular faces
+            # Face at post (wide end)
+            post_face_verts = [
+                Vector(base_x, -r, -start),
+                Vector(base_x, r, -start),
+                Vector(base_x, r, -(start + width)),
+                Vector(base_x, -r, -(start + width))
+            ]
+            post_wire = Part.makePolygon(post_face_verts + [post_face_verts[0]])
+            
+            # Face at tip (narrow end)
+            tip_face_verts = [
+                Vector(d, -t, -start),
+                Vector(d, t, -start),
+                Vector(d, t, -(start + width)),
+                Vector(d, -t, -(start + width))
+            ]
+            tip_wire = Part.makePolygon(tip_face_verts + [tip_face_verts[0]])
+            
+            # Create loft between the two faces
+            solid_wedge = Part.makeLoft([post_wire, tip_wire], True, True)
+            parts.append(solid_wedge)
+            
+            summary = (
+                f"WedgeSolid90 '{label}' start={start} w={width} L_in={L_in} "
+                f"t={t} r_at={r:.2f} (FILLED V - single trapezoid)"
+            )
+            print(
+                f"  ✓ WedgeSolid90: label='{label}', r={r:.2f}, t={t}, L_in={L_in}, "
+                f"(FILLED V - single trapezoid)"
+            )
+        else:
+            # Original behavior: create two rectangular strips
+            p_top = Part.makeBox(L_in, t, width)
+            p_top.Placement.Base = Vector(base_x, 0.0, -(start + width))
+            tip_pivot_top = Vector(d, 0.0, -start)
 
-        p_bot = Part.makeBox(L_in, t, width)
-        p_bot.Placement.Base = Vector(base_x, -t, -(start + width))
-        tip_pivot_bot = Vector(d, 0.0, -start)
+            p_bot = Part.makeBox(L_in, t, width)
+            p_bot.Placement.Base = Vector(base_x, -t, -(start + width))
+            tip_pivot_bot = Vector(d, 0.0, -start)
 
-        # Rotate about Z so the V opens in plan view; inside edges share the same tip
-        p_top = p_top.copy()
-        p_top.rotate(tip_pivot_top, Vector(0, 0, 1), -alpha_deg)
+            # Rotate about Z so the V opens in plan view
+            p_top = p_top.copy()
+            p_top.rotate(tip_pivot_top, Vector(0, 0, 1), -alpha_deg)
 
-        p_bot = p_bot.copy()
-        p_bot.rotate(tip_pivot_bot, Vector(0, 0, 1), +alpha_deg)
+            p_bot = p_bot.copy()
+            p_bot.rotate(tip_pivot_bot, Vector(0, 0, 1), +alpha_deg)
 
-        parts.extend([p_top, p_bot])  # no strap in the 90° case
+            parts.extend([p_top, p_bot])  # Two separate strips
+        
+        if solid_v:
+            summary = (
+                f"WedgeSolid90 '{label}' start={start} w={width} L_in={L_in} "
+                f"t={t} r_at={r:.2f} R_eff={R_eff:.2f} alpha={alpha_deg:.3f}° tip_x={d:.3f} (FILLED V)"
+            )
+            print(
+                f"  ✓ WedgeSolid90: label='{label}', r={r:.2f}, t={t}, L_in={L_in}, "
+                f"R_eff={R_eff:.2f}, alpha={alpha_deg:.3f}°, tip_x={d:.3f} (FILLED V)"
+            )
+            
+            summary = (
+                f"WedgeSolid90 '{label}' start={start} w={width} L_in={L_in} "
+                f"t={t} r_at={r:.2f} R_eff={R_eff:.2f} alpha={alpha_deg:.3f}° tip_x={d:.3f} (SOLID V)"
+            )
+            print(
+                f"  ✓ WedgeSolid90: label='{label}', r={r:.2f}, t={t}, L_in={L_in}, "
+                f"R_eff={R_eff:.2f}, alpha={alpha_deg:.3f}°, tip_x={d:.3f} (SOLID V)"
+            )
+            
+        else:
+            # ---- Original behavior: two separate strips (hollow V) ----
+            # Place both strips so their INSIDE edges lie on y = 0 and meet at the same tip (y = 0)
+            # Top strip spans y ∈ [0, t]; bottom strip spans y ∈ [-t, 0]
+            p_top = Part.makeBox(L_in, t, width)
+            p_top.Placement.Base = Vector(base_x, 0.0, -(start + width))
+            tip_pivot_top = Vector(d, 0.0, -start)
 
-        summary = (
-            f"Wedge90 '{label}' start={start} w={width} L_in={L_in} "
-            f"t={t} r_at={r:.2f} R_eff={R_eff:.2f} alpha={alpha_deg:.3f}° tip_x={d:.3f} (inside tangent, y=0 meet)"
-        )
-        print(
-            f"  ✓ Wedge90: label='{label}', r={r:.2f}, t={t}, L_in={L_in}, "
-            f"R_eff={R_eff:.2f}, alpha={alpha_deg:.3f}°, tip_x={d:.3f} (inside tangent, y=0 meet)"
-        )
+            p_bot = Part.makeBox(L_in, t, width)
+            p_bot.Placement.Base = Vector(base_x, -t, -(start + width))
+            tip_pivot_bot = Vector(d, 0.0, -start)
+
+            # Rotate about Z so the V opens in plan view; inside edges share the same tip
+            p_top = p_top.copy()
+            p_top.rotate(tip_pivot_top, Vector(0, 0, 1), -alpha_deg)
+
+            p_bot = p_bot.copy()
+            p_bot.rotate(tip_pivot_bot, Vector(0, 0, 1), +alpha_deg)
+
+            parts.extend([p_top, p_bot])  # no strap in the 90° case
+
+            summary = (
+                f"Wedge90 '{label}' start={start} w={width} L_in={L_in} "
+                f"t={t} r_at={r:.2f} R_eff={R_eff:.2f} alpha={alpha_deg:.3f}° tip_x={d:.3f} (inside tangent, y=0 meet)"
+            )
+            print(
+                f"  ✓ Wedge90: label='{label}', r={r:.2f}, t={t}, L_in={L_in}, "
+                f"R_eff={R_eff:.2f}, alpha={alpha_deg:.3f}°, tip_x={d:.3f} (inside tangent, y=0 meet)"
+            )
+        
         return parts, summary
 
     # ----- Angled (≠ 90°): existing behavior with Y-rotation, trim, and small strap -----
+    # For angled wedges, we keep the original behavior for now
+    # Could be extended with solid_v support if needed
+    
     t_end = 2.0
     tilt = 90.0 - angle_deg
     rot_deg = -tilt
