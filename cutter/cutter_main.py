@@ -31,9 +31,24 @@ SHELL_STL = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Shell_Foil.stl"
 CUTTER_HEIGHT = 100.0  # mm
 CUTTER_MARGIN = 50.0   # mm
 
+def verify_shell_thickness(shell_shape, target_thickness, tolerance=0.5):
+    """
+    Verify shell thickness using volume/area ratio
+    Returns: (actual_thickness, passes_check)
+    """
+    volume = shell_shape.Volume / 1000  # cm³
+    area = shell_shape.Area / 100  # cm²
+    
+    # Estimated thickness from volume/area ratio
+    estimated_thickness = (volume / area) * 10  # mm
+    
+    passes = abs(estimated_thickness - target_thickness) <= tolerance
+    
+    return estimated_thickness, passes
+
 def create_shell(solid_shape, target_thickness):
     """
-    Create shell using scaling method
+    Create shell using scaling method with iterative refinement
     Returns: (shell_shape, actual_thickness)
     """
     # Validate input
@@ -51,33 +66,62 @@ def create_shell(solid_shape, target_thickness):
         if actual_thickness < target_thickness:
             print(f"   Adjusted thickness from {target_thickness}mm to {actual_thickness:.2f}mm")
     
-    # Calculate scale factor
-    center = solid_shape.CenterOfMass
-    avg_dimension = (bbox.XLength + bbox.YLength + bbox.ZLength) / 3
-    scale_factor = max(0.1, 1 - (2 * actual_thickness / avg_dimension))
+    # Iterative approach to get correct thickness
+    max_iterations = 3
+    thickness_multiplier = 1.0
     
-    print(f"   Scale factor: {scale_factor:.3f}")
+    for iteration in range(max_iterations):
+        # Calculate scale factor with multiplier
+        center = solid_shape.CenterOfMass
+        avg_dimension = (bbox.XLength + bbox.YLength + bbox.ZLength) / 3
+        
+        # Apply multiplier to compensate for non-uniform scaling effects
+        adjusted_thickness = actual_thickness * thickness_multiplier
+        scale_factor = max(0.1, 1 - (2 * adjusted_thickness / avg_dimension))
+        
+        print(f"   Iteration {iteration + 1}: scale factor = {scale_factor:.4f}, multiplier = {thickness_multiplier:.2f}")
+        
+        # Create transformation matrix for uniform scaling
+        matrix = App.Matrix()
+        matrix.scale(scale_factor, scale_factor, scale_factor)
+        
+        # Scale the shape: translate to origin, scale, translate back
+        scaled_shape = solid_shape.copy()
+        scaled_shape.translate(-center)
+        scaled_shape = scaled_shape.transformGeometry(matrix)
+        scaled_shape.translate(center)
+        
+        if scaled_shape.isNull() or not scaled_shape.isValid():
+            raise Exception("Scaled shape is invalid")
+        
+        # Create shell by boolean cut
+        shell_shape = solid_shape.cut(scaled_shape)
+        
+        if shell_shape.isNull() or not shell_shape.isValid():
+            raise Exception("Shell creation failed - boolean cut resulted in invalid shape")
+        
+        # Verify thickness
+        measured_thickness, passes = verify_shell_thickness(shell_shape, actual_thickness)
+        print(f"   Measured thickness: {measured_thickness:.2f}mm (target: {actual_thickness:.2f}mm)")
+        
+        if passes:
+            print(f"   ✅ Thickness within tolerance")
+            return shell_shape, measured_thickness
+        
+        # Adjust multiplier for next iteration
+        if measured_thickness < actual_thickness:
+            # Too thin, need bigger gap
+            thickness_multiplier *= (actual_thickness / measured_thickness)
+        else:
+            # Too thick, need smaller gap
+            thickness_multiplier *= (actual_thickness / measured_thickness)
+        
+        # Limit multiplier to reasonable range
+        thickness_multiplier = max(0.1, min(20.0, thickness_multiplier))
     
-    # Create transformation matrix for uniform scaling
-    matrix = App.Matrix()
-    matrix.scale(scale_factor, scale_factor, scale_factor)
-    
-    # Scale the shape: translate to origin, scale, translate back
-    scaled_shape = solid_shape.copy()
-    scaled_shape.translate(-center)
-    scaled_shape = scaled_shape.transformGeometry(matrix)
-    scaled_shape.translate(center)
-    
-    if scaled_shape.isNull() or not scaled_shape.isValid():
-        raise Exception("Scaled shape is invalid")
-    
-    # Create shell by boolean cut
-    shell_shape = solid_shape.cut(scaled_shape)
-    
-    if shell_shape.isNull() or not shell_shape.isValid():
-        raise Exception("Shell creation failed - boolean cut resulted in invalid shape")
-    
-    return shell_shape, actual_thickness
+    # After max iterations, return best attempt
+    print(f"   ⚠️  Could not achieve exact thickness after {max_iterations} iterations")
+    return shell_shape, measured_thickness
 
 def run():
     print(f"\n🔪 Rudder Cutter v{VERSION} for {BOAT_NAME}")
