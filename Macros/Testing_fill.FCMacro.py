@@ -1,6 +1,6 @@
 """
-FreeCAD Macro to check the shell thickness of imported foil
-Measures wall thickness at multiple points to verify it meets requirements
+FreeCAD Macro to add horizontal plates to the shell foil
+ONLY 5 plates at the section cut positions, 8mm thick
 """
 
 import sys
@@ -9,7 +9,7 @@ import FreeCAD
 import Part
 from FreeCAD import Base
 
-# Add project root to path for imports
+# Add project root to path
 project_root = Path.home() / "Rudder_Code"
 if project_root.exists():
     sys.path.insert(0, str(project_root))
@@ -17,182 +17,115 @@ if project_root.exists():
 
 from step_save_load import load_step
 
+# Parameters
+SECTION_HEIGHT = 268.8  # mm - height of each printed section
+PLATE_THICKNESS = 8.0   # mm - plates at section boundaries (4mm each side after cut)
+FLOW_HOLE_DIAMETER = 15.0  # mm - holes for resin flow
+
+# File paths
+SHELL_STEP = Path.home() / "Rudder_Code" / "boats" / "MackenSea" / "output" / "cut_foil" / "MackenSea_Shell_Foil.step"
+
 # Get or create document
 doc = FreeCAD.ActiveDocument
 if doc is None:
-    doc = FreeCAD.newDocument("ShellCheck")
-
-# ====================
-# IMPORT FOIL
-# ====================
-
-step_file = Path.home() / "Rudder_Code" / "boats" / "MackenSea" / "output" / "cut_foil" / "MackenSea_Shell_Foil.step"
+    doc = FreeCAD.newDocument("ShellPlates")
 
 print("="*60)
-print("SHELL THICKNESS VERIFICATION")
+print("ADDING 3 INTERNAL PLATES AT CUT POSITIONS")
 print("="*60)
 
-# Check if already imported
-foil = None
-for obj in doc.Objects:
-    if "Part__Feature" in obj.Name or "Foil" in obj.Name:
-        foil = obj
-        print("Using existing imported foil")
-        break
+# Import shell
+print(f"Importing shell from: {SHELL_STEP.name}")
+doc, imported_objects = load_step(str(SHELL_STEP), doc.Name, verbose=False)
 
-if not foil:
-    print(f"Importing: {step_file.name}")
-    doc, imported_objects = load_step(str(step_file), doc.Name, verbose=False)
-    if imported_objects:
-        foil = imported_objects[0]
-        foil.Label = "Imported_Foil"
-    else:
-        print("ERROR: Failed to import foil")
-        sys.exit(1)
+if not imported_objects:
+    print("ERROR: Failed to import shell")
+    sys.exit(1)
 
-# ====================
-# ANALYZE SHELL
-# ====================
+shell = imported_objects[0]
+shell.Label = "Shell_Foil"
+bbox = shell.Shape.BoundBox
 
-shape = foil.Shape
-bbox = shape.BoundBox
+print(f"Shell height: {bbox.ZLength:.1f}mm")
 
-print(f"\nFoil dimensions:")
-print(f"  Height: {bbox.ZLength:.1f}mm")
-print(f"  Chord: {bbox.XLength:.1f}mm") 
-print(f"  Width: {bbox.YLength:.1f}mm")
+# Calculate 3 internal cut positions (not at ends)
+cut_positions = []
+for i in range(1, 4):  # Skip 0 (bottom) and 4 (top)
+    z_pos = bbox.ZMin + i * SECTION_HEIGHT
+    cut_positions.append(z_pos)
 
-# Check if it's a shell by looking at faces
-faces = shape.Faces
-print(f"\nNumber of faces: {len(faces)}")
+print(f"\n3 Internal cut positions:")
+for i, pos in enumerate(cut_positions):
+    print(f"  Position {i+1}: Z = {pos:.1f}mm")
 
-# Method 1: Check volume vs surface area ratio
-volume = shape.Volume / 1000  # Convert to cm³
-area = shape.Area / 100  # Convert to cm²
+# Create 3 internal plates
+all_plates = []
 
-print(f"\nVolume: {volume:.1f} cm³")
-print(f"Surface area: {area:.1f} cm²")
-
-# For a thin shell, volume/area ratio approximates average thickness
-estimated_thickness = (volume / area) * 10  # Convert to mm
-print(f"Estimated average thickness: {estimated_thickness:.2f}mm")
-
-# Method 2: Sample thickness at multiple points
-print("\n" + "="*60)
-print("SAMPLING WALL THICKNESS AT MULTIPLE POINTS")
-print("="*60)
-
-# Create rays from outside to inside at various points
-sample_points = []
-thickness_measurements = []
-
-# Sample at different heights and positions
-for z in [-1000, -800, -600, -400, -200]:  # Different heights
-    for x in [50, 150, 250, 350]:  # Different chord positions
-        # Create a horizontal ray through the foil
-        ray_start = Base.Vector(x, 100, z)  # Start outside
-        ray_end = Base.Vector(x, -100, z)   # End on other side
-        
-        # Find intersections with shape
-        ray = Part.makeLine(ray_start, ray_end)
-        try:
-            intersections = shape.section(ray)
-            if intersections.Edges:
-                # Get intersection points
-                points = []
-                for edge in intersections.Edges:
-                    for vertex in edge.Vertexes:
-                        points.append(vertex.Point)
-                
-                # If we have pairs of points, calculate thickness
-                if len(points) >= 2:
-                    # Sort by Y coordinate
-                    points.sort(key=lambda p: p.y, reverse=True)
-                    
-                    # Calculate thickness between outer pairs
-                    if len(points) >= 2:
-                        thickness = abs(points[0].y - points[1].y)
-                        thickness_measurements.append(thickness)
-                        
-                        if len(thickness_measurements) <= 10:  # Show first 10
-                            print(f"  At X={x:.0f}, Z={z:.0f}: {thickness:.2f}mm")
-                        
-        except Exception as e:
-            pass  # Skip failed measurements
-
-if thickness_measurements:
-    avg_thickness = sum(thickness_measurements) / len(thickness_measurements)
-    min_thickness = min(thickness_measurements)
-    max_thickness = max(thickness_measurements)
+for i, z_pos in enumerate(cut_positions):
+    print(f"\nCreating plate {i+1} at Z={z_pos:.1f}mm...")
     
-    print(f"\nMeasurement summary ({len(thickness_measurements)} samples):")
-    print(f"  Average thickness: {avg_thickness:.2f}mm")
-    print(f"  Minimum thickness: {min_thickness:.2f}mm")
-    print(f"  Maximum thickness: {max_thickness:.2f}mm")
-    
-    # Check if it meets requirements
-    target_thickness = 3.0
-    tolerance = 0.5
-    
-    print(f"\n" + "="*60)
-    print("VERIFICATION RESULT")
-    print(f"="*60)
-    print(f"Target thickness: {target_thickness}mm ± {tolerance}mm")
-    
-    if abs(avg_thickness - target_thickness) <= tolerance:
-        print("✅ Shell thickness is within acceptable range")
-        print("   No modification needed")
-    else:
-        print("❌ Shell thickness needs adjustment")
-        print(f"   Current: {avg_thickness:.2f}mm")
-        print(f"   Target: {target_thickness}mm")
-        print(f"   Difference: {avg_thickness - target_thickness:+.2f}mm")
-        
-        if avg_thickness < target_thickness:
-            print("\n   ACTION: Need to THICKEN the shell")
-        else:
-            print("\n   ACTION: Shell is too thick (unusual)")
-        
-        print("\n⚠️  STOPPING - Shell thickness requirement not met")
-        print("   Fix thickness before proceeding")
-        sys.exit(1)
-else:
-    print("\n⚠️  Could not measure thickness directly")
-    print(f"   Based on volume/area ratio: ~{estimated_thickness:.2f}mm")
-
-# Method 3: Check for inner/outer surface
-print("\n" + "="*60)
-print("CHECKING FOR INNER/OUTER SURFACES")
-print("="*60)
-
-# Check if shape is a solid or shell
-if shape.Solids:
-    print(f"Shape contains {len(shape.Solids)} solid(s)")
-    if len(shape.Shells) > 1:
-        print("Multiple shells detected - likely hollow")
-    else:
-        print("Single solid - may need hollowing")
-else:
-    print("No solids detected - appears to be surface/shell")
-
-# Visual aids
-if True:  # Set to False to skip visualization
-    # Add a cutting plane to see cross-section
-    cut_plane = Part.makePlane(
-        500, 200,
-        Base.Vector(-50, 0, -600),
-        Base.Vector(1, 0, 0)
+    # Create plate box
+    plate_box = Part.makeBox(
+        bbox.XLength + 100,
+        bbox.YLength + 100,
+        PLATE_THICKNESS,
+        Base.Vector(
+            bbox.XMin - 50,
+            bbox.YMin - 50,
+            z_pos - PLATE_THICKNESS/2
+        )
     )
     
-    plane_obj = doc.addObject("Part::Feature", "Section_Plane")
-    plane_obj.Shape = cut_plane
-    plane_obj.ViewObject.ShapeColor = (1.0, 1.0, 0.0)
-    plane_obj.ViewObject.Transparency = 90
-    
-    print("\nAdded section plane for visual inspection")
+    # Intersect with shell to get internal plate
+    try:
+        plate_shape = shell.Shape.common(plate_box)
+        
+        if not plate_shape.isNull() and plate_shape.Volume > 0:
+            # Add flow holes - simple pattern
+            pbbox = plate_shape.BoundBox
+            
+            # Create 4-6 flow holes along the chord
+            num_holes = 4
+            for j in range(num_holes):
+                x = pbbox.XMin + (j + 1) * pbbox.XLength / (num_holes + 1)
+                y = pbbox.YMin + pbbox.YLength / 2
+                
+                hole = Part.makeCylinder(
+                    FLOW_HOLE_DIAMETER/2,
+                    PLATE_THICKNESS + 2,
+                    Base.Vector(x, y, z_pos - PLATE_THICKNESS/2 - 1),
+                    Base.Vector(0, 0, 1)
+                )
+                plate_shape = plate_shape.cut(hole)
+            
+            all_plates.append(plate_shape)
+            print(f"  ✅ Plate created with {num_holes} flow holes")
+    except Exception as e:
+        print(f"  ❌ Failed: {e}")
 
-print("\n" + "="*60)
-print("ANALYSIS COMPLETE")
-print("="*60)
+print(f"\nCreated {len(all_plates)} plates total")
+
+# Combine shell with plates
+print("\nCombining shell with 3 internal plates...")
+combined_shape = shell.Shape
+
+for i, plate in enumerate(all_plates):
+    print(f"  Adding plate {i+1}...")
+    combined_shape = combined_shape.fuse(plate)
+
+# Create final object
+final = doc.addObject("Part::Feature", "Shell_With_3_Plates")
+final.Shape = combined_shape
+final.ViewObject.ShapeColor = (0.2, 0.6, 0.8)
+
+# Hide original shell
+shell.ViewObject.Visibility = False
 
 doc.recompute()
+FreeCADGui.ActiveDocument.ActiveView.fitAll()
+
+print("\n" + "="*60)
+print("COMPLETE")
+print("="*60)
+print(f"Shell with {len(all_plates)} plates at cut positions")
+print("Ready for sectioning")
