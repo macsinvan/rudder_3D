@@ -27,6 +27,9 @@ WALL_THICKNESS = 3.0  # mm - shell wall thickness
 RIM_THICKNESS = 8.0     # mm - same as horizontal plates
 RIM_WIDTH = 30.0        # mm - width of rim from shell wall inward
 
+# Production settings
+FUSE_FOR_PRODUCTION = True  # Set True when ready for final unified part
+
 # File paths
 SHELL_STEP = Path.home() / "Rudder_Code" / "boats" / "MackenSea" / "output" / "cut_foil" / "MackenSea_Shell_Foil.step"
 
@@ -279,6 +282,56 @@ if 'rim_frame' in locals():
     rim_volume = rim_frame.Volume
 else:
     rim_volume = 0
+
+print("DEBUG: About to test incremental changes")
+
+# Test just the if statement
+if all_plates:
+    print(f"DEBUG: Found {len(all_plates)} plates to work with")
+    
+    # Test compound creation
+    plates_compound = Part.makeCompound(all_plates)
+    print(f"DEBUG: Created compound successfully")
+    
+    # Check shape validity before fusing
+    print(f"DEBUG: Shell valid: {shell.Shape.isValid()}")
+    print(f"DEBUG: Compound valid: {plates_compound.isValid()}")
+    
+    # Check individual plate validity
+    for i, plate in enumerate(all_plates):
+        print(f"DEBUG: Plate {i+1} valid: {plate.isValid()}")
+    
+    # Production fusion - only when ready
+    if FUSE_FOR_PRODUCTION:
+        print(f"DEBUG: PRODUCTION MODE - Starting sequential fusion...")
+        print(f"       This will take 3-4 minutes for 616 hexagonal holes...")
+        try:
+            # Start with shell + first plate
+            temp_shape = shell.Shape.fuse(all_plates[0])
+            print(f"DEBUG: Fused plate 1 (124 holes) ✅")
+            
+            # Add second plate  
+            temp_shape = temp_shape.fuse(all_plates[1])
+            print(f"DEBUG: Fused plate 2 (234 holes) ✅")
+            
+            # Add third plate
+            final_shape = temp_shape.fuse(all_plates[2])
+            print(f"DEBUG: Sequential fusion completed - all 616 holes ✅")
+            
+            # Create production object
+            production_obj = doc.addObject("Part::Feature", "Complete_Rudder_Structure")
+            production_obj.Shape = final_shape
+            production_obj.ViewObject.ShapeColor = (0.6, 0.4, 0.8)  # Purple for production
+            print(f"DEBUG: Created unified production object")
+            
+        except Exception as e:
+            print(f"DEBUG: Sequential fusion failed: {e}")
+    else:
+        print(f"DEBUG: DEVELOPMENT MODE - Skipping fusion (set FUSE_FOR_PRODUCTION=True when ready)")
+        print(f"       Separate objects allow faster iteration during development")
+    
+else:
+    print("DEBUG: No plates found")
 
 print(f"   Original shell volume: {original_volume/1000:.1f} cm³")
 print(f"   Plates volume: {plates_volume/1000:.1f} cm³")
