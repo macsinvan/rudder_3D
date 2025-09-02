@@ -76,52 +76,64 @@ all_plates = []
 plate_objects = []  # Store plate objects
 
 for i, z_pos in enumerate(cut_positions):
-    # Create plate box
-    plate_box = Part.makeBox(
-        bbox.XLength + 100,
-        bbox.YLength + 100,
-        PLATE_THICKNESS,
-        Base.Vector(
-            bbox.XMin - 50,
-            bbox.YMin - 50,
-            z_pos - PLATE_THICKNESS/2
-        )
-    )
-    
-    # Intersect with shell to get internal plate
     try:
-        plate_shape = shell.Shape.common(plate_box)
+        # Create a horizontal plane at z_pos
+        plane = Part.makePlane(
+            bbox.XLength + 200,  # Large enough to cover shell
+            bbox.YLength + 200,
+            Base.Vector(bbox.XMin - 100, bbox.YMin - 100, z_pos),
+            Base.Vector(0, 0, 1)  # Normal pointing up
+        )
         
-        if not plate_shape.isNull() and plate_shape.Volume > 0:
-            # Add flow holes - simple pattern
-            pbbox = plate_shape.BoundBox
+        # Get cross-section edges where plane cuts shell
+        section_edges = shell.Shape.section(plane)
+        
+        if section_edges.Edges:
+            # Sort edges into wires
+            sorted_edge_groups = Part.sortEdges(section_edges.Edges)
             
-            # Create 4 flow holes along the chord
-            num_holes = 4
-            for j in range(num_holes):
-                x = pbbox.XMin + (j + 1) * pbbox.XLength / (num_holes + 1)
-                y = pbbox.YMin + pbbox.YLength / 2
+            if sorted_edge_groups:
+                # Convert sorted edge groups to wires
+                wires = []
+                for edge_group in sorted_edge_groups:
+                    try:
+                        wire = Part.Wire(edge_group)
+                        if wire.isClosed():
+                            wires.append(wire)
+                    except:
+                        pass
                 
-                hole = Part.makeCylinder(
-                    FLOW_HOLE_DIAMETER/2,
-                    PLATE_THICKNESS + 2,
-                    Base.Vector(x, y, z_pos - PLATE_THICKNESS/2 - 1),
-                    Base.Vector(0, 0, 1)
-                )
-                plate_shape = plate_shape.cut(hole)
-            
-            all_plates.append(plate_shape)
-            
-            # CREATE SEPARATE PLATE OBJECT
-            plate_obj = doc.addObject("Part::Feature", f"Horizontal_Plate_{i+1}")
-            plate_obj.Shape = plate_shape
-            plate_obj.ViewObject.ShapeColor = (0.2, 0.8, 0.2)  # Green for visibility
-            plate_obj.ViewObject.Transparency = 30
-            plate_objects.append(plate_obj)
-            
-            print(f"   ✅ Plate {i+1} created at Z={z_pos:.1f}mm")
+                if wires:
+                    # Select the outer wire (largest by bounding box diagonal)
+                    outer_wire = max(wires, key=lambda w: w.BoundBox.DiagonalLength)
+                    
+                    # Create face from outer wire
+                    face = Part.Face(outer_wire)
+                    
+                    # Extrude face to create solid plate
+                    plate_shape = face.extrude(Base.Vector(0, 0, -PLATE_THICKNESS))
+                    
+                    # Center the plate on z_pos
+                    plate_shape.translate(Base.Vector(0, 0, PLATE_THICKNESS/2))
+                    
+                    all_plates.append(plate_shape)
+                    
+                    # CREATE SEPARATE PLATE OBJECT
+                    plate_obj = doc.addObject("Part::Feature", f"Horizontal_Plate_{i+1}")
+                    plate_obj.Shape = plate_shape
+                    plate_obj.ViewObject.ShapeColor = (0.2, 0.8, 0.2)  # Green for visibility
+                    plate_obj.ViewObject.Transparency = 30
+                    plate_objects.append(plate_obj)
+                    
+                    print(f"   ✅ Plate {i+1} created at Z={z_pos:.1f}mm")
+                else:
+                    print(f"   ⌠ No closed wires found at Z={z_pos:.1f}mm")
+            else:
+                print(f"   ⌠ Could not sort edges at Z={z_pos:.1f}mm")
+        else:
+            print(f"   ⌠ No intersection edges at Z={z_pos:.1f}mm")
     except Exception as e:
-        print(f"   ❌ Failed plate at Z={z_pos:.1f}mm: {e}")
+        print(f"   ⌠ Failed plate at Z={z_pos:.1f}mm: {e}")
 
 # KEEP SHELL SEPARATE - DON'T FUSE WITH PLATES
 print(f"   ✅ {len(all_plates)} horizontal plates created as separate objects")
@@ -151,7 +163,7 @@ rim_box = Part.makeBox(
 rim_full = shell.Shape.common(rim_box)
 
 if rim_full.isNull() or rim_full.Volume == 0:
-    print("   ❌ Failed to create rim intersection")
+    print("   ⌠ Failed to create rim intersection")
 else:
     # Create cutout for center (leaving rim around edges)
     rim_bbox = rim_full.BoundBox
