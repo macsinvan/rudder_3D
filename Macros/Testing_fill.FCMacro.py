@@ -117,6 +117,69 @@ for i, z_pos in enumerate(cut_positions):
                     # Center the plate on z_pos
                     plate_shape.translate(Base.Vector(0, 0, PLATE_THICKNESS/2))
                     
+                    # ADD HEXAGONAL MESH HOLES
+                    import math
+                    
+                    # Hexagon parameters
+                    hex_size = 6.0  # mm across flats
+                    hex_spacing = 9.0  # mm center-to-center
+                    clearance_from_split = 3.0  # mm clearance from Y=0 centerline
+                    
+                    # Get plate bounds
+                    plate_bbox = plate_shape.BoundBox
+                    
+                    # Create hexagonal mesh
+                    hex_holes = []
+                    
+                    # Calculate hex grid in X direction (chord)
+                    x_start = plate_bbox.XMin + hex_spacing/2
+                    x_end = plate_bbox.XMax + 2*hex_spacing  # Extend by 2 rows
+                    
+                    # Y positions - both sides of centerline with clearance
+                    y_positions = []
+                    
+                    # Positive Y side - add one more row
+                    y_pos = clearance_from_split + hex_spacing/2
+                    while y_pos < plate_bbox.YMax + hex_spacing/4:  # Reduced margin for extra row
+                        y_positions.append(y_pos)
+                        y_pos += hex_spacing
+                    
+                    # Negative Y side - add one more row
+                    y_neg = -clearance_from_split - hex_spacing/2
+                    while y_neg > plate_bbox.YMin - hex_spacing/4:  # Reduced margin for extra row
+                        y_positions.append(y_neg)
+                        y_neg -= hex_spacing
+                    
+                    # Create hexagons at all grid positions
+                    for x in [x_start + j*hex_spacing for j in range(int((x_end - x_start)/hex_spacing))]:
+                        for y in y_positions:
+                            if plate_bbox.XMin < x < plate_bbox.XMax and plate_bbox.YMin < y < plate_bbox.YMax:
+                                # Create hexagon points
+                                hex_points = []
+                                for k in range(6):
+                                    angle = k * math.pi / 3  # 60 degree increments
+                                    hex_x = x + (hex_size/2) * math.cos(angle)
+                                    hex_y = y + (hex_size/2) * math.sin(angle)
+                                    hex_points.append(Base.Vector(hex_x, hex_y, z_pos))
+                                
+                                # Close the hexagon
+                                hex_points.append(hex_points[0])
+                                
+                                # Create hexagon wire and face
+                                hex_wire = Part.makePolygon(hex_points)
+                                hex_face = Part.Face(hex_wire)
+                                
+                                # Extrude through plate thickness
+                                hex_hole = hex_face.extrude(Base.Vector(0, 0, PLATE_THICKNESS + 2))
+                                hex_hole.translate(Base.Vector(0, 0, -PLATE_THICKNESS/2 - 1))
+                                hex_holes.append(hex_hole)
+                    
+                    # Cut all hexagonal holes from plate
+                    if hex_holes:
+                        hex_compound = Part.makeCompound(hex_holes)
+                        plate_shape = plate_shape.cut(hex_compound)
+                        print(f"   ✅ Added {len(hex_holes)} hexagonal holes to plate {i+1}")
+                    
                     all_plates.append(plate_shape)
                     
                     # CREATE SEPARATE PLATE OBJECT
