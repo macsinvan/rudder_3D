@@ -266,12 +266,6 @@ else:
 
 print(f"\n4. Creating final objects")
 
-# Create shell object (WITHOUT PLATES FUSED)
-shell_only_obj = doc.addObject("Part::Feature", "Shell_Only")
-shell_only_obj.Shape = shell.Shape
-shell_only_obj.ViewObject.ShapeColor = (0.2, 0.6, 0.8)
-shell_only_obj.ViewObject.Transparency = 50  # Make semi-transparent to see plates
-
 # Hide original shell
 shell.ViewObject.Visibility = False
 
@@ -346,7 +340,6 @@ print("\n" + "="*60)
 print("COMPLETE")
 print("="*60)
 print("Created separate objects:")
-print("- Shell_Only: Shell without plates (semi-transparent blue)")
 print("- Horizontal_Plate_1, 2, 3: Three solid plates (green)")
 if rim_volume > 0:
     print("- Centerline_Rim: Vertical rim at Y=0 (red)")
