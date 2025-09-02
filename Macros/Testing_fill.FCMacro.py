@@ -75,7 +75,6 @@ print(f"   Cut positions: {[f'{p:.1f}' for p in cut_positions]}")
 # Create 3 internal plates AS SEPARATE OBJECTS
 all_plates = []
 plate_objects = []  # Store plate objects
-teardrop_objects = []  # Store teardrop debug objects
 
 for i, z_pos in enumerate(cut_positions):
     try:
@@ -118,82 +117,6 @@ for i, z_pos in enumerate(cut_positions):
                     # Center the plate on z_pos
                     plate_shape.translate(Base.Vector(0, 0, PLATE_THICKNESS/2))
                     
-                    # ADD SINGLE TEARDROP HOLE (DEBUG VERSION)
-                    import math
-                    
-                    # Get plate dimensions for sizing
-                    plate_bbox = plate_shape.BoundBox
-                    plate_width = plate_bbox.YLength  # Y is the width
-                    plate_length = plate_bbox.XLength  # X is the length
-                    
-                    print(f"   Plate {i+1} dimensions: {plate_length:.1f}mm x {plate_width:.1f}mm")
-                    
-                    # TEARDROP POSITIONING FOR SPLIT AT Y=0
-                    # Foil will be split at Y=0, so we place teardrop on positive Y half
-                    half_width = (plate_width / 2)  - WALL_THICKNESS# Width of each half after split, accounting for wall
-                    clearance_from_split = 3.0  # mm clearance from Y=0
-                    
-                    # Available space on positive half: from Y=3mm to Y=half_width
-                    available_width = half_width - clearance_from_split
-                    
-                    # Size teardrop to fit in available space with margins
-                    # Leave margins for multiple teardrops with 3mm spacing
-                    margin = 3.0  # mm margin from outer edge
-                    usable_width = available_width - margin
-                    
-                    # Teardrop radius should allow for clean printing
-                    radius = min(usable_width * 0.4, FLOW_HOLE_DIAMETER / 2)  # Use 40% of space or standard hole size
-                    
-                    print(f"   Half plate width: {half_width:.1f}mm")
-                    print(f"   Available width (3mm from split): {available_width:.1f}mm") 
-                    print(f"   Teardrop radius: {radius:.1f}mm (diameter: {radius*2:.1f}mm)")
-                    
-                    # Position teardrop on positive Y half
-                    # Center it in the available space
-                    center_x = (plate_bbox.XMin + plate_bbox.XMax) / 2
-                    center_y = clearance_from_split + available_width / 2  # Center in available space on positive half
-                    center_z = z_pos
-                    
-                    print(f"   Teardrop center Y position: {center_y:.1f}mm (from Y=0)")
-                    
-                    # Create teardrop outline points IN XY PLANE
-                    # TIP POINTS AWAY FROM CENTERLINE (in +Y direction)
-                    points = []
-                    
-                    # Generate arc points for bottom (semicircle closest to centerline)
-                    num_arc_points = 16
-                    for j in range(num_arc_points + 1):
-                        angle = math.pi + (math.pi * float(j) / num_arc_points)  # π to 2π (bottom half)
-                        x = center_x + radius * math.cos(angle)
-                        y = center_y + radius * math.sin(angle)
-                        z = center_z
-                        points.append(Base.Vector(x, y, z))
-                    
-                    # Add top point (teardrop tip pointing away from centerline)
-                    tip_distance = radius * 1.5
-                    points.append(Base.Vector(center_x, center_y + tip_distance, center_z))
-                    
-                    # Close the polygon
-                    points.append(points[0])
-                    
-                    # Create teardrop wire and face
-                    teardrop_wire = Part.makePolygon(points)
-                    teardrop_face = Part.Face(teardrop_wire)
-                    
-                    # Extrude teardrop
-                    teardrop_solid = teardrop_face.extrude(Base.Vector(0, 0, PLATE_THICKNESS + 2))
-                    teardrop_solid.translate(Base.Vector(0, 0, -PLATE_THICKNESS/2 - 1))
-                    
-                    # CREATE SEPARATE TEARDROP OBJECT FOR DEBUGGING
-                    teardrop_obj = doc.addObject("Part::Feature", f"Teardrop_Debug_{i+1}")
-                    teardrop_obj.Shape = teardrop_solid
-                    teardrop_obj.ViewObject.ShapeColor = (1.0, 0.0, 0.0)  # Red for visibility
-                    teardrop_obj.ViewObject.Transparency = 20
-                    teardrop_objects.append(teardrop_obj)
-                    
-                    # COMMENT OUT THE CUT FOR NOW - JUST CREATE PLATE WITHOUT HOLE
-                    # plate_shape = plate_shape.cut(teardrop_solid)
-                    
                     all_plates.append(plate_shape)
                     
                     # CREATE SEPARATE PLATE OBJECT
@@ -203,7 +126,7 @@ for i, z_pos in enumerate(cut_positions):
                     plate_obj.ViewObject.Transparency = 30
                     plate_objects.append(plate_obj)
                     
-                    print(f"   ✅ Plate {i+1} created at Z={z_pos:.1f}mm with DEBUG teardrop")
+                    print(f"   ✅ Plate {i+1} created at Z={z_pos:.1f}mm")
                 else:
                     print(f"   ❌ No closed wires found at Z={z_pos:.1f}mm")
             else:
@@ -213,9 +136,7 @@ for i, z_pos in enumerate(cut_positions):
     except Exception as e:
         print(f"   ❌ Failed plate at Z={z_pos:.1f}mm: {e}")
 
-# KEEP SHELL SEPARATE - DON'T FUSE WITH PLATES
 print(f"   ✅ {len(all_plates)} horizontal plates created as separate objects")
-print(f"   ✅ {len(teardrop_objects)} teardrop debug objects created")
 
 # =====================================
 # STEP 3: ADD VERTICAL CENTERLINE RIM
@@ -306,14 +227,11 @@ doc.recompute()
 FreeCADGui.ActiveDocument.ActiveView.fitAll()
 
 print("\n" + "="*60)
-print("COMPLETE - DEBUG MODE")
+print("COMPLETE")
 print("="*60)
 print("Created separate objects:")
 print("- Shell_Only: Shell without plates (semi-transparent blue)")
-print("- Horizontal_Plate_1, 2, 3: Three SOLID plates (green)")
-print("- Teardrop_Debug_1, 2, 3: Three teardrop objects (red)")
+print("- Horizontal_Plate_1, 2, 3: Three solid plates (green)")
 if rim_volume > 0:
     print("- Centerline_Rim: Vertical rim at Y=0 (red)")
-print("\nTeardrops are separate objects for size/position verification")
-print("Once correct, uncomment the cut operation to create holes")
 print("="*60)
