@@ -1,6 +1,6 @@
 """
-FreeCAD Macro to add horizontal plates to the shell foil
-ONLY 5 plates at the section cut positions, 8mm thick
+FreeCAD Macro to add complete internal structure to shell
+Adds both horizontal plates and vertical centerline rim in one operation
 """
 
 import sys
@@ -17,10 +17,14 @@ if project_root.exists():
 
 from step_save_load import load_step
 
-# Parameters
+# Parameters for horizontal plates
 SECTION_HEIGHT = 268.8  # mm - height of each printed section
-PLATE_THICKNESS = 8.0   # mm - plates at section boundaries (4mm each side after cut)
+PLATE_THICKNESS = 8.0   # mm - plates at section boundaries
 FLOW_HOLE_DIAMETER = 15.0  # mm - holes for resin flow
+
+# Parameters for vertical rim
+RIM_THICKNESS = 8.0     # mm - same as horizontal plates
+RIM_WIDTH = 30.0        # mm - width of rim from shell wall inward
 
 # File paths
 SHELL_STEP = Path.home() / "Rudder_Code" / "boats" / "MackenSea" / "output" / "cut_foil" / "MackenSea_Shell_Foil.step"
@@ -28,14 +32,17 @@ SHELL_STEP = Path.home() / "Rudder_Code" / "boats" / "MackenSea" / "output" / "c
 # Get or create document
 doc = FreeCAD.ActiveDocument
 if doc is None:
-    doc = FreeCAD.newDocument("ShellPlates")
+    doc = FreeCAD.newDocument("CompleteStructure")
 
 print("="*60)
-print("ADDING 3 INTERNAL PLATES AT CUT POSITIONS")
+print("ADDING COMPLETE INTERNAL STRUCTURE")
 print("="*60)
 
-# Import shell
-print(f"Importing shell from: {SHELL_STEP.name}")
+# =====================================
+# STEP 1: IMPORT SHELL
+# =====================================
+
+print(f"\n1. Importing shell from: {SHELL_STEP.name}")
 doc, imported_objects = load_step(str(SHELL_STEP), doc.Name, verbose=False)
 
 if not imported_objects:
@@ -43,10 +50,18 @@ if not imported_objects:
     sys.exit(1)
 
 shell = imported_objects[0]
-shell.Label = "Shell_Foil"
+shell.Label = "Original_Shell"
 bbox = shell.Shape.BoundBox
 
-print(f"Shell height: {bbox.ZLength:.1f}mm")
+print(f"   Shell height: {bbox.ZLength:.1f}mm")
+print(f"   Shell chord: {bbox.XLength:.1f}mm")
+print(f"   Shell width: {bbox.YLength:.1f}mm")
+
+# =====================================
+# STEP 2: ADD 3 HORIZONTAL PLATES
+# =====================================
+
+print(f"\n2. Adding 3 horizontal plates at cut positions")
 
 # Calculate 3 internal cut positions (not at ends)
 cut_positions = []
@@ -54,16 +69,13 @@ for i in range(1, 4):  # Skip 0 (bottom) and 4 (top)
     z_pos = bbox.ZMin + i * SECTION_HEIGHT
     cut_positions.append(z_pos)
 
-print(f"\n3 Internal cut positions:")
-for i, pos in enumerate(cut_positions):
-    print(f"  Position {i+1}: Z = {pos:.1f}mm")
+print(f"   Cut positions: {[f'{p:.1f}' for p in cut_positions]}")
 
-# Create 3 internal plates
+# Create 3 internal plates AS SEPARATE OBJECTS
 all_plates = []
+plate_objects = []  # Store plate objects
 
 for i, z_pos in enumerate(cut_positions):
-    print(f"\nCreating plate {i+1} at Z={z_pos:.1f}mm...")
-    
     # Create plate box
     plate_box = Part.makeBox(
         bbox.XLength + 100,
@@ -84,7 +96,7 @@ for i, z_pos in enumerate(cut_positions):
             # Add flow holes - simple pattern
             pbbox = plate_shape.BoundBox
             
-            # Create 4-6 flow holes along the chord
+            # Create 4 flow holes along the chord
             num_holes = 4
             for j in range(num_holes):
                 x = pbbox.XMin + (j + 1) * pbbox.XLength / (num_holes + 1)
@@ -99,27 +111,105 @@ for i, z_pos in enumerate(cut_positions):
                 plate_shape = plate_shape.cut(hole)
             
             all_plates.append(plate_shape)
-            print(f"  ✅ Plate created with {num_holes} flow holes")
+            
+            # CREATE SEPARATE PLATE OBJECT
+            plate_obj = doc.addObject("Part::Feature", f"Horizontal_Plate_{i+1}")
+            plate_obj.Shape = plate_shape
+            plate_obj.ViewObject.ShapeColor = (0.2, 0.8, 0.2)  # Green for visibility
+            plate_obj.ViewObject.Transparency = 30
+            plate_objects.append(plate_obj)
+            
+            print(f"   ✅ Plate {i+1} created at Z={z_pos:.1f}mm")
     except Exception as e:
-        print(f"  ❌ Failed: {e}")
+        print(f"   ❌ Failed plate at Z={z_pos:.1f}mm: {e}")
 
-print(f"\nCreated {len(all_plates)} plates total")
+# KEEP SHELL SEPARATE - DON'T FUSE WITH PLATES
+print(f"   ✅ {len(all_plates)} horizontal plates created as separate objects")
 
-# Combine shell with plates
-print("\nCombining shell with 3 internal plates...")
-combined_shape = shell.Shape
+# =====================================
+# STEP 3: ADD VERTICAL CENTERLINE RIM
+# =====================================
 
-for i, plate in enumerate(all_plates):
-    print(f"  Adding plate {i+1}...")
-    combined_shape = combined_shape.fuse(plate)
+print(f"\n3. Adding vertical centerline rim")
+print(f"   Position: Y=0 (centerline)")
+print(f"   Thickness: {RIM_THICKNESS}mm")
+print(f"   Rim width: {RIM_WIDTH}mm")
 
-# Create final object
-final = doc.addObject("Part::Feature", "Shell_With_3_Plates")
-final.Shape = combined_shape
-final.ViewObject.ShapeColor = (0.2, 0.6, 0.8)
+# Create a large box at Y=0 to intersect with shell
+rim_box = Part.makeBox(
+    bbox.XLength + 100,
+    RIM_THICKNESS,
+    bbox.ZLength + 100,
+    Base.Vector(
+        bbox.XMin - 50,
+        -RIM_THICKNESS/2,  # Centered at Y=0
+        bbox.ZMin - 50
+    )
+)
+
+# Intersect with shell to get rim shape (USE ORIGINAL SHELL, NOT shell_with_plates)
+rim_full = shell.Shape.common(rim_box)
+
+if rim_full.isNull() or rim_full.Volume == 0:
+    print("   ❌ Failed to create rim intersection")
+else:
+    # Create cutout for center (leaving rim around edges)
+    rim_bbox = rim_full.BoundBox
+    
+    cutout_box = Part.makeBox(
+        rim_bbox.XLength - 2*RIM_WIDTH,
+        RIM_THICKNESS + 2,
+        rim_bbox.ZLength - 2*RIM_WIDTH,
+        Base.Vector(
+            rim_bbox.XMin + RIM_WIDTH,
+            -RIM_THICKNESS/2 - 1,
+            rim_bbox.ZMin + RIM_WIDTH
+        )
+    )
+    
+    # Cut center from rim to create frame
+    rim_frame = rim_full.cut(cutout_box)
+    
+    # NO CROSS-MEMBERS - just use the rim frame as-is
+    
+    print(f"   ✅ Rim created: Volume = {rim_frame.Volume/1000:.1f} cm³")
+    
+    # Create rim as separate object for visualization
+    rim_obj = doc.addObject("Part::Feature", "Centerline_Rim")
+    rim_obj.Shape = rim_frame
+    rim_obj.ViewObject.ShapeColor = (0.8, 0.2, 0.2)  # Red for visibility
+    rim_obj.ViewObject.Transparency = 30
+    
+    print(f"   ✅ Vertical rim created as separate object")
+
+# =====================================
+# STEP 4: CREATE FINAL OBJECTS
+# =====================================
+
+print(f"\n4. Creating final objects")
+
+# Create shell object (WITHOUT PLATES FUSED)
+shell_only_obj = doc.addObject("Part::Feature", "Shell_Only")
+shell_only_obj.Shape = shell.Shape
+shell_only_obj.ViewObject.ShapeColor = (0.2, 0.6, 0.8)
+shell_only_obj.ViewObject.Transparency = 50  # Make semi-transparent to see plates
 
 # Hide original shell
 shell.ViewObject.Visibility = False
+
+# Calculate statistics
+original_volume = shell.Shape.Volume
+plates_volume = sum([plate.Volume for plate in all_plates])
+if 'rim_frame' in locals():
+    rim_volume = rim_frame.Volume
+else:
+    rim_volume = 0
+
+print(f"   Original shell volume: {original_volume/1000:.1f} cm³")
+print(f"   Plates volume: {plates_volume/1000:.1f} cm³")
+if rim_volume > 0:
+    print(f"   Rim volume: {rim_volume/1000:.1f} cm³")
+print(f"   Total structure volume: {(original_volume + plates_volume + rim_volume)/1000:.1f} cm³")
 
 doc.recompute()
 FreeCADGui.ActiveDocument.ActiveView.fitAll()
@@ -127,5 +217,10 @@ FreeCADGui.ActiveDocument.ActiveView.fitAll()
 print("\n" + "="*60)
 print("COMPLETE")
 print("="*60)
-print(f"Shell with {len(all_plates)} plates at cut positions")
-print("Ready for sectioning")
+print("Created separate objects:")
+print("- Shell_Only: Shell without plates (semi-transparent blue)")
+print("- Horizontal_Plate_1, 2, 3: Three plates (green)")
+if rim_volume > 0:
+    print("- Centerline_Rim: Vertical rim at Y=0 (red)")
+print("\nAll objects are separate for individual inspection")
+print("="*60)
