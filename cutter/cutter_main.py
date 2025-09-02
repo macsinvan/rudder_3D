@@ -1,5 +1,5 @@
-# Rudder Profile Cutter - Creates final foil by cutting stock cavity
-# Version 2.1.0 - Cleaned up with single shell creation method
+# Rudder Profile Cutter - Creates final foil by cutting stock cavity + mold creation
+# Version 2.2.0 - Added mold creation functionality
 
 import os
 import FreeCAD as App
@@ -9,11 +9,15 @@ from FreeCAD import Vector
 
 # Configuration
 BOAT_NAME = "MackenSea"
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 
 # Shell parameters
 SHELL_THICKNESS = 3.0      # mm target wall thickness
 MIN_SHELL_THICKNESS = 2.5  # mm minimum acceptable thickness
+
+# Mold parameters
+MOLD_CLEARANCE = 5.0       # mm clearance around foil in all directions
+MOLD_MIN_THICKNESS = 10.0  # mm minimum mold wall thickness
 
 # Paths
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
@@ -26,6 +30,8 @@ OUTPUT_STEP = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Cut_Foil.step"
 OUTPUT_STL = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Cut_Foil.stl"
 SHELL_STEP = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Shell_Foil.step"
 SHELL_STL = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Shell_Foil.stl"
+MOLD_STEP = f"{OUTPUT_BASE}/mold/{BOAT_NAME}_Mold.step"
+MOLD_STL = f"{OUTPUT_BASE}/mold/{BOAT_NAME}_Mold.stl"
 
 # Parameters
 CUTTER_HEIGHT = 100.0  # mm
@@ -123,12 +129,85 @@ def create_shell(solid_shape, target_thickness):
     print(f"   ⚠️  Could not achieve exact thickness after {max_iterations} iterations")
     return shell_shape, measured_thickness
 
+def create_mold(cut_foil_shape):
+    """
+    Create a mold (negative) of the cut foil
+    Returns: mold_shape
+    """
+    print("\n🏗️  Creating mold")
+    
+    # Validate input
+    if cut_foil_shape.isNull() or not cut_foil_shape.isValid():
+        raise Exception("Invalid cut foil shape for mold creation")
+    
+    # Get bounding box of cut foil
+    bbox = cut_foil_shape.BoundBox
+    print(f"   Foil dimensions: {bbox.XLength:.1f} x {bbox.YLength:.1f} x {bbox.ZLength:.1f} mm")
+    
+    # Calculate mold box dimensions (foil + clearance + wall thickness)
+    mold_x = bbox.XLength + 2 * (MOLD_CLEARANCE + MOLD_MIN_THICKNESS)
+    mold_y = bbox.YLength + 2 * (MOLD_CLEARANCE + MOLD_MIN_THICKNESS)
+    mold_z = bbox.ZLength + 2 * (MOLD_CLEARANCE + MOLD_MIN_THICKNESS)
+    
+    print(f"   Mold box dimensions: {mold_x:.1f} x {mold_y:.1f} x {mold_z:.1f} mm")
+    print(f"   Clearance: {MOLD_CLEARANCE}mm, Wall thickness: {MOLD_MIN_THICKNESS}mm")
+    
+    # Create mold box centered on foil
+    mold_center = bbox.Center
+    mold_box = Part.makeBox(
+        mold_x, mold_y, mold_z,
+        Vector(
+            mold_center.x - mold_x/2,
+            mold_center.y - mold_y/2,
+            mold_center.z - mold_z/2
+        )
+    )
+    
+    # Create clearance-expanded foil for cavity
+    # Scale up the foil slightly to add clearance
+    clearance_center = cut_foil_shape.CenterOfMass
+    avg_dimension = (bbox.XLength + bbox.YLength + bbox.ZLength) / 3
+    clearance_scale = 1 + (MOLD_CLEARANCE / avg_dimension)
+    
+    print(f"   Clearance scale factor: {clearance_scale:.4f}")
+    
+    # Create transformation matrix for clearance scaling
+    matrix = App.Matrix()
+    matrix.scale(clearance_scale, clearance_scale, clearance_scale)
+    
+    # Scale the foil: translate to origin, scale, translate back
+    expanded_foil = cut_foil_shape.copy()
+    expanded_foil.translate(-clearance_center)
+    expanded_foil = expanded_foil.transformGeometry(matrix)
+    expanded_foil.translate(clearance_center)
+    
+    if expanded_foil.isNull() or not expanded_foil.isValid():
+        raise Exception("Expanded foil shape is invalid")
+    
+    print(f"   ✅ Created expanded foil for cavity")
+    
+    # Create mold by boolean cut (box minus expanded foil)
+    mold_shape = mold_box.cut(expanded_foil)
+    
+    if mold_shape.isNull() or not mold_shape.isValid():
+        raise Exception("Mold creation failed - boolean cut resulted in invalid shape")
+    
+    # Verify mold properties
+    mold_volume = mold_shape.Volume / 1000  # cm³
+    cavity_volume = (mold_box.Volume - mold_shape.Volume) / 1000  # cm³
+    print(f"   Mold volume: {mold_volume:.1f} cm³")
+    print(f"   Cavity volume: {cavity_volume:.1f} cm³")
+    
+    return mold_shape
+
 def run():
     print(f"\n🔪 Rudder Cutter v{VERSION} for {BOAT_NAME}")
     print(f"   Target shell thickness: {SHELL_THICKNESS}mm")
+    print(f"   Mold clearance: {MOLD_CLEARANCE}mm")
     
-    # Ensure output folder
+    # Ensure output folders
     os.makedirs(os.path.dirname(OUTPUT_STEP), exist_ok=True)
+    os.makedirs(os.path.dirname(MOLD_STEP), exist_ok=True)
     
     # New document
     doc = App.newDocument(f"Cutter_{BOAT_NAME}")
@@ -281,6 +360,44 @@ def run():
         print("   Consider adjusting SHELL_THICKNESS parameter")
         return
     
+    # Create mold
+    print("\n🏗️  Creating mold")
+    
+    try:
+        mold_shape = create_mold(cut_shape)
+        
+        mold = doc.addObject("Part::Feature", "Mold")
+        mold.Shape = mold_shape
+        mold.ViewObject.ShapeColor = (0.8, 0.4, 0.0)  # Orange color for mold
+        mold.ViewObject.Transparency = 70  # Highly transparent for visual confirmation
+        
+        print(f"✅ Mold created")
+        
+        # Export mold
+        Part.export([mold], MOLD_STEP)
+        print(f"✅ Exported Mold STEP: {MOLD_STEP}")
+        
+        try:
+            mold.Shape.exportStl(MOLD_STL)
+            print(f"✅ Exported Mold STL: {MOLD_STL}")
+        except:
+            print("⚠️  Mold STL export failed")
+        
+        # Verify mold can accommodate original foil
+        mold_bbox = mold_shape.BoundBox
+        foil_bbox = cut_shape.BoundBox
+        
+        clearance_x = (mold_bbox.XLength - foil_bbox.XLength) / 2 - MOLD_MIN_THICKNESS
+        clearance_y = (mold_bbox.YLength - foil_bbox.YLength) / 2 - MOLD_MIN_THICKNESS  
+        clearance_z = (mold_bbox.ZLength - foil_bbox.ZLength) / 2 - MOLD_MIN_THICKNESS
+        
+        print(f"   Actual clearances: X={clearance_x:.1f}mm, Y={clearance_y:.1f}mm, Z={clearance_z:.1f}mm")
+        
+    except Exception as e:
+        print(f"❌ Mold creation failed: {e}")
+        print("   Consider adjusting MOLD_CLEARANCE or MOLD_MIN_THICKNESS parameters")
+        return
+    
     # Finalize
     doc.recompute()
     Gui.SendMsgToActiveView("ViewFit")
@@ -289,6 +406,79 @@ def run():
     print(f"\n🚤 {BOAT_NAME} cutter complete!")
     print(f"   Solid: {OUTPUT_STEP}")
     print(f"   Shell: {SHELL_STEP} ({actual_thickness:.2f}mm walls)")
+    print(f"   Mold: {MOLD_STEP} ({MOLD_CLEARANCE}mm clearance)")
+
+def create_mold(cut_foil_shape):
+    """
+    Create a mold (negative) of the cut foil
+    Returns: mold_shape
+    """
+    # Validate input
+    if cut_foil_shape.isNull() or not cut_foil_shape.isValid():
+        raise Exception("Invalid cut foil shape for mold creation")
+    
+    # Get bounding box of cut foil
+    bbox = cut_foil_shape.BoundBox
+    print(f"   Foil bbox: {bbox.XLength:.1f} x {bbox.YLength:.1f} x {bbox.ZLength:.1f} mm")
+    
+    # Calculate mold box dimensions
+    # Total size = foil + 2*(clearance + wall_thickness)
+    total_clearance = MOLD_CLEARANCE + MOLD_MIN_THICKNESS
+    
+    mold_x = bbox.XLength + 2 * total_clearance
+    mold_y = bbox.YLength + 2 * total_clearance
+    mold_z = bbox.ZLength + 2 * total_clearance
+    
+    print(f"   Mold outer dimensions: {mold_x:.1f} x {mold_y:.1f} x {mold_z:.1f} mm")
+    
+    # Create mold box centered on foil
+    foil_center = bbox.Center
+    mold_box = Part.makeBox(
+        mold_x, mold_y, mold_z,
+        Vector(
+            foil_center.x - mold_x/2,
+            foil_center.y - mold_y/2,
+            foil_center.z - mold_z/2
+        )
+    )
+    
+    # Create expanded foil for cavity (add clearance)
+    center = cut_foil_shape.CenterOfMass
+    avg_dimension = (bbox.XLength + bbox.YLength + bbox.ZLength) / 3
+    scale_factor = 1 + (MOLD_CLEARANCE / avg_dimension)
+    
+    print(f"   Foil expansion scale: {scale_factor:.4f}")
+    
+    # Create transformation matrix
+    matrix = App.Matrix()
+    matrix.scale(scale_factor, scale_factor, scale_factor)
+    
+    # Scale the foil: translate to origin, scale, translate back
+    expanded_foil = cut_foil_shape.copy()
+    expanded_foil.translate(-center)
+    expanded_foil = expanded_foil.transformGeometry(matrix)
+    expanded_foil.translate(center)
+    
+    if expanded_foil.isNull() or not expanded_foil.isValid():
+        raise Exception("Expanded foil is invalid")
+    
+    # Create mold by boolean subtraction
+    mold_shape = mold_box.cut(expanded_foil)
+    
+    if mold_shape.isNull() or not mold_shape.isValid():
+        raise Exception("Mold boolean operation failed")
+    
+    # Calculate actual clearances
+    expanded_bbox = expanded_foil.BoundBox
+    mold_bbox = mold_box.BoundBox
+    
+    actual_clearance_x = (mold_bbox.XLength - expanded_bbox.XLength) / 2 - MOLD_MIN_THICKNESS
+    actual_clearance_y = (mold_bbox.YLength - expanded_bbox.YLength) / 2 - MOLD_MIN_THICKNESS
+    actual_clearance_z = (mold_bbox.ZLength - expanded_bbox.ZLength) / 2 - MOLD_MIN_THICKNESS
+    
+    print(f"   Actual clearances: X={actual_clearance_x:.1f}mm, Y={actual_clearance_y:.1f}mm, Z={actual_clearance_z:.1f}mm")
+    
+    return mold_shape
 
 if __name__ == "__main__":
     run()

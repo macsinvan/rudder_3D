@@ -201,6 +201,7 @@ for i, z_pos in enumerate(cut_positions):
             print(f"   ❌ No intersection edges at Z={z_pos:.1f}mm")
     except Exception as e:
         print(f"   ❌ Failed plate at Z={z_pos:.1f}mm: {e}")
+        continue  # Skip to next plate
 
 print(f"   ✅ {len(all_plates)} horizontal plates created as separate objects")
 
@@ -225,40 +226,18 @@ rim_box = Part.makeBox(
     )
 )
 
-# Intersect with shell to get rim shape (USE ORIGINAL SHELL, NOT shell_with_plates)
-rim_full = shell.Shape.common(rim_box)
+# Use rim_box directly as solid plate (crosses hollow)
+rim_frame = rim_box
 
-if rim_full.isNull() or rim_full.Volume == 0:
-    print("   ❌ Failed to create rim intersection")
-else:
-    # Create cutout for center (leaving rim around edges)
-    rim_bbox = rim_full.BoundBox
-    
-    cutout_box = Part.makeBox(
-        rim_bbox.XLength - 2*RIM_WIDTH,
-        RIM_THICKNESS + 2,
-        rim_bbox.ZLength - 2*RIM_WIDTH,
-        Base.Vector(
-            rim_bbox.XMin + RIM_WIDTH,
-            -RIM_THICKNESS/2 - 1,
-            rim_bbox.ZMin + RIM_WIDTH
-        )
-    )
-    
-    # Cut center from rim to create frame
-    rim_frame = rim_full.cut(cutout_box)
-    
-    # NO CROSS-MEMBERS - just use the rim frame as-is
-    
-    print(f"   ✅ Rim created: Volume = {rim_frame.Volume/1000:.1f} cm³")
-    
-    # Create rim as separate object for visualization
-    rim_obj = doc.addObject("Part::Feature", "Centerline_Rim")
-    rim_obj.Shape = rim_frame
-    rim_obj.ViewObject.ShapeColor = (0.8, 0.2, 0.2)  # Red for visibility
-    rim_obj.ViewObject.Transparency = 30
-    
-    print(f"   ✅ Vertical rim created as separate object")
+print(f"   ✅ Rim created: Volume = {rim_frame.Volume/1000:.1f} cm³")
+
+# Create rim as separate object for visualization
+rim_obj = doc.addObject("Part::Feature", "Centerline_Rim")
+rim_obj.Shape = rim_frame
+rim_obj.ViewObject.ShapeColor = (0.8, 0.2, 0.2)  # Red for visibility
+rim_obj.ViewObject.Transparency = 30
+
+print(f"   ✅ Vertical rim created as separate object")
 
 # =====================================
 # STEP 4: CREATE FINAL OBJECTS
