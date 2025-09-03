@@ -10,6 +10,7 @@ import Mesh
 from pathlib import Path
 import math
 import os
+import json
 
 # Bambu Labs HD2 specifications (single head)
 HD2_BUILD_X = 325  # mm
@@ -33,6 +34,8 @@ class BambuHD2TwoOpCutter:
         print(f"HD2 Output directory: {self.output_dir}")
         self.z_slices = []
         self.final_pieces = []
+        self.z_cut_positions = []  # Track Z cuts for JSON export
+        self.x_cut_positions = []  # Track X cuts for JSON export
     
     def operation_1_z_cuts(self, shape):
         """
@@ -56,6 +59,8 @@ class BambuHD2TwoOpCutter:
         
         # Create Z slices using MAX bed height
         z_slices = []
+        z_cut_positions = []
+        
         for i in range(z_pieces_needed):
             z_bottom = bbox.ZMin + i * EFFECTIVE_Z
             
@@ -67,6 +72,10 @@ class BambuHD2TwoOpCutter:
                 # Remainder chunk
                 z_top = bbox.ZMax
                 chunk_height = remainder_z
+            
+            # Track Z cut position (not at ends)
+            if i > 0:  # Skip first boundary
+                z_cut_positions.append(z_bottom)
             
             # Create cutting box
             cutting_box = Part.makeBox(
@@ -103,6 +112,7 @@ class BambuHD2TwoOpCutter:
                 print(f"  ❌ Z slice {i+1} failed: {e}")
         
         self.z_slices = z_slices
+        self.z_cut_positions = z_cut_positions
         print(f"✅ Created {len(z_slices)} Z slices")
         return z_slices
     
@@ -168,6 +178,10 @@ class BambuHD2TwoOpCutter:
                         x_right = slice_bbox.XMax - full_x_chunks * EFFECTIVE_X
                         x_width = remainder_x
                     
+                    # Track X cut position (not at slice ends)
+                    if x_i > 0:  # Skip first piece boundary
+                        self.x_cut_positions.append(x_right)  # Position of cut
+                    
                     # Create X cutting box
                     x_cutting_box = Part.makeBox(
                         x_width + 10,
@@ -220,6 +234,38 @@ class BambuHD2TwoOpCutter:
                 print(f"✅ {piece_name}.stl - {dims[0]:.1f}W × {dims[1]:.1f}D × {dims[2]:.1f}H mm")
         
         return exported_files
+    
+    def export_cutting_plan_json(self, part_name):
+        """
+        Export cutting plan as JSON file
+        
+        Args:
+            part_name: Base name for JSON file
+            
+        Returns:
+            Path to exported JSON file
+        """
+        cutting_plan = {
+            "cutting_plan": {
+                "z_cuts": self.z_cut_positions,
+                "x_cuts": self.x_cut_positions
+            }
+        }
+        
+        json_path = self.output_dir / f"{part_name}_cutting_plan.json"
+        
+        try:
+            with open(json_path, 'w') as f:
+                json.dump(cutting_plan, f, indent=2)
+            
+            print(f"📄 Cutting plan: {json_path.name}")
+            print(f"   Z cuts: {len(self.z_cut_positions)} positions")
+            print(f"   X cuts: {len(self.x_cut_positions)} positions")
+            return json_path
+            
+        except Exception as e:
+            print(f"❌ JSON export failed: {e}")
+            return None
     
     def _export_shape_to_stl(self, shape, file_path):
         """Export shape to STL"""
@@ -289,6 +335,9 @@ def cut_rudder_for_hd2(boat_name="MackenSea", step_filename="MackenSea_Port_Half
         # Export STL files
         part_name = step_filename.replace('.step', '').replace('.STEP', '')
         exported_files = cutter.export_final_pieces(final_pieces, part_name)
+        
+        # Export cutting plan as JSON
+        json_file = cutter.export_cutting_plan_json(part_name)
         
         doc.recompute()
         FreeCADGui.ActiveDocument.ActiveView.fitAll()
