@@ -154,17 +154,18 @@ class BambuHD2TwoOpCutter:
                     print(f"      Remainder: 1 × {remainder_x:.1f}mm")
                 print(f"      Total X pieces: {x_pieces_needed}")
                 
-                # Cut along X using MAX chunks
+                # Cut along X starting from leading edge (X max) backward
                 for x_i in range(x_pieces_needed):
-                    x_left = slice_bbox.XMin + x_i * EFFECTIVE_X
                     
                     if x_i < full_x_chunks:
-                        # Full X chunk
-                        x_right = x_left + EFFECTIVE_X
+                        # Full X chunk from leading edge backward
+                        x_right = slice_bbox.XMax - x_i * EFFECTIVE_X
+                        x_left = x_right - EFFECTIVE_X
                         x_width = EFFECTIVE_X
                     else:
-                        # Remainder X chunk
-                        x_right = slice_bbox.XMax
+                        # Remainder X chunk at trailing edge
+                        x_left = slice_bbox.XMin
+                        x_right = slice_bbox.XMax - full_x_chunks * EFFECTIVE_X
                         x_width = remainder_x
                     
                     # Create X cutting box
@@ -290,6 +291,7 @@ def cut_rudder_for_hd2(boat_name="MackenSea", step_filename="MackenSea_Port_Half
         exported_files = cutter.export_final_pieces(final_pieces, part_name)
         
         doc.recompute()
+        FreeCADGui.ActiveDocument.ActiveView.fitAll()
         
         return exported_files
         
