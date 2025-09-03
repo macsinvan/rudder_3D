@@ -25,7 +25,7 @@ OUTPUT_FOLDER = f"{BOAT_FOLDER}/output"
 CUT_FOIL_FOLDER = f"{OUTPUT_FOLDER}/cut_foil"
 STOCK_FOLDER = f"{OUTPUT_FOLDER}/stock"
 CUTOUT_FOLDER = f"{OUTPUT_FOLDER}/cutout"
-PRINT_FOLDER = f"{OUTPUT_FOLDER}/3d_print"  # New folder for 3D print files
+PRINT_FOLDER = f"{OUTPUT_FOLDER}/demo" #3D print files
 
 # Input files
 CUT_FOIL_STEP = f"{BOAT_NAME}_Cut_Foil.step"
