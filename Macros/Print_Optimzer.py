@@ -1,7 +1,27 @@
 """
-Bambu Labs HD2 Two-Operation Grid Cutting Utility for FreeCAD
+Print_Optimizer.py - Bambu Labs HD2 Two-Operation Grid Cutting Utility for FreeCAD
+
+Filename: Print_Optimizer.py
+
 1. Cut Z slices from tip to root using MAX bed size + remainder
 2. Cut each Z slice along X if needed using MAX bed size + remainder
+
+Usage:
+    from Print_Optimizer import cut_rudder_for_hd2
+    
+    # Opens file selection dialog, returns tuple: (stl_files_list, cutting_plan_dict)
+    
+    # Just get cutting plan without saving STL files (default):
+    stl_files, cutting_plan = cut_rudder_for_hd2()  # save_cuts=False by default
+    
+    # Save both STL files and cutting plan:
+    stl_files, cutting_plan = cut_rudder_for_hd2(save_cuts=True)
+    
+    # Access cutting positions:
+    z_cut_positions = cutting_plan["cutting_plan"]["z_cuts"]  # List of Z positions
+    x_cut_positions = cutting_plan["cutting_plan"]["x_cuts"]  # List of X positions
+    
+    # All files (STL + JSON) are saved to same directory as selected STEP file
 """
 
 import FreeCAD
@@ -24,13 +44,8 @@ EFFECTIVE_Z = HD2_BUILD_Z - SAFETY_MARGIN  # 310mm
 class BambuHD2TwoOpCutter:
     """Two-operation cutting: Z cuts first, then X cuts per Z slice geometry"""
     
-    def __init__(self, output_dir, boat_name="MackenSea"):
-        if output_dir:
-            self.output_dir = Path(output_dir)
-        else:
-            boat_folder = os.path.expanduser(f"~/Rudder_Code/boats/{boat_name}")
-            self.output_dir = Path(boat_folder) / "output" / "demo"
-        
+    def __init__(self, output_dir):
+        self.output_dir = Path(output_dir)
         print(f"HD2 Output directory: {self.output_dir}")
         self.z_slices = []
         self.final_pieces = []
@@ -278,19 +293,45 @@ class BambuHD2TwoOpCutter:
             print(f"❌ Export failed: {e}")
             return False
 
-def cut_rudder_for_hd2(boat_name="MackenSea", step_filename="MackenSea_Port_Half.step"):
+def cut_rudder_for_hd2():
     """
-    Two-operation cutting: Z cuts first, then X cuts per Z slice geometry
+    Two-operation cutting with file selection: Z cuts first, then X cuts per Z slice geometry
+    
+    User selects STEP file via dialog, all outputs saved to same directory as selected file.
+    
+    Returns:
+        tuple: (stl_files_list, cutting_plan_dict)
+        - stl_files_list: List of exported STL file paths
+        - cutting_plan_dict: JSON structure with z_cuts and x_cuts positions
     """
-    boat_folder = os.path.expanduser(f"~/Rudder_Code/boats/{boat_name}")
-    demo_folder = Path(boat_folder) / "output" / "demo"
-    step_file = demo_folder / step_filename
     
-    if not step_file.exists():
-        print(f"❌ File not found: {step_file}")
-        return []
+    # File selection dialog
+    try:
+        import PySide2.QtWidgets as QtWidgets
+        file_dialog = QtWidgets.QFileDialog()
+        step_file, _ = file_dialog.getOpenFileName(
+            None,
+            "Select STEP file to cut for HD2",
+            os.path.expanduser("~/Rudder_Code/boats"),
+            "STEP files (*.step *.STEP)"
+        )
+        
+        if not step_file:
+            print("❌ No file selected")
+            return [], {}
+            
+    except Exception as e:
+        print(f"❌ File dialog failed: {e}")
+        print("Using default file...")
+        # Fallback to default
+        boat_folder = os.path.expanduser(f"~/Rudder_Code/boats/MackenSea")
+        step_file = str(Path(boat_folder) / "output" / "demo" / "MackenSea_Port_Half.step")
     
-    print(f"📁 Loading: {step_file}")
+    step_file_path = Path(step_file)
+    output_dir = step_file_path.parent  # Same directory as selected file
+    
+    print(f"📁 Loading: {step_file_path.name}")
+    print(f"📁 Output to: {output_dir}")
     
     # Create document
     doc = FreeCAD.ActiveDocument
@@ -305,50 +346,58 @@ def cut_rudder_for_hd2(boat_name="MackenSea", step_filename="MackenSea_Port_Half
         
         if len(doc.Objects) == 0:
             print("❌ No objects imported")
-            return []
+            return [], {}
         
         original_obj = doc.Objects[-1]
         if not hasattr(original_obj, 'Shape'):
             print("❌ No Shape found")
-            return []
+            return [], {}
         
         print(f"✅ Loaded: {original_obj.Label}")
         original_obj.ViewObject.Transparency = 80
         
-        # Initialize cutter
-        cutter = BambuHD2TwoOpCutter(demo_folder, boat_name)
+        # Initialize cutter with selected file's directory
+        cutter = BambuHD2TwoOpCutter(output_dir)
         
         # Operation 1: Z cuts using MAX chunks
         z_slices = cutter.operation_1_z_cuts(original_obj.Shape)
         
         if not z_slices:
             print("❌ No Z slices created")
-            return []
+            return [], {}
         
         # Operation 2: X cuts per Z slice using MAX chunks
         final_pieces = cutter.operation_2_x_cuts(z_slices)
         
         if not final_pieces:
             print("❌ No final pieces created")
-            return []
+            return [], {}
         
         # Export STL files
-        part_name = step_filename.replace('.step', '').replace('.STEP', '')
+        part_name = step_file_path.stem  # Filename without extension
         exported_files = cutter.export_final_pieces(final_pieces, part_name)
         
         # Export cutting plan as JSON
         json_file = cutter.export_cutting_plan_json(part_name)
         
+        # Create return structure
+        cutting_plan = {
+            "cutting_plan": {
+                "z_cuts": cutter.z_cut_positions,
+                "x_cuts": cutter.x_cut_positions
+            }
+        }
+        
         doc.recompute()
         FreeCADGui.ActiveDocument.ActiveView.fitAll()
         
-        return exported_files
+        return exported_files, cutting_plan
         
     except Exception as e:
         print(f"❌ Failed: {e}")
         import traceback
         traceback.print_exc()
-        return []
+        return [], {}
 
 # Run the cutting
 if __name__ == "__main__":
@@ -356,11 +405,12 @@ if __name__ == "__main__":
     print("Z cuts: 310mm max + remainder")
     print("X cuts: 310mm max + remainder per Z slice")
     
-    files = cut_rudder_for_hd2()
+    result = cut_rudder_for_hd2()
     
-    if files:
-        print(f"\n🎉 SUCCESS: {len(files)} STL files exported")
-        for file in files:
-            print(f"   📄 {file.name}")
+    if result:
+        stl_files, cutting_plan = result
+        print(f"\n🎉 SUCCESS: {len(stl_files)} STL files exported")
+        print(f"Z cuts: {cutting_plan['cutting_plan']['z_cuts']}")
+        print(f"X cuts: {cutting_plan['cutting_plan']['x_cuts']}")
     else:
         print("❌ Export failed")
