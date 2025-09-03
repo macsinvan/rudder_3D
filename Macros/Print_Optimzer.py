@@ -133,11 +133,34 @@ class BambuHD2TwoOpCutter:
     
     def operation_2_x_cuts(self, z_slices):
         """
-        Operation 2: Cut each Z slice geometry along X using MAX chunks
+        Operation 2: Single X cut strategy based on widest Z slice
         """
-        print(f"\n=== OPERATION 2: X CUTS PER Z SLICE ===")
+        print(f"\n=== OPERATION 2: SINGLE X CUT STRATEGY ===")
         print(f"Max X chunk: {EFFECTIVE_X}mm")
         
+        # First pass: Find the widest Z slice
+        widest_slice = None
+        max_width = 0
+        
+        for z_slice_info in z_slices:
+            slice_width = z_slice_info['bbox'].XLength
+            if slice_width > max_width:
+                max_width = slice_width
+                widest_slice = z_slice_info
+        
+        print(f"Widest Z slice: Z{widest_slice['z_index']:02d} at {max_width:.1f}mm")
+        
+        # Calculate single X cut position based on widest slice
+        global_x_cut = None
+        if max_width > EFFECTIVE_X:
+            # Calculate X cut for widest slice (310mm from leading edge)
+            widest_bbox = widest_slice['bbox']
+            global_x_cut = widest_bbox.XMax - EFFECTIVE_X
+            print(f"Single X cut position: {global_x_cut:.1f}mm (310mm from leading edge)")
+        else:
+            print("No X cuts needed - all slices fit within 310mm width")
+        
+        # Second pass: Apply single X cut to all slices
         all_final_pieces = []
         
         for z_slice_info in z_slices:
@@ -147,8 +170,8 @@ class BambuHD2TwoOpCutter:
             
             print(f"\n  Z slice {z_idx} geometry: {slice_bbox.XLength:.1f}W × {slice_bbox.YLength:.1f}D mm")
             
-            # Check if fits without X cutting
-            if slice_bbox.XLength <= EFFECTIVE_X:
+            # Check if needs X cutting
+            if slice_bbox.XLength <= EFFECTIVE_X or global_x_cut is None:
                 # Single piece
                 piece_info = {
                     'shape': z_slice,
@@ -158,7 +181,7 @@ class BambuHD2TwoOpCutter:
                     'dimensions': (slice_bbox.XLength, slice_bbox.YLength, z_slice_info['chunk_height'])
                 }
                 all_final_pieces.append(piece_info)
-                print(f"    ✅ Fits: Z{z_idx:02d}_X01")
+                print(f"    ✅ Single piece: Z{z_idx:02d}_X01")
                 
                 # UI visualization
                 doc = FreeCAD.ActiveDocument
@@ -168,70 +191,81 @@ class BambuHD2TwoOpCutter:
                 piece_obj.ViewObject.Transparency = 40
                 
             else:
-                # Needs X cutting - use MAX chunks + remainder
-                full_x_chunks = int(slice_bbox.XLength // EFFECTIVE_X)
-                remainder_x = slice_bbox.XLength % EFFECTIVE_X
-                x_pieces_needed = full_x_chunks + (1 if remainder_x > 0 else 0)
+                # Apply global X cut to this slice
+                print(f"    Applying global X cut at {global_x_cut:.1f}mm")
                 
-                print(f"    Needs X cutting:")
-                print(f"      Full X chunks: {full_x_chunks} × {EFFECTIVE_X}mm = {full_x_chunks * EFFECTIVE_X:.1f}mm")
-                if remainder_x > 0:
-                    print(f"      Remainder: 1 × {remainder_x:.1f}mm")
-                print(f"      Total X pieces: {x_pieces_needed}")
+                # Track X cut position (only once)
+                if z_idx == widest_slice['z_index']:
+                    self.x_cut_positions.append(global_x_cut)
                 
-                # Cut along X starting from leading edge (X max) backward
-                for x_i in range(x_pieces_needed):
-                    
-                    if x_i < full_x_chunks:
-                        # Full X chunk from leading edge backward
-                        x_right = slice_bbox.XMax - x_i * EFFECTIVE_X
-                        x_left = x_right - EFFECTIVE_X
-                        x_width = EFFECTIVE_X
-                    else:
-                        # Remainder X chunk at trailing edge
-                        x_left = slice_bbox.XMin
-                        x_right = slice_bbox.XMax - full_x_chunks * EFFECTIVE_X
-                        x_width = remainder_x
-                    
-                    # Track X cut position (not at slice ends)
-                    if x_i > 0:  # Skip first piece boundary
-                        self.x_cut_positions.append(x_right)  # Position of cut
-                    
-                    # Create X cutting box
-                    x_cutting_box = Part.makeBox(
-                        x_width + 10,
+                # Leading edge piece (X max side)
+                try:
+                    x1_box = Part.makeBox(
+                        slice_bbox.XMax - global_x_cut + 10,
                         slice_bbox.YLength + 100,
                         slice_bbox.ZLength + 100,
-                        FreeCAD.Vector(x_left - 5, slice_bbox.YMin - 50, slice_bbox.ZMin - 50)
+                        FreeCAD.Vector(global_x_cut - 5, slice_bbox.YMin - 50, slice_bbox.ZMin - 50)
                     )
                     
-                    # Cut this X piece
-                    try:
-                        x_piece = z_slice.common(x_cutting_box)
-                        if x_piece and x_piece.Volume > 0.1:
-                            x_piece_bbox = x_piece.BoundBox
-                            piece_info = {
-                                'shape': x_piece,
-                                'z_index': z_idx,
-                                'x_index': x_i + 1,
-                                'name': f"Z{z_idx:02d}_X{x_i+1:02d}",
-                                'dimensions': (x_piece_bbox.XLength, x_piece_bbox.YLength, x_piece_bbox.ZLength)
-                            }
-                            all_final_pieces.append(piece_info)
-                            print(f"        ✅ Z{z_idx:02d}_X{x_i+1:02d}: {x_width:.1f}W mm")
-                            
-                            # UI visualization
-                            doc = FreeCAD.ActiveDocument
-                            piece_obj = doc.addObject("Part::Feature", f"Final_Z{z_idx:02d}_X{x_i+1:02d}")
-                            piece_obj.Shape = x_piece
-                            piece_obj.ViewObject.ShapeColor = (0.8, 0.2, 0.2)  # Red
-                            piece_obj.ViewObject.Transparency = 40
-                            
-                    except Exception as e:
-                        print(f"        ❌ X piece {x_i+1} failed: {e}")
+                    x1_piece = z_slice.common(x1_box)
+                    if x1_piece and x1_piece.Volume > 0.1:
+                        x1_bbox = x1_piece.BoundBox
+                        piece_info = {
+                            'shape': x1_piece,
+                            'z_index': z_idx,
+                            'x_index': 1,
+                            'name': f"Z{z_idx:02d}_X01",
+                            'dimensions': (x1_bbox.XLength, x1_bbox.YLength, x1_bbox.ZLength)
+                        }
+                        all_final_pieces.append(piece_info)
+                        print(f"      ✅ Z{z_idx:02d}_X01: {x1_bbox.XLength:.1f}W mm (leading edge)")
+                        
+                        # UI visualization
+                        doc = FreeCAD.ActiveDocument
+                        piece_obj = doc.addObject("Part::Feature", f"Final_Z{z_idx:02d}_X01")
+                        piece_obj.Shape = x1_piece
+                        piece_obj.ViewObject.ShapeColor = (0.8, 0.2, 0.2)  # Red
+                        piece_obj.ViewObject.Transparency = 40
+                        
+                except Exception as e:
+                    print(f"      ❌ X01 piece failed: {e}")
+                
+                # Trailing edge piece (X min side)
+                try:
+                    x2_box = Part.makeBox(
+                        global_x_cut - slice_bbox.XMin + 10,
+                        slice_bbox.YLength + 100,
+                        slice_bbox.ZLength + 100,
+                        FreeCAD.Vector(slice_bbox.XMin - 5, slice_bbox.YMin - 50, slice_bbox.ZMin - 50)
+                    )
+                    
+                    x2_piece = z_slice.common(x2_box)
+                    if x2_piece and x2_piece.Volume > 0.1:
+                        x2_bbox = x2_piece.BoundBox
+                        piece_info = {
+                            'shape': x2_piece,
+                            'z_index': z_idx,
+                            'x_index': 2,
+                            'name': f"Z{z_idx:02d}_X02",
+                            'dimensions': (x2_bbox.XLength, x2_bbox.YLength, x2_bbox.ZLength)
+                        }
+                        all_final_pieces.append(piece_info)
+                        print(f"      ✅ Z{z_idx:02d}_X02: {x2_bbox.XLength:.1f}W mm (trailing edge)")
+                        
+                        # UI visualization
+                        doc = FreeCAD.ActiveDocument
+                        piece_obj = doc.addObject("Part::Feature", f"Final_Z{z_idx:02d}_X02")
+                        piece_obj.Shape = x2_piece
+                        piece_obj.ViewObject.ShapeColor = (0.8, 0.2, 0.2)  # Red
+                        piece_obj.ViewObject.Transparency = 40
+                        
+                except Exception as e:
+                    print(f"      ❌ X02 piece failed: {e}")
         
         self.final_pieces = all_final_pieces
         print(f"\n✅ Operation 2 complete: {len(all_final_pieces)} final pieces")
+        if global_x_cut:
+            print(f"Single X cut used: {global_x_cut:.1f}mm")
         return all_final_pieces
     
     def export_final_pieces(self, pieces, part_name):
