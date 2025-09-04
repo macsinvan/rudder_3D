@@ -5,6 +5,7 @@ Filename: Print_Optimizer.py
 
 1. Cut Z slices from tip to root using MAX bed size + remainder
 2. Cut each Z slice along X if needed using MAX bed size + remainder
+3. Single X cut strategy based on widest Z slice for aligned pieces
 
 Usage:
     from Print_Optimizer import cut_rudder_for_hd2
@@ -42,7 +43,7 @@ EFFECTIVE_Y = HD2_BUILD_Y - SAFETY_MARGIN  # 305mm
 EFFECTIVE_Z = HD2_BUILD_Z - SAFETY_MARGIN  # 310mm
 
 class BambuHD2TwoOpCutter:
-    """Two-operation cutting: Z cuts first, then X cuts per Z slice geometry"""
+    """Two-operation cutting: Z cuts first, then single X cut strategy"""
     
     def __init__(self, output_dir):
         self.output_dir = Path(output_dir)
@@ -327,15 +328,18 @@ class BambuHD2TwoOpCutter:
             print(f"❌ Export failed: {e}")
             return False
 
-def cut_rudder_for_hd2():
+def cut_rudder_for_hd2(save_cuts=False):
     """
-    Two-operation cutting with file selection: Z cuts first, then X cuts per Z slice geometry
+    Two-operation cutting with file selection: Z cuts first, then single X cut strategy
+    
+    Args:
+        save_cuts: If True, export STL files. If False, only save JSON cutting plan.
     
     User selects STEP file via dialog, all outputs saved to same directory as selected file.
     
     Returns:
         tuple: (stl_files_list, cutting_plan_dict)
-        - stl_files_list: List of exported STL file paths
+        - stl_files_list: List of exported STL file paths (empty if save_cuts=False)
         - cutting_plan_dict: JSON structure with z_cuts and x_cuts positions
     """
     
@@ -400,18 +404,23 @@ def cut_rudder_for_hd2():
             print("❌ No Z slices created")
             return [], {}
         
-        # Operation 2: X cuts per Z slice using MAX chunks
+        # Operation 2: Single X cut strategy
         final_pieces = cutter.operation_2_x_cuts(z_slices)
         
         if not final_pieces:
             print("❌ No final pieces created")
             return [], {}
         
-        # Export STL files
+        # Export STL files (only if requested)
         part_name = step_file_path.stem  # Filename without extension
-        exported_files = cutter.export_final_pieces(final_pieces, part_name)
+        exported_files = []
         
-        # Export cutting plan as JSON
+        if save_cuts:
+            exported_files = cutter.export_final_pieces(final_pieces, part_name)
+        else:
+            print("\n=== SKIPPING STL EXPORT (save_cuts=False) ===")
+        
+        # Always export cutting plan as JSON
         json_file = cutter.export_cutting_plan_json(part_name)
         
         # Create return structure
@@ -437,9 +446,9 @@ def cut_rudder_for_hd2():
 if __name__ == "__main__":
     print("=== Bambu HD2 MAX CHUNK Cutting ===")
     print("Z cuts: 310mm max + remainder")
-    print("X cuts: 310mm max + remainder per Z slice")
+    print("X cuts: Single cut strategy for aligned pieces")
     
-    result = cut_rudder_for_hd2()
+    result = cut_rudder_for_hd2(save_cuts=False)  # Only JSON cutting plan, no STL files
     
     if result:
         stl_files, cutting_plan = result
