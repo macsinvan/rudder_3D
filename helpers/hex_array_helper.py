@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
+~/Rudder_Code/helpers/hex_array_helper.py
 Honeycomb Array Helper Module
 Pure geometry functions for creating honeycomb patterns
 No FreeCAD document operations - just shape generation

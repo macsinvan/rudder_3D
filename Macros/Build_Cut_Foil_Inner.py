@@ -5,20 +5,37 @@ import Part
 import json
 import os
 import time
+import sys
 
 # Compatible with FreeCAD 1.1
 # Foil Mold Importer and Visualizer for Boat Manufacturing
-# VERSION: 2.1.0 - CLEAN REVERT - Solid plates only
+# VERSION: 2.2.0 - ADDING HEX TEST
 
-print("=== FREECAD MOLD IMPORTER VERSION 2.1.0 - CLEAN REVERT ===")
-FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 2.1.0 - CLEAN REVERT ===\n")
+print("=== FREECAD MOLD IMPORTER VERSION 2.2.0 - ADDING HEX TEST ===")
+FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 2.2.0 - ADDING HEX TEST ===\n")
+
+# Add helper module to path and import
+boat_name = "MackenSea"
+helpers_path = os.path.expanduser("~/Rudder_Code/helpers")
+if helpers_path not in sys.path:
+    sys.path.append(helpers_path)
+
+try:
+    import hex_array_helper
+    FreeCAD.Console.PrintMessage("Successfully imported hex_array_helper module\n")
+except ImportError as e:
+    FreeCAD.Console.PrintError(f"Could not import hex_array_helper: {str(e)}\n")
+    hex_array_helper = None
 
 # Parameters
-boat_name = "MackenSea"
 plate_thickness = 6.0  # mm
 bounding_margin = 10.0  # mm
 hole_diameter = 4.0  # mm
 hole_spacing = 6.0  # mm (center to center)
+
+# Hex perforation parameters for testing
+hex_radius = 8.0  # mm - circumradius of hexagon holes
+hex_wall_thickness = 3.0  # mm - minimum wall between hexagons
 
 # Construct file paths
 boat_folder = os.path.expanduser(f"~/Rudder_Code/boats/{boat_name}")
@@ -239,6 +256,73 @@ def create_plates(mold_object, cutting_plan):
         FreeCAD.Console.PrintError(f"Error creating plates: {str(e)}\n")
         return []
 
+def create_test_hex_plate(mold_bbox):
+    """
+    TEST FUNCTION: Create a single hex-perforated plate using the helper module
+    Position it away from the main mold for easy viewing
+    """
+    
+    if not hex_array_helper:
+        FreeCAD.Console.PrintError("hex_array_helper module not available - skipping test\n")
+        return None
+    
+    try:
+        FreeCAD.Console.PrintMessage("\n" + "="*50 + "\n")
+        FreeCAD.Console.PrintMessage("TEST: CREATING HEX-PERFORATED PLATE\n")
+        FreeCAD.Console.PrintMessage("="*50 + "\n")
+        
+        # Calculate Z-plate dimensions (same as in create_plates)
+        plate_x_size = (mold_bbox.XMax - mold_bbox.XMin) + 2 * bounding_margin
+        plate_y_size = (mold_bbox.YMax - mold_bbox.YMin) + 2 * bounding_margin
+        
+        FreeCAD.Console.PrintMessage(f"Test plate dimensions: {plate_x_size:.1f} × {plate_y_size:.1f} × {plate_thickness:.1f} mm\n")
+        FreeCAD.Console.PrintMessage(f"Hex parameters: radius={hex_radius} mm, wall={hex_wall_thickness} mm\n")
+        
+        # Call the hex helper to create perforated geometry
+        hex_shape, hex_info = hex_array_helper.create_honeycomb_geometry(
+            length=plate_x_size,
+            width=plate_y_size,
+            thickness=plate_thickness,
+            hex_radius=hex_radius,
+            wall_thickness=hex_wall_thickness
+        )
+        
+        # Print info from the helper
+        FreeCAD.Console.PrintMessage(f"Hex pattern created: {hex_info['total_hexagons']} hexagons\n")
+        FreeCAD.Console.PrintMessage(f"  Rows: {hex_info['rows']}, Hexagons per row: {hex_info['hexagons_per_row']}\n")
+        
+        # Create a FreeCAD Part object from the shape
+        test_plate = FreeCAD.ActiveDocument.addObject("Part::Feature", "TEST_Hex_Plate")
+        test_plate.Shape = hex_shape
+        test_plate.Label = f"TEST_Hex_Perforated_Plate_{plate_x_size:.0f}x{plate_y_size:.0f}"
+        
+        # Position it to the side of the mold for easy viewing
+        # Place it to the right of the mold with some spacing
+        offset_x = mold_bbox.XMax + 50  # 50mm gap from mold
+        offset_y = (mold_bbox.YMin + mold_bbox.YMax) / 2 - plate_y_size / 2
+        offset_z = mold_bbox.ZMax + 20  # Position above mold for visibility
+        
+        test_plate.Placement.Base = FreeCAD.Vector(offset_x, offset_y, offset_z)
+        
+        # Set color for easy identification
+        if hasattr(test_plate, 'ViewObject') and test_plate.ViewObject:
+            test_plate.ViewObject.ShapeColor = (0.2, 0.6, 0.8)  # Light blue
+            test_plate.ViewObject.Transparency = 30
+        
+        FreeCAD.ActiveDocument.recompute()
+        
+        FreeCAD.Console.PrintMessage(f"TEST plate positioned at X={offset_x:.1f}, Y={offset_y:.1f}, Z={offset_z:.1f}\n")
+        FreeCAD.Console.PrintMessage("TEST COMPLETE: Hex-perforated plate created successfully\n")
+        FreeCAD.Console.PrintMessage("="*50 + "\n")
+        
+        return test_plate
+        
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"Error creating test hex plate: {str(e)}\n")
+        import traceback
+        FreeCAD.Console.PrintError(traceback.format_exc())
+        return None
+
 # Execute the import
 if __name__ == "__main__":
     # Ensure we have an active document
@@ -258,10 +342,17 @@ if __name__ == "__main__":
         FreeCAD.Console.PrintMessage("="*50 + "\n")
         plates = create_plates(mold, cutting_plan)
         
-        FreeCAD.Console.PrintMessage("\nCLEAN REVERT COMPLETE\n")
+        # NEW: Test hex perforation on a single plate
+        if mold and mold.Shape:
+            test_hex_plate = create_test_hex_plate(mold.Shape.BoundBox)
+            if test_hex_plate:
+                FreeCAD.Console.PrintMessage("\n✅ Baby Step #1 Complete: Test hex plate created\n")
+        
+        FreeCAD.Console.PrintMessage("\nPROGRESS STATUS:\n")
         FreeCAD.Console.PrintMessage("Step 1 ✅ Import Mold - Working\n")
         FreeCAD.Console.PrintMessage("Step 2 ✅ Define Plate Sizes - Working\n")
-        FreeCAD.Console.PrintMessage("Ready for next steps when you are.\n")
+        FreeCAD.Console.PrintMessage("Step 3 🔄 Hex Perforation - TEST OBJECT CREATED\n")
+        FreeCAD.Console.PrintMessage("Ready for next baby steps.\n")
         
     else:
         FreeCAD.Console.PrintError("Import failed!\n")
