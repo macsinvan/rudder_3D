@@ -9,10 +9,10 @@ import sys
 
 # Compatible with FreeCAD 1.1
 # Foil Mold Importer and Visualizer for Boat Manufacturing
-# VERSION: 2.3.0 - HEX PERFORATION FOR Z-PLATES
+# VERSION: 2.4.0 - HEX PERFORATION FOR ALL PLATES
 
-print("=== FREECAD MOLD IMPORTER VERSION 2.3.0 - HEX PERFORATION FOR Z-PLATES ===")
-FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 2.3.0 - HEX PERFORATION FOR Z-PLATES ===\n")
+print("=== FREECAD MOLD IMPORTER VERSION 2.4.0 - HEX PERFORATION FOR ALL PLATES ===")
+FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 2.4.0 - HEX PERFORATION FOR ALL PLATES ===\n")
 
 # Add helper module to path and import
 boat_name = "MackenSea"
@@ -229,9 +229,9 @@ def create_plates(mold_object, cutting_plan):
             except Exception as e:
                 FreeCAD.Console.PrintError(f"Error creating Z-plate {i+1}: {str(e)}\n")
         
-        # Create X-cut plates (vertical plates - YZ plane) - REMAIN SOLID
+        # Create X-cut plates (vertical plates - YZ plane) with hex perforation
         x_cuts = cutting_plan['cutting_plan']['x_cuts']
-        FreeCAD.Console.PrintMessage(f"\nCreating {len(x_cuts)} X-cut plates (vertical, solid)...\n")
+        FreeCAD.Console.PrintMessage(f"\nCreating {len(x_cuts)} X-cut plates (vertical) with hex perforation...\n")
         
         for i, x_pos in enumerate(x_cuts):
             try:
@@ -240,23 +240,47 @@ def create_plates(mold_object, cutting_plan):
                 plate_y_size = (mold_bbox.YMax - mold_bbox.YMin) + 2 * bounding_margin
                 plate_z_size = (mold_bbox.ZMax - mold_bbox.ZMin) + 2 * bounding_margin
                 
-                # Create plate as FreeCAD box - SOLID
-                plate = FreeCAD.ActiveDocument.addObject("Part::Box", f"X_Plate_{i+1}")
-                plate.Length = plate_thickness
-                plate.Width = plate_y_size
-                plate.Height = plate_z_size
+                # Create hex-perforated plate using helper module
+                if hex_array_helper:
+                    # Note: For X-plates, we use z_size as length and y_size as width for the hex pattern
+                    # since the plate is vertical (YZ plane)
+                    hex_shape, hex_info = hex_array_helper.create_honeycomb_geometry(
+                        length=plate_z_size,  # Height becomes length for vertical plate
+                        width=plate_y_size,   # Width remains width
+                        thickness=plate_thickness,
+                        hex_radius=hex_radius,
+                        wall_thickness=hex_wall_thickness
+                    )
+                    
+                    # Create FreeCAD Part object from the shape
+                    plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"X_Plate_{i+1}")
+                    plate.Shape = hex_shape
+                    
+                    # Rotate the plate 90 degrees around Y axis to make it vertical
+                    rotation = FreeCAD.Rotation(FreeCAD.Vector(0,1,0), 90)
+                    plate.Placement.Rotation = rotation
+                    
+                    FreeCAD.Console.PrintMessage(f"  X-Plate {i+1}: {plate_thickness:.1f} × {plate_y_size:.1f} × {plate_z_size:.1f} mm at X={x_pos:.2f}\n")
+                    FreeCAD.Console.PrintMessage(f"    Hex pattern: {hex_info['total_hexagons']} hexagons\n")
+                else:
+                    # Fallback to solid plate if hex module not available
+                    FreeCAD.Console.PrintWarning("Hex module not available - creating solid plate\n")
+                    plate = FreeCAD.ActiveDocument.addObject("Part::Box", f"X_Plate_{i+1}")
+                    plate.Length = plate_thickness
+                    plate.Width = plate_y_size
+                    plate.Height = plate_z_size
+                    FreeCAD.Console.PrintMessage(f"  X-Plate {i+1}: {plate_thickness:.1f} × {plate_y_size:.1f} × {plate_z_size:.1f} mm at X={x_pos:.2f} (SOLID)\n")
                 
                 # Position plate - center it on mold YZ, position at x_cut coordinate  
                 plate_x_center = x_pos - plate_thickness / 2
                 plate_y_center = (mold_bbox.YMin + mold_bbox.YMax) / 2 - plate_y_size / 2
-                plate_z_center = (mold_bbox.ZMin + mold_bbox.ZMax) / 2 - plate_z_size / 2
-                
+                plate_z_center = (mold_bbox.ZMin + mold_bbox.ZMax) / 2 + plate_z_size / 2
                 plate.Placement.Base = FreeCAD.Vector(plate_x_center, plate_y_center, plate_z_center)
+
+                
                 plate.Label = f"{boat_name}_X_Plate_{i+1}_at_X{x_pos:.1f}"
                 
                 plates.append(plate)
-                
-                FreeCAD.Console.PrintMessage(f"  X-Plate {i+1}: {plate_thickness:.1f} × {plate_y_size:.1f} × {plate_z_size:.1f} mm at X={x_pos:.2f}\n")
                 
             except Exception as e:
                 FreeCAD.Console.PrintError(f"Error creating X-plate {i+1}: {str(e)}\n")
@@ -266,7 +290,7 @@ def create_plates(mold_object, cutting_plan):
         
         FreeCAD.Console.PrintMessage(f"\nStep 2 & 3 Complete: Created {len(plates)} plates total\n")
         FreeCAD.Console.PrintMessage(f"  - {len(z_cuts)} Z-cut plates (horizontal, hex-perforated, will need tabs)\n")  
-        FreeCAD.Console.PrintMessage(f"  - {len(x_cuts)} X-cut plates (vertical, solid, clean cuts only)\n")
+        FreeCAD.Console.PrintMessage(f"  - {len(x_cuts)} X-cut plates (vertical, hex-perforated)\n")
         
         return plates
         
@@ -289,14 +313,14 @@ if __name__ == "__main__":
         
         # Step 2 & 3: Create plates at cutting positions with hex perforation
         FreeCAD.Console.PrintMessage("\n" + "="*50 + "\n")
-        FreeCAD.Console.PrintMessage("STEP 2 & 3: CREATING PLATES WITH HEX PERFORATION\n") 
+        FreeCAD.Console.PrintMessage("STEP 2 & 3: CREATING ALL PLATES WITH HEX PERFORATION\n") 
         FreeCAD.Console.PrintMessage("="*50 + "\n")
         plates = create_plates(mold, cutting_plan)
         
         FreeCAD.Console.PrintMessage("\nPROGRESS STATUS:\n")
         FreeCAD.Console.PrintMessage("Step 1 ✅ Import Mold - Working\n")
         FreeCAD.Console.PrintMessage("Step 2 ✅ Define Plate Sizes - Working\n")
-        FreeCAD.Console.PrintMessage("Step 3 ✅ Hex Perforation - Z-plates hex-perforated\n")
+        FreeCAD.Console.PrintMessage("Step 3 ✅ Hex Perforation - ALL plates hex-perforated\n")
         FreeCAD.Console.PrintMessage("Ready for next steps.\n")
         
     else:
