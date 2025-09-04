@@ -29,7 +29,7 @@ except ImportError as e:
 
 # Parameters
 plate_thickness = 6.0  # mm
-bounding_margin = 0  # mm
+bounding_margin = 10.0  # mm
 hole_diameter = 4.0  # mm
 hole_spacing = 6.0  # mm (center to center)
 
@@ -308,6 +308,63 @@ def create_plates(foil_object, cutting_plan):
     except Exception as e:
         FreeCAD.Console.PrintError(f"Error creating plates: {str(e)}\n")
         return []
+def process_x_plates_boolean(foil_object, plates):
+    """Post-process X-plates to shape them to foil profile"""
+    
+    FreeCAD.Console.PrintMessage("\n" + "="*50 + "\n")
+    FreeCAD.Console.PrintMessage("ATTEMPTING X-PLATE BOOLEAN SHAPING\n")
+    FreeCAD.Console.PrintMessage("="*50 + "\n")
+    
+    # Step 1: Check if foil has solids
+    num_solids = len(foil_object.Shape.Solids)
+    FreeCAD.Console.PrintMessage(f"Foil contains {num_solids} solid(s)\n")
+    FreeCAD.Console.PrintMessage(f"Foil is valid: {foil_object.Shape.isValid()}\n")
+    FreeCAD.Console.PrintMessage(f"Foil is closed: {foil_object.Shape.isClosed()}\n")
+    
+    # Step 2: If no solids, try to make it solid
+    working_shape = foil_object.Shape
+    if num_solids == 0:
+        FreeCAD.Console.PrintMessage("Foil has no solids - attempting to create solid...\n")
+        try:
+            # Check if we have shells
+            num_shells = len(foil_object.Shape.Shells)
+            FreeCAD.Console.PrintMessage(f"Foil contains {num_shells} shell(s)\n")
+            
+            if num_shells > 0:
+                # Try to make solid from first shell
+                solid_shape = Part.makeSolid(foil_object.Shape.Shells[0])
+                if len(solid_shape.Solids) > 0:
+                    working_shape = solid_shape
+                    FreeCAD.Console.PrintMessage("Successfully created solid from foil shell!\n")
+                else:
+                    FreeCAD.Console.PrintMessage("makeSolid failed to create proper solid\n")
+            else:
+                FreeCAD.Console.PrintMessage("No shells found to convert to solid\n")
+        except Exception as e:
+            FreeCAD.Console.PrintError(f"Error making solid: {str(e)}\n")
+    else:
+        FreeCAD.Console.PrintMessage("Foil is already a solid\n")
+    
+    # Step 3: Try boolean on X-plates
+    x_plate_count = 0
+    for plate in plates:
+        if "X_Plate" in plate.Label:
+            x_plate_count += 1
+            try:
+                FreeCAD.Console.PrintMessage(f"Processing {plate.Label}...\n")
+                shaped = plate.Shape.common(working_shape)
+                if shaped.Volume > 0:
+                    plate.Shape = shaped
+                    FreeCAD.Console.PrintMessage(f"  ✅ Shaped successfully - Volume: {shaped.Volume:.2f} mm³\n")
+                else:
+                    FreeCAD.Console.PrintMessage(f"  ⚠️ No intersection found\n")
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"  ❌ Boolean failed: {str(e)}\n")
+    
+    FreeCAD.Console.PrintMessage(f"\nProcessed {x_plate_count} X-plates\n")
+    FreeCAD.ActiveDocument.recompute()
+
+
 
 # Execute the import
 if __name__ == "__main__":
@@ -334,6 +391,8 @@ if __name__ == "__main__":
         FreeCAD.Console.PrintMessage("Step 3 ✅ Hex Perforation - ALL plates hex-perforated\n")
         FreeCAD.Console.PrintMessage("Step 4 ✅ Boolean Shape - Z-plates shaped to foil cross-section\n")
         FreeCAD.Console.PrintMessage("Ready for: X-plate shaping strategy and Step 5 (Z-cut tabs).\n")
+        # After the existing progress status messages, add:
+        process_x_plates_boolean(foil, plates)
         
     else:
         FreeCAD.Console.PrintError("Import failed!\n")
