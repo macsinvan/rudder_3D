@@ -1,5 +1,5 @@
 # Rudder Profile Cutter - Creates final foil by cutting stock cavity + mold creation
-# Version 2.3.3 - Hybrid shell creation: offset with scaling fallback
+# Version 2.3.1 - Fixed makeThickSolid API call syntax
 
 import os
 import FreeCAD as App
@@ -9,7 +9,7 @@ from FreeCAD import Vector
 
 # Configuration
 BOAT_NAME = "MackenSea"
-VERSION = "2.3.3"
+VERSION = "2.3.1"
 
 # Shell parameters
 SHELL_THICKNESS = 3.0      # mm target wall thickness
@@ -30,64 +30,61 @@ OUTPUT_STEP = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Cut_Foil.step"
 OUTPUT_STL = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Cut_Foil.stl"
 SHELL_STEP = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Shell_Foil.step"
 SHELL_STL = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Shell_Foil.stl"
-MOLD_STEP = f"{OUTPUT_BASE}/mold/{BOAT_NAME}_Mold.step"
-MOLD_STL = f"{OUTPUT_BASE}/mold/{BOAT_NAME}_Mold.stl"
+MOLD_STEP = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Mold.step"
 
 # Parameters
 CUTTER_HEIGHT = 100.0  # mm
 CUTTER_MARGIN = 50.0   # mm
 
+def verify_shell_thickness(shell_shape, target_thickness, tolerance=0.5):
+    """
+    Verify shell thickness using volume/area ratio
+    Returns: (actual_thickness, passes_check)
+    """
+    volume = shell_shape.Volume / 1000  # cm³
+    area = shell_shape.Area / 100  # cm²
+    
+    # Estimated thickness from volume/area ratio
+    estimated_thickness = (volume / area) * 10  # mm
+    
+    passes = abs(estimated_thickness - target_thickness) <= tolerance
+    
+    return estimated_thickness, passes
+
 def create_shell(solid_shape, target_thickness):
     """
-    Create shell using hybrid approach: try offset first, fallback to scaling
+    Create shell using scaling method with iterative refinement
     Returns: (shell_shape, actual_thickness)
     """
-    print(f"   Creating shell with {target_thickness}mm thickness")
-    
     # Validate input
     if solid_shape.isNull() or not solid_shape.isValid():
         raise Exception("Invalid input shape for shell creation")
     
-    # Get shape info
+    # Check if geometry can support the thickness
     bbox = solid_shape.BoundBox
-    print(f"   Shape: {len(solid_shape.Faces)} faces, volume: {solid_shape.Volume/1000:.1f} cm³")
-    
-    # Check if thickness is reasonable for this geometry
     min_dimension = min(bbox.XLength, bbox.YLength, bbox.ZLength)
-    if target_thickness * 2 >= min_dimension:
-        adjusted_thickness = min_dimension * 0.4
-        print(f"   ⚠️  Thickness adjusted from {target_thickness}mm to {adjusted_thickness:.1f}mm (geometry constraint)")
-        target_thickness = adjusted_thickness
     
-    # Method 1: Try offset approach
-    try:
-        print(f"   Trying offset method...")
-        offset_shape = solid_shape.makeOffsetShape(
-            -target_thickness,
-            SHELL_TOLERANCE
-        )
-        
-        if not offset_shape.isNull() and offset_shape.isValid():
-            shell_shape = solid_shape.cut(offset_shape)
-            
-            if not shell_shape.isNull() and shell_shape.isValid():
-                print(f"   ✅ Offset method successful")
-                return shell_shape, target_thickness
-        
-    except Exception as e:
-        print(f"   ⚠️  Offset method failed: {str(e)[:100]}...")
+    actual_thickness = target_thickness
+    if min_dimension <= 2 * target_thickness:
+        print(f"⚠️  Geometry constraint: min dimension is {min_dimension:.2f}mm")
+        actual_thickness = max(MIN_SHELL_THICKNESS, min_dimension * 0.4)
+        if actual_thickness < target_thickness:
+            print(f"   Adjusted thickness from {target_thickness}mm to {actual_thickness:.2f}mm")
     
-    # Method 2: Fallback to proven scaling method
-    print(f"   Falling back to scaling method...")
-    try:
+    # Iterative approach to get correct thickness
+    max_iterations = 3
+    thickness_multiplier = 1.0
+    
+    for iteration in range(max_iterations):
+        # Calculate scale factor with multiplier
         center = solid_shape.CenterOfMass
         avg_dimension = (bbox.XLength + bbox.YLength + bbox.ZLength) / 3
         
-        # Calculate scale factor for target thickness
-        # Use a simple approach: reduce by thickness ratio
-        scale_factor = max(0.1, 1 - (2 * target_thickness / avg_dimension))
+        # Apply multiplier to compensate for non-uniform scaling effects
+        adjusted_thickness = actual_thickness * thickness_multiplier
+        scale_factor = max(0.1, 1 - (2 * adjusted_thickness / avg_dimension))
         
-        print(f"   Scale factor: {scale_factor:.4f}")
+        print(f"   Iteration {iteration + 1}: scale factor = {scale_factor:.4f}, multiplier = {thickness_multiplier:.2f}")
         
         # Create transformation matrix for uniform scaling
         matrix = App.Matrix()
@@ -106,20 +103,30 @@ def create_shell(solid_shape, target_thickness):
         shell_shape = solid_shape.cut(scaled_shape)
         
         if shell_shape.isNull() or not shell_shape.isValid():
-            raise Exception("Boolean cut failed")
+            raise Exception("Shell creation failed - boolean cut resulted in invalid shape")
         
-        # Verify result
-        shell_volume = shell_shape.Volume / 1000  # cm³
-        solid_volume = solid_shape.Volume / 1000  # cm³
-        volume_ratio = shell_volume / solid_volume
+        # Verify thickness
+        measured_thickness, passes = verify_shell_thickness(shell_shape, actual_thickness)
+        print(f"   Measured thickness: {measured_thickness:.2f}mm (target: {actual_thickness:.2f}mm)")
         
-        print(f"   ✅ Scaling method successful")
-        print(f"   Volume: {shell_volume:.1f} cm³ ({volume_ratio:.1%} of solid)")
+        if passes:
+            print(f"   ✅ Thickness within tolerance")
+            return shell_shape, measured_thickness
         
-        return shell_shape, target_thickness
+        # Adjust multiplier for next iteration
+        if measured_thickness < actual_thickness:
+            # Too thin, need bigger gap
+            thickness_multiplier *= (actual_thickness / measured_thickness)
+        else:
+            # Too thick, need smaller gap
+            thickness_multiplier *= (actual_thickness / measured_thickness)
         
-    except Exception as e:
-        raise Exception(f"All shell creation methods failed: {e}")
+        # Limit multiplier to reasonable range
+        thickness_multiplier = max(0.1, min(20.0, thickness_multiplier))
+    
+    # After max iterations, return best attempt
+    print(f"   ⚠️  Could not achieve exact thickness after {max_iterations} iterations")
+    return shell_shape, measured_thickness
 
 def create_mold(cut_foil_shape):
     """
@@ -200,7 +207,6 @@ def run():
     
     # Ensure output folders
     os.makedirs(os.path.dirname(OUTPUT_STEP), exist_ok=True)
-    os.makedirs(os.path.dirname(MOLD_STEP), exist_ok=True)
     
     # New document
     doc = App.newDocument(f"Cutter_{BOAT_NAME}")
@@ -369,12 +375,6 @@ def run():
         # Export mold
         Part.export([mold], MOLD_STEP)
         print(f"✅ Exported Mold STEP: {MOLD_STEP}")
-        
-        try:
-            mold.Shape.exportStl(MOLD_STL)
-            print(f"✅ Exported Mold STL: {MOLD_STL}")
-        except:
-            print("⚠️  Mold STL export failed")
         
         # Verify mold can accommodate original foil
         mold_bbox = mold_shape.BoundBox
