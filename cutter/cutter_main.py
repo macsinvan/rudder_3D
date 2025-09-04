@@ -31,6 +31,7 @@ OUTPUT_STL = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Cut_Foil.stl"
 SHELL_STEP = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Shell_Foil.step"
 SHELL_STL = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Shell_Foil.stl"
 MOLD_STEP = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Mold.step"
+CUTTER_STEP = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Cutter.step"
 
 # Parameters
 CUTTER_HEIGHT = 100.0  # mm
@@ -265,6 +266,8 @@ def run():
     cutter.Shape = cutter_shape
     cutter.ViewObject.Transparency = 50
     print("✅ Created cutter")
+    Part.export([cutter], CUTTER_STEP)
+    print(f"✅ Exported Cutter STEP: {CUTTER_STEP}")
     
     # Align cutter to foil center
     offset = foil.Shape.BoundBox.Center - cutter.Shape.BoundBox.Center
