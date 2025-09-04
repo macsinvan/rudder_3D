@@ -1,17 +1,24 @@
 import FreeCAD
 import FreeCADGui
 import Import
+import Part
 import json
 import os
 import time
 
 # Compatible with FreeCAD 1.1
 # Foil Mold Importer and Visualizer for Boat Manufacturing
+# VERSION: 2.1.0 - CLEAN REVERT - Solid plates only
+
+print("=== FREECAD MOLD IMPORTER VERSION 2.1.0 - CLEAN REVERT ===")
+FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 2.1.0 - CLEAN REVERT ===\n")
 
 # Parameters
 boat_name = "MackenSea"
 plate_thickness = 6.0  # mm
 bounding_margin = 10.0  # mm
+hole_diameter = 4.0  # mm
+hole_spacing = 6.0  # mm (center to center)
 
 # Construct file paths
 boat_folder = os.path.expanduser(f"~/Rudder_Code/boats/{boat_name}")
@@ -250,6 +257,11 @@ if __name__ == "__main__":
         FreeCAD.Console.PrintMessage("STEP 2: CREATING PLATES\n") 
         FreeCAD.Console.PrintMessage("="*50 + "\n")
         plates = create_plates(mold, cutting_plan)
+        
+        FreeCAD.Console.PrintMessage("\nCLEAN REVERT COMPLETE\n")
+        FreeCAD.Console.PrintMessage("Step 1 ✅ Import Mold - Working\n")
+        FreeCAD.Console.PrintMessage("Step 2 ✅ Define Plate Sizes - Working\n")
+        FreeCAD.Console.PrintMessage("Ready for next steps when you are.\n")
         
     else:
         FreeCAD.Console.PrintError("Import failed!\n")
