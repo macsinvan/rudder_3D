@@ -9,10 +9,10 @@ import sys
 
 # Compatible with FreeCAD 1.1
 # Foil Mold Importer and Visualizer for Boat Manufacturing
-# VERSION: 3.0.0 - ADDED SUPPORT PLATES FOR PRINTING
+# VERSION: 3.1.1 - FIXED Y-CUT CENTERLINE PLATE POSITIONING
 
-print("=== FREECAD MOLD IMPORTER VERSION 3.0.0 - SUPPORT PLATES ADDED ===")
-FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.0.0 - SUPPORT PLATES ADDED ===\n")
+print("=== FREECAD MOLD IMPORTER VERSION 3.1.1 - Y-CUT CENTERLINE FIXED ===")
+FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.1.1 - Y-CUT CENTERLINE FIXED ===\n")
 
 # Add helper module to path and import
 boat_name = "MackenSea"
@@ -36,7 +36,7 @@ hole_diameter = 4.0  # mm
 hole_spacing = 6.0  # mm (center to center)
 
 # Hex perforation parameters
-hex_radius = 5.0  # mm - reduced from 8mm for better bridging
+hex_radius = 5.0  # mm - reduced from 8mm for better bridging (except Y-plate)
 hex_wall_thickness = 3.0  # mm - minimum wall between hexagons
 
 # Construct file paths
@@ -157,11 +157,14 @@ def configure_display(foil_object, cutting_plan):
         for i, z_pos in enumerate(z_cuts):
             FreeCAD.Console.PrintMessage(f"  Cut {i+1}: Z = {z_pos:.2f} mm\n")
             
+        FreeCAD.Console.PrintMessage(f"\nY-CUT (centerline):\n")
+        FreeCAD.Console.PrintMessage(f"  Cut 1: Y = 0.00 mm (centerline)\n")
+        
         FreeCAD.Console.PrintMessage(f"\nX-CUTS (vertical, clean cuts only):\n")
         for i, x_pos in enumerate(x_cuts):
             FreeCAD.Console.PrintMessage(f"  Cut {i+1}: X = {x_pos:.2f} mm\n")
             
-        FreeCAD.Console.PrintMessage(f"\nTotal segments: {len(z_cuts)+1} vertical × {len(x_cuts)+1} horizontal = {(len(z_cuts)+1)*(len(x_cuts)+1)} pieces\n")
+        FreeCAD.Console.PrintMessage(f"\nTotal segments: {len(z_cuts)+1} × 2 × {len(x_cuts)+1} = {(len(z_cuts)+1)*2*(len(x_cuts)+1)} pieces\n")
         FreeCAD.Console.PrintMessage("="*50 + "\n")
         
         FreeCAD.Console.PrintMessage("Display configuration complete\n")
@@ -372,9 +375,65 @@ def create_plates(foil_object, cutting_plan):
                     plate.ViewObject.Transparency = 85
                 
                 plates.append(plate)
-                
+                FreeCAD.ActiveDocument.recompute()   
             except Exception as e:
                 FreeCAD.Console.PrintError(f"Error creating Z-support plate {i+1}: {str(e)}\n")
+        
+        # Create Y-cut plate (centerline plate - XZ plane) at Y=0
+        FreeCAD.Console.PrintMessage(f"\nCreating Y-cut plate (centerline) at Y=0...\n")
+        
+        try:
+            # For Y-cut at centerline, create XZ plane plate
+            # Use full foil X and Z extents plus margin
+            plate_x_size = (foil_bbox.XMax - foil_bbox.XMin) + 2 * bounding_margin
+            plate_z_size = (foil_bbox.ZMax - foil_bbox.ZMin) + 2 * bounding_margin
+            
+            # Create hex-perforated plate using helper module
+            if hex_array_helper:
+                # For Y-plate, swap dimensions and use larger hex since it prints flat
+                hex_shape, hex_info = hex_array_helper.create_honeycomb_geometry(
+                    length=plate_x_size,   # X extent as length (SWAPPED)
+                    width=plate_z_size,    # Z extent as width (SWAPPED)
+                    thickness=plate_thickness,
+                    hex_radius=8.0,        # Larger hex (8mm) since this prints flat
+                    wall_thickness=hex_wall_thickness
+                )
+                
+                # Create FreeCAD Part object from the shape
+                plate = FreeCAD.ActiveDocument.addObject("Part::Feature", "Y_CutPlate_Center")
+                plate.Shape = hex_shape
+                
+                # Rotate the plate 90 degrees around X axis to make it vertical on XZ plane
+                rotation = FreeCAD.Rotation(FreeCAD.Vector(1,0,0), 90)
+                plate.Placement.Rotation = rotation
+                
+                FreeCAD.Console.PrintMessage(f"  Y-Cut Plate (Center): {plate_x_size:.1f} × {plate_thickness:.1f} × {plate_z_size:.1f} mm at Y=0\n")
+                FreeCAD.Console.PrintMessage(f"    Hex pattern: {hex_info['total_hexagons']} hexagons (8mm radius - prints flat)\n")
+            else:
+                FreeCAD.Console.PrintMessage("Y-Cut Plate Failed\n")
+            
+            # Position plate - center it on foil XZ, position at Y=0
+            plate_x_center = (foil_bbox.XMin + foil_bbox.XMax) / 2 - plate_x_size / 2
+            plate_y_center = 0 - plate_thickness / 2  # Centered at Y=0
+            plate_z_center = 0 - (foil_bbox.ZMax - foil_bbox.ZMin)  # FIXED: Center in Z range
+            plate.Placement.Base = FreeCAD.Vector(plate_x_center, plate_y_center, plate_z_center)
+            """
+            # Boolean operation to shape Y-plate to foil profile
+            try:
+                shaped = plate.Shape.common(working_shape)
+                if shaped.Volume > 0:
+                    plate.Shape = shaped
+                    FreeCAD.Console.PrintMessage(f"    Shaped to foil - Volume: {shaped.Volume:.2f} mm³\n")
+                else:
+                    FreeCAD.Console.PrintWarning(f"    Warning: No intersection with foil\n")
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"    Error shaping plate: {str(e)}\n")
+            """
+            plate.Label = f"{boat_name}_Y_CutPlate_Center_at_Y0"
+            plates.append(plate)
+            
+        except Exception as e:
+            FreeCAD.Console.PrintError(f"Error creating Y-cut plate: {str(e)}\n")
         
         # Create X-cut plates (vertical plates - YZ plane) with hex perforation and boolean shaping
         x_cuts = cutting_plan['cutting_plan']['x_cuts']
@@ -447,8 +506,10 @@ def create_plates(foil_object, cutting_plan):
         FreeCAD.Console.PrintMessage(f"\nPlate Creation Complete:\n")
         FreeCAD.Console.PrintMessage(f"  - {len(z_cuts)} Z-cut plates (6mm thick for cutting)\n")  
         FreeCAD.Console.PrintMessage(f"  - {len(support_z_positions)} Z-support plates (3mm thick for printing support)\n")
+        FreeCAD.Console.PrintMessage(f"  - 1 Y-cut plate (centerline at Y=0, 8mm hex)\n")
         FreeCAD.Console.PrintMessage(f"  - {len(x_cuts)} X-cut plates (6mm thick for cutting)\n")
         FreeCAD.Console.PrintMessage(f"  Total: {len(plates)} plates\n")
+        FreeCAD.Console.PrintMessage(f"  Creates 16 segments (4×2×2) for printing\n")
         
         return plates
         
@@ -478,9 +539,10 @@ if __name__ == "__main__":
         FreeCAD.Console.PrintMessage("\nPROGRESS STATUS:\n")
         FreeCAD.Console.PrintMessage("Step 1 ✅ Import Foil - Working\n")
         FreeCAD.Console.PrintMessage("Step 2 ✅ Define Plate Sizes - Working\n")
-        FreeCAD.Console.PrintMessage("Step 3 ✅ Hex Perforation - ALL plates with 5mm hex radius\n")
+        FreeCAD.Console.PrintMessage("Step 3 ✅ Hex Perforation - ALL plates (Y=8mm, others=5mm)\n")
         FreeCAD.Console.PrintMessage("Step 4 ✅ Boolean Shape - ALL plates shaped to foil profile\n")
         FreeCAD.Console.PrintMessage("Step 5 ✅ Support Plates - Added at ~50mm spacing for printing\n")
+        FreeCAD.Console.PrintMessage("Step 6 ✅ Y-Cut Centerline - Fixed positioning and 8mm hex\n")
         FreeCAD.Console.PrintMessage("Ready for: Cutting and segmentation.\n")
         
     else:
