@@ -9,10 +9,10 @@ import sys
 
 # Compatible with FreeCAD 1.1
 # Foil Mold Importer and Visualizer for Boat Manufacturing
-# VERSION: 2.9.0 - INLINE BOOLEAN SHAPING FOR ALL PLATES
+# VERSION: 3.0.0 - ADDED SUPPORT PLATES FOR PRINTING
 
-print("=== FREECAD MOLD IMPORTER VERSION 2.9.0 - INLINE BOOLEAN SHAPING ===")
-FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 2.9.0 - INLINE BOOLEAN SHAPING ===\n")
+print("=== FREECAD MOLD IMPORTER VERSION 3.0.0 - SUPPORT PLATES ADDED ===")
+FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.0.0 - SUPPORT PLATES ADDED ===\n")
 
 # Add helper module to path and import
 boat_name = "MackenSea"
@@ -28,13 +28,15 @@ except ImportError as e:
     hex_array_helper = None
 
 # Parameters
-plate_thickness = 6.0  # mm
+plate_thickness = 6.0  # mm - for cutting plates
+support_plate_thickness = 3.0  # mm - for support plates (0.5 * cutting plate thickness)
+plate_spacing = 50.0  # mm - target spacing between all plates
 bounding_margin = 10.0  # mm
 hole_diameter = 4.0  # mm
 hole_spacing = 6.0  # mm (center to center)
 
 # Hex perforation parameters
-hex_radius = 8.0  # mm - circumradius of hexagon holes
+hex_radius = 5.0  # mm - reduced from 8mm for better bridging
 hex_wall_thickness = 3.0  # mm - minimum wall between hexagons
 
 # Construct file paths
@@ -194,8 +196,52 @@ def prepare_foil_for_boolean(foil_object):
     
     return foil_object.Shape
 
+def calculate_support_plate_positions(z_cuts, foil_bbox):
+    """Calculate positions for support plates at 50mm spacing"""
+    
+    support_positions = []
+    
+    # Get Z extent of foil
+    z_min = foil_bbox.ZMin
+    z_max = foil_bbox.ZMax
+    
+    # Sort z_cuts for processing
+    z_cuts_sorted = sorted(z_cuts)
+    
+    # Add z_min and z_max to create complete segments
+    all_boundaries = [z_min] + z_cuts_sorted + [z_max]
+    
+    # For each segment between boundaries, add support plates
+    for i in range(len(all_boundaries) - 1):
+        segment_start = all_boundaries[i]
+        segment_end = all_boundaries[i + 1]
+        segment_length = segment_end - segment_start
+        
+        # Calculate number of support plates needed in this segment
+        num_supports = int(segment_length / plate_spacing)
+        
+        # If we need supports and there's room
+        if num_supports > 1:  # >1 because we don't count the boundaries
+            # Distribute supports evenly within segment
+            actual_spacing = segment_length / (num_supports + 1)
+            
+            for j in range(1, num_supports + 1):
+                support_z = segment_start + (j * actual_spacing)
+                
+                # Don't place supports too close to cutting planes (within 10mm)
+                too_close = False
+                for cut_z in z_cuts_sorted:
+                    if abs(support_z - cut_z) < 10:
+                        too_close = True
+                        break
+                
+                if not too_close:
+                    support_positions.append(support_z)
+    
+    return sorted(support_positions)
+
 def create_plates(foil_object, cutting_plan):
-    """Create plates at each cutting plane position with proper dimensions"""
+    """Create cutting plates and support plates with proper dimensions"""
     
     try:
         # Get foil bounding box for reference
@@ -210,9 +256,14 @@ def create_plates(foil_object, cutting_plan):
         
         plates = []
         
-        # Create Z-cut plates (horizontal plates - XY plane) with hex perforation and boolean shaping
+        # Calculate support plate positions
         z_cuts = cutting_plan['cutting_plan']['z_cuts']
-        FreeCAD.Console.PrintMessage(f"\nCreating {len(z_cuts)} Z-cut plates (horizontal) with hex perforation and foil shaping...\n")
+        support_z_positions = calculate_support_plate_positions(z_cuts, foil_bbox)
+        
+        FreeCAD.Console.PrintMessage(f"\nCalculated {len(support_z_positions)} support plate positions at ~50mm spacing\n")
+        
+        # Create Z-cut plates (horizontal plates - XY plane) with hex perforation and boolean shaping
+        FreeCAD.Console.PrintMessage(f"\nCreating {len(z_cuts)} Z-cut plates (6mm thick) for cutting...\n")
         
         for i, z_pos in enumerate(z_cuts):
             try:
@@ -233,19 +284,19 @@ def create_plates(foil_object, cutting_plan):
                     )
                     
                     # Create FreeCAD Part object from the shape
-                    plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"Z_Plate_{i+1}")
+                    plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"Z_CutPlate_{i+1}")
                     plate.Shape = hex_shape
                     
-                    FreeCAD.Console.PrintMessage(f"  Z-Plate {i+1}: {plate_x_size:.1f} × {plate_y_size:.1f} × {plate_thickness:.1f} mm at Z={z_pos:.2f}\n")
-                    FreeCAD.Console.PrintMessage(f"    Hex pattern: {hex_info['total_hexagons']} hexagons\n")
+                    FreeCAD.Console.PrintMessage(f"  Z-Cut Plate {i+1}: {plate_x_size:.1f} × {plate_y_size:.1f} × {plate_thickness:.1f} mm at Z={z_pos:.2f}\n")
+                    FreeCAD.Console.PrintMessage(f"    Hex pattern: {hex_info['total_hexagons']} hexagons (5mm radius)\n")
                 else:
                     # Fallback to solid plate if hex module not available
                     FreeCAD.Console.PrintWarning("Hex module not available - creating solid plate\n")
-                    plate = FreeCAD.ActiveDocument.addObject("Part::Box", f"Z_Plate_{i+1}")
+                    plate = FreeCAD.ActiveDocument.addObject("Part::Box", f"Z_CutPlate_{i+1}")
                     plate.Length = plate_x_size
                     plate.Width = plate_y_size  
                     plate.Height = plate_thickness
-                    FreeCAD.Console.PrintMessage(f"  Z-Plate {i+1}: {plate_x_size:.1f} × {plate_y_size:.1f} × {plate_thickness:.1f} mm at Z={z_pos:.2f} (SOLID)\n")
+                    FreeCAD.Console.PrintMessage(f"  Z-Cut Plate {i+1}: {plate_x_size:.1f} × {plate_y_size:.1f} × {plate_thickness:.1f} mm at Z={z_pos:.2f} (SOLID)\n")
                 
                 # Position plate - center it on foil XY, position at z_cut coordinate
                 plate_x_center = (foil_bbox.XMin + foil_bbox.XMax) / 2 - plate_x_size / 2
@@ -265,15 +316,69 @@ def create_plates(foil_object, cutting_plan):
                 except Exception as e:
                     FreeCAD.Console.PrintError(f"    Error shaping plate: {str(e)}\n")
                 
-                plate.Label = f"{boat_name}_Z_Plate_{i+1}_at_Z{z_pos:.1f}"
+                plate.Label = f"{boat_name}_Z_CutPlate_{i+1}_at_Z{z_pos:.1f}"
                 plates.append(plate)
                 
             except Exception as e:
-                FreeCAD.Console.PrintError(f"Error creating Z-plate {i+1}: {str(e)}\n")
+                FreeCAD.Console.PrintError(f"Error creating Z-cut plate {i+1}: {str(e)}\n")
+        
+        # Create Z support plates (3mm thick)
+        FreeCAD.Console.PrintMessage(f"\nCreating {len(support_z_positions)} Z-support plates (3mm thick) for printing support...\n")
+        
+        for i, z_pos in enumerate(support_z_positions):
+            try:
+                plate_x_size = (foil_bbox.XMax - foil_bbox.XMin) + 2 * bounding_margin
+                plate_y_size = (foil_bbox.YMax - foil_bbox.YMin) + 2 * bounding_margin
+                
+                if hex_array_helper:
+                    hex_shape, hex_info = hex_array_helper.create_honeycomb_geometry(
+                        length=plate_x_size,
+                        width=plate_y_size,
+                        thickness=support_plate_thickness,
+                        hex_radius=hex_radius,
+                        wall_thickness=hex_wall_thickness
+                    )
+                    
+                    plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"Z_SupportPlate_{i+1}")
+                    plate.Shape = hex_shape
+                    
+                    FreeCAD.Console.PrintMessage(f"  Z-Support {i+1}: 3mm thick at Z={z_pos:.2f}\n")
+                else:
+                    plate = FreeCAD.ActiveDocument.addObject("Part::Box", f"Z_SupportPlate_{i+1}")
+                    plate.Length = plate_x_size
+                    plate.Width = plate_y_size  
+                    plate.Height = support_plate_thickness
+                    FreeCAD.Console.PrintMessage(f"  Z-Support {i+1}: 3mm thick at Z={z_pos:.2f} (SOLID)\n")
+                
+                # Position and shape
+                plate_x_center = (foil_bbox.XMin + foil_bbox.XMax) / 2 - plate_x_size / 2
+                plate_y_center = (foil_bbox.YMin + foil_bbox.YMax) / 2 - plate_y_size / 2
+                plate_z_center = z_pos - support_plate_thickness / 2
+                
+                plate.Placement.Base = FreeCAD.Vector(plate_x_center, plate_y_center, plate_z_center)
+                
+                # Boolean operation
+                try:
+                    shaped = plate.Shape.common(working_shape)
+                    if shaped.Volume > 0:
+                        plate.Shape = shaped
+                except Exception as e:
+                    FreeCAD.Console.PrintError(f"    Error shaping support plate: {str(e)}\n")
+                
+                plate.Label = f"{boat_name}_Z_Support_{i+1}_at_Z{z_pos:.1f}"
+                
+                # Set transparency for support plates to distinguish them
+                if hasattr(plate, 'ViewObject') and plate.ViewObject:
+                    plate.ViewObject.Transparency = 85
+                
+                plates.append(plate)
+                
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"Error creating Z-support plate {i+1}: {str(e)}\n")
         
         # Create X-cut plates (vertical plates - YZ plane) with hex perforation and boolean shaping
         x_cuts = cutting_plan['cutting_plan']['x_cuts']
-        FreeCAD.Console.PrintMessage(f"\nCreating {len(x_cuts)} X-cut plates (vertical) with hex perforation and foil shaping...\n")
+        FreeCAD.Console.PrintMessage(f"\nCreating {len(x_cuts)} X-cut plates (6mm thick) for cutting...\n")
         
         for i, x_pos in enumerate(x_cuts):
             try:
@@ -295,23 +400,23 @@ def create_plates(foil_object, cutting_plan):
                     )
                     
                     # Create FreeCAD Part object from the shape
-                    plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"X_Plate_{i+1}")
+                    plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"X_CutPlate_{i+1}")
                     plate.Shape = hex_shape
                     
                     # Rotate the plate 90 degrees around Y axis to make it vertical
                     rotation = FreeCAD.Rotation(FreeCAD.Vector(0,1,0), 90)
                     plate.Placement.Rotation = rotation
                     
-                    FreeCAD.Console.PrintMessage(f"  X-Plate {i+1}: {plate_thickness:.1f} × {plate_y_size:.1f} × {plate_z_size:.1f} mm at X={x_pos:.2f}\n")
-                    FreeCAD.Console.PrintMessage(f"    Hex pattern: {hex_info['total_hexagons']} hexagons\n")
+                    FreeCAD.Console.PrintMessage(f"  X-Cut Plate {i+1}: {plate_thickness:.1f} × {plate_y_size:.1f} × {plate_z_size:.1f} mm at X={x_pos:.2f}\n")
+                    FreeCAD.Console.PrintMessage(f"    Hex pattern: {hex_info['total_hexagons']} hexagons (5mm radius)\n")
                 else:
                     # Fallback to solid plate if hex module not available
                     FreeCAD.Console.PrintWarning("Hex module not available - creating solid plate\n")
-                    plate = FreeCAD.ActiveDocument.addObject("Part::Box", f"X_Plate_{i+1}")
+                    plate = FreeCAD.ActiveDocument.addObject("Part::Box", f"X_CutPlate_{i+1}")
                     plate.Length = plate_thickness
                     plate.Width = plate_y_size
                     plate.Height = plate_z_size
-                    FreeCAD.Console.PrintMessage(f"  X-Plate {i+1}: {plate_thickness:.1f} × {plate_y_size:.1f} × {plate_z_size:.1f} mm at X={x_pos:.2f} (SOLID)\n")
+                    FreeCAD.Console.PrintMessage(f"  X-Cut Plate {i+1}: {plate_thickness:.1f} × {plate_y_size:.1f} × {plate_z_size:.1f} mm at X={x_pos:.2f} (SOLID)\n")
                 
                 # Position plate - center it on foil YZ, position at x_cut coordinate  
                 plate_x_center = x_pos - plate_thickness / 2
@@ -330,18 +435,20 @@ def create_plates(foil_object, cutting_plan):
                 except Exception as e:
                     FreeCAD.Console.PrintError(f"    Error shaping plate: {str(e)}\n")
                 
-                plate.Label = f"{boat_name}_X_Plate_{i+1}_at_X{x_pos:.1f}"
+                plate.Label = f"{boat_name}_X_CutPlate_{i+1}_at_X{x_pos:.1f}"
                 plates.append(plate)
                 
             except Exception as e:
-                FreeCAD.Console.PrintError(f"Error creating X-plate {i+1}: {str(e)}\n")
+                FreeCAD.Console.PrintError(f"Error creating X-cut plate {i+1}: {str(e)}\n")
         
         # Recompute document to show all plates
         FreeCAD.ActiveDocument.recompute()
         
-        FreeCAD.Console.PrintMessage(f"\nStep 2, 3 & 4 Complete: Created {len(plates)} plates total\n")
-        FreeCAD.Console.PrintMessage(f"  - {len(z_cuts)} Z-cut plates (horizontal, hex-perforated, shaped to foil)\n")  
-        FreeCAD.Console.PrintMessage(f"  - {len(x_cuts)} X-cut plates (vertical, hex-perforated, shaped to foil)\n")
+        FreeCAD.Console.PrintMessage(f"\nPlate Creation Complete:\n")
+        FreeCAD.Console.PrintMessage(f"  - {len(z_cuts)} Z-cut plates (6mm thick for cutting)\n")  
+        FreeCAD.Console.PrintMessage(f"  - {len(support_z_positions)} Z-support plates (3mm thick for printing support)\n")
+        FreeCAD.Console.PrintMessage(f"  - {len(x_cuts)} X-cut plates (6mm thick for cutting)\n")
+        FreeCAD.Console.PrintMessage(f"  Total: {len(plates)} plates\n")
         
         return plates
         
@@ -362,18 +469,19 @@ if __name__ == "__main__":
         FreeCAD.Console.PrintMessage(f"Foil object: {foil.Label}\n")
         configure_display(foil, cutting_plan)
         
-        # Step 2, 3 & 4: Create plates at cutting positions with hex perforation and shaping
+        # Create cutting and support plates
         FreeCAD.Console.PrintMessage("\n" + "="*50 + "\n")
-        FreeCAD.Console.PrintMessage("STEP 2, 3 & 4: CREATING PLATES WITH HEX PERFORATION AND SHAPING\n") 
+        FreeCAD.Console.PrintMessage("CREATING CUTTING AND SUPPORT PLATES\n") 
         FreeCAD.Console.PrintMessage("="*50 + "\n")
         plates = create_plates(foil, cutting_plan)
         
         FreeCAD.Console.PrintMessage("\nPROGRESS STATUS:\n")
         FreeCAD.Console.PrintMessage("Step 1 ✅ Import Foil - Working\n")
         FreeCAD.Console.PrintMessage("Step 2 ✅ Define Plate Sizes - Working\n")
-        FreeCAD.Console.PrintMessage("Step 3 ✅ Hex Perforation - ALL plates hex-perforated\n")
+        FreeCAD.Console.PrintMessage("Step 3 ✅ Hex Perforation - ALL plates with 5mm hex radius\n")
         FreeCAD.Console.PrintMessage("Step 4 ✅ Boolean Shape - ALL plates shaped to foil profile\n")
-        FreeCAD.Console.PrintMessage("Ready for: Step 5 (Z-cut tabs).\n")
+        FreeCAD.Console.PrintMessage("Step 5 ✅ Support Plates - Added at ~50mm spacing for printing\n")
+        FreeCAD.Console.PrintMessage("Ready for: Cutting and segmentation.\n")
         
     else:
         FreeCAD.Console.PrintError("Import failed!\n")
