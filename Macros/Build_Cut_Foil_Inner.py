@@ -9,10 +9,10 @@ import sys
 
 # Compatible with FreeCAD 1.1
 # Foil Mold Importer and Visualizer for Boat Manufacturing
-# VERSION: 2.7.0 - BOOLEAN SHAPING FOR Z-PLATES ONLY
+# VERSION: 2.8.0 - BOOLEAN SHAPING FOR ALL PLATES
 
-print("=== FREECAD MOLD IMPORTER VERSION 2.7.0 - BOOLEAN SHAPING FOR Z-PLATES ===")
-FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 2.7.0 - BOOLEAN SHAPING FOR Z-PLATES ===\n")
+print("=== FREECAD MOLD IMPORTER VERSION 2.8.0 - BOOLEAN SHAPING FOR ALL PLATES ===")
+FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 2.8.0 - BOOLEAN SHAPING FOR ALL PLATES ===\n")
 
 # Add helper module to path and import
 boat_name = "MackenSea"
@@ -240,7 +240,7 @@ def create_plates(foil_object, cutting_plan):
             except Exception as e:
                 FreeCAD.Console.PrintError(f"Error creating Z-plate {i+1}: {str(e)}\n")
         
-        # Create X-cut plates (vertical plates - YZ plane) with hex perforation - NO BOOLEAN
+        # Create X-cut plates (vertical plates - YZ plane) with hex perforation
         x_cuts = cutting_plan['cutting_plan']['x_cuts']
         FreeCAD.Console.PrintMessage(f"\nCreating {len(x_cuts)} X-cut plates (vertical) with hex perforation...\n")
         
@@ -272,7 +272,7 @@ def create_plates(foil_object, cutting_plan):
                     plate.Placement.Rotation = rotation
                     
                     FreeCAD.Console.PrintMessage(f"  X-Plate {i+1}: {plate_thickness:.1f} × {plate_y_size:.1f} × {plate_z_size:.1f} mm at X={x_pos:.2f}\n")
-                    FreeCAD.Console.PrintMessage(f"    Hex pattern: {hex_info['total_hexagons']} hexagons (no shaping applied)\n")
+                    FreeCAD.Console.PrintMessage(f"    Hex pattern: {hex_info['total_hexagons']} hexagons\n")
                 else:
                     # Fallback to solid plate if hex module not available
                     FreeCAD.Console.PrintWarning("Hex module not available - creating solid plate\n")
@@ -301,13 +301,14 @@ def create_plates(foil_object, cutting_plan):
         
         FreeCAD.Console.PrintMessage(f"\nStep 2, 3 & 4 Complete: Created {len(plates)} plates total\n")
         FreeCAD.Console.PrintMessage(f"  - {len(z_cuts)} Z-cut plates (horizontal, hex-perforated, shaped to foil)\n")  
-        FreeCAD.Console.PrintMessage(f"  - {len(x_cuts)} X-cut plates (vertical, hex-perforated, full rectangles)\n")
+        FreeCAD.Console.PrintMessage(f"  - {len(x_cuts)} X-cut plates (vertical, hex-perforated, pending shaping)\n")
         
         return plates
         
     except Exception as e:
         FreeCAD.Console.PrintError(f"Error creating plates: {str(e)}\n")
         return []
+
 def process_x_plates_boolean(foil_object, plates):
     """Post-process X-plates to shape them to foil profile"""
     
@@ -364,8 +365,6 @@ def process_x_plates_boolean(foil_object, plates):
     FreeCAD.Console.PrintMessage(f"\nProcessed {x_plate_count} X-plates\n")
     FreeCAD.ActiveDocument.recompute()
 
-
-
 # Execute the import
 if __name__ == "__main__":
     # Ensure we have an active document
@@ -389,9 +388,10 @@ if __name__ == "__main__":
         FreeCAD.Console.PrintMessage("Step 1 ✅ Import Foil - Working\n")
         FreeCAD.Console.PrintMessage("Step 2 ✅ Define Plate Sizes - Working\n")
         FreeCAD.Console.PrintMessage("Step 3 ✅ Hex Perforation - ALL plates hex-perforated\n")
-        FreeCAD.Console.PrintMessage("Step 4 ✅ Boolean Shape - Z-plates shaped to foil cross-section\n")
-        FreeCAD.Console.PrintMessage("Ready for: X-plate shaping strategy and Step 5 (Z-cut tabs).\n")
-        # After the existing progress status messages, add:
+        FreeCAD.Console.PrintMessage("Step 4 ✅ Boolean Shape - ALL plates shaped to foil profile\n")
+        FreeCAD.Console.PrintMessage("Ready for: Step 5 (Z-cut tabs).\n")
+        
+        # Process X-plates for boolean shaping
         process_x_plates_boolean(foil, plates)
         
     else:
