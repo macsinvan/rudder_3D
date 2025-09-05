@@ -417,7 +417,7 @@ def create_plates(foil_object, cutting_plan):
             plate_y_center = 0 - plate_thickness / 2  # Centered at Y=0
             plate_z_center = 0 - (foil_bbox.ZMax - foil_bbox.ZMin)  # FIXED: Center in Z range
             plate.Placement.Base = FreeCAD.Vector(plate_x_center, plate_y_center, plate_z_center)
-            """
+            
             # Boolean operation to shape Y-plate to foil profile
             try:
                 shaped = plate.Shape.common(working_shape)
@@ -428,7 +428,7 @@ def create_plates(foil_object, cutting_plan):
                     FreeCAD.Console.PrintWarning(f"    Warning: No intersection with foil\n")
             except Exception as e:
                 FreeCAD.Console.PrintError(f"    Error shaping plate: {str(e)}\n")
-            """
+            
             plate.Label = f"{boat_name}_Y_CutPlate_Center_at_Y0"
             plates.append(plate)
             
