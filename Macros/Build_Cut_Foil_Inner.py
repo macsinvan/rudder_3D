@@ -634,6 +634,64 @@ def create_x_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, b
     
     return plates
 
+def merge_all_plates(boat_name):
+    """Merge all plates into a single unified structure"""
+    try:
+        FreeCAD.Console.PrintMessage("\n=== Merging All Plates ===\n")
+        FreeCADGui.updateGui()
+        
+        # Find all plate objects
+        plates_to_merge = []
+        for obj in FreeCAD.ActiveDocument.Objects:
+            if any(x in obj.Label for x in ['_CutPlate_', '_SupportPlate_', '_Support_']):
+                plates_to_merge.append(obj)
+                FreeCAD.Console.PrintMessage(f"  Found plate: {obj.Label}\n")
+        
+        if not plates_to_merge:
+            FreeCAD.Console.PrintError("No plates found to merge!\n")
+            return None
+        
+        FreeCAD.Console.PrintMessage(f"\nMerging {len(plates_to_merge)} plates...\n")
+        FreeCADGui.updateGui()
+        
+        # Start with first plate shape
+        merged_shape = plates_to_merge[0].Shape
+        
+        # Fuse with remaining plates
+        for i, plate in enumerate(plates_to_merge[1:], 1):
+            FreeCAD.Console.PrintMessage(f"  Merging plate {i+1}/{len(plates_to_merge)}...\n")
+            FreeCADGui.updateGui()
+            
+            try:
+                merged_shape = merged_shape.fuse(plate.Shape)
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"    Error merging {plate.Label}: {str(e)}\n")
+            
+            # Breathing room every 5 plates
+            if i % 5 == 0:
+                FreeCAD.ActiveDocument.recompute()
+                time.sleep(0.2)
+        
+        # Create merged object
+        merged_plates = FreeCAD.ActiveDocument.addObject("Part::Feature", "MergedPlates")
+        merged_plates.Shape = merged_shape
+        merged_plates.Label = f"{boat_name}_MergedPlates_Assembly"
+        
+        FreeCAD.Console.PrintMessage(f"\n✅ Successfully merged {len(plates_to_merge)} plates\n")
+        FreeCAD.Console.PrintMessage(f"  Merged volume: {merged_shape.Volume:.2f} mm³\n")
+        
+        # Hide individual plates after merging
+        for plate in plates_to_merge:
+            if hasattr(plate, 'ViewObject') and plate.ViewObject:
+                plate.ViewObject.Visibility = False
+        
+        FreeCAD.ActiveDocument.recompute()
+        return merged_plates
+        
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"FATAL: merge_all_plates failed: {str(e)}\n")
+        raise
+
 def run_plate_creation(boat_name="MackenSea", 
                       plate_thickness=6.0,
                       support_plate_thickness=3.0,
@@ -725,6 +783,15 @@ def run_plate_creation(boat_name="MackenSea",
             FreeCAD.Console.PrintMessage(f"✅ Created {len(x_cut_plates)} X-cut plates\n")
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create X-cut plates: {str(e)}\n")
+        
+        # Merge all plates into single assembly
+        if all_plates:
+            try:
+                merged = merge_all_plates(boat_name)
+                if merged:
+                    FreeCAD.Console.PrintMessage(f"✅ Created merged plate assembly\n")
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"❌ Failed to merge plates: {str(e)}\n")
         
         FreeCAD.ActiveDocument.recompute()
         
