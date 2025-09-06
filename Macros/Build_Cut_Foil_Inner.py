@@ -180,6 +180,37 @@ def calculate_support_plate_positions(z_cuts, foil_bbox, plate_spacing):
     
     return sorted(support_positions)
 
+def calculate_x_support_positions(x_cuts, foil_bbox, x_support_spacing):
+    """Calculate positions for X-direction support plates"""
+    support_positions = []
+    x_min = foil_bbox.XMin
+    x_max = foil_bbox.XMax
+    x_cuts_sorted = sorted(x_cuts)
+    all_boundaries = [x_min] + x_cuts_sorted + [x_max]
+    
+    for i in range(len(all_boundaries) - 1):
+        segment_start = all_boundaries[i]
+        segment_end = all_boundaries[i + 1]
+        segment_length = segment_end - segment_start
+        num_supports = int(segment_length / x_support_spacing)
+        
+        if num_supports > 1:
+            actual_spacing = segment_length / (num_supports + 1)
+            
+            for j in range(1, num_supports + 1):
+                support_x = segment_start + (j * actual_spacing)
+                
+                too_close = False
+                for cut_x in x_cuts_sorted:
+                    if abs(support_x - cut_x) < 10:
+                        too_close = True
+                        break
+                
+                if not too_close:
+                    support_positions.append(support_x)
+    
+    return sorted(support_positions)
+
 def create_z_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, hex_radius, hex_wall_thickness):
     """Create Z-cut plates (horizontal - XY plane)"""
     plates = []
@@ -347,6 +378,96 @@ def create_z_support_plates(foil_object, cutting_plan, boat_name, support_plate_
         
     except Exception as e:
         FreeCAD.Console.PrintError(f"FATAL: create_z_support_plates failed: {str(e)}\n")
+        raise
+    
+    return plates
+
+def create_x_support_plates(foil_object, cutting_plan, boat_name, support_plate_thickness, x_support_spacing, bounding_margin, hex_radius, hex_wall_thickness):
+    """Create X support plates (3mm thick) at 50mm spacing"""
+    plates = []
+    
+    try:
+        FreeCAD.Console.PrintMessage("\n=== Creating X-Support Plates ===\n")
+        FreeCADGui.updateGui()
+        
+        foil_bbox = foil_object.Shape.BoundBox
+        working_shape = prepare_foil_for_boolean(foil_object)
+        
+        x_cuts = cutting_plan['cutting_plan']['x_cuts']
+        support_x_positions = calculate_x_support_positions(x_cuts, foil_bbox, x_support_spacing)
+        FreeCAD.Console.PrintMessage(f"Creating {len(support_x_positions)} X-support plates ({support_plate_thickness}mm thick) at {x_support_spacing}mm spacing...\n")
+        FreeCADGui.updateGui()
+        
+        for i, x_pos in enumerate(support_x_positions):
+            try:
+                FreeCAD.Console.PrintMessage(f"  [X-Support {i+1}/{len(support_x_positions)}] Creating at X={x_pos:.2f}...\n")
+                FreeCADGui.updateGui()
+                
+                plate_y_size = (foil_bbox.YMax - foil_bbox.YMin) + 2 * bounding_margin
+                plate_z_size = (foil_bbox.ZMax - foil_bbox.ZMin) + 2 * bounding_margin
+                
+                if hex_array_helper:
+                    hex_shape, hex_info = hex_array_helper.create_honeycomb_geometry(
+                        length=plate_z_size,
+                        width=plate_y_size,
+                        thickness=support_plate_thickness,
+                        hex_radius=hex_radius,
+                        wall_thickness=hex_wall_thickness
+                    )
+                    
+                    plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"X_SupportPlate_{i+1}")
+                    plate.Shape = hex_shape
+                    
+                    rotation = FreeCAD.Rotation(FreeCAD.Vector(0,1,0), 90)
+                    plate.Placement.Rotation = rotation
+                    
+                    FreeCAD.Console.PrintMessage(f"    Created hex X-support plate\n")
+                else:
+                    plate = FreeCAD.ActiveDocument.addObject("Part::Box", f"X_SupportPlate_{i+1}")
+                    plate.Length = support_plate_thickness
+                    plate.Width = plate_y_size
+                    plate.Height = plate_z_size
+                    FreeCAD.Console.PrintMessage(f"    Created solid X-support plate\n")
+                
+                plate_x_center = x_pos - support_plate_thickness / 2
+                plate_y_center = (foil_bbox.YMin + foil_bbox.YMax) / 2 - plate_y_size / 2
+                plate_z_center = (foil_bbox.ZMin + foil_bbox.ZMax) / 2 - plate_z_size / 2
+                
+                if hex_array_helper:
+                    current_placement = plate.Placement
+                    current_placement.Base = FreeCAD.Vector(plate_x_center, plate_y_center, plate_z_center + plate_z_size)
+                    plate.Placement = current_placement
+                else:
+                    plate.Placement.Base = FreeCAD.Vector(plate_x_center, plate_y_center, plate_z_center)
+                
+                try:
+                    shaped = plate.Shape.common(working_shape)
+                    if shaped.Volume > 0:
+                        plate.Shape = shaped
+                except Exception as e:
+                    FreeCAD.Console.PrintError(f"    Boolean operation failed: {str(e)}\n")
+                    raise
+                
+                plate.Label = f"{boat_name}_X_Support_{i+1}_at_X{x_pos:.1f}"
+                
+                if hasattr(plate, 'ViewObject') and plate.ViewObject:
+                    plate.ViewObject.Transparency = 85
+                
+                plates.append(plate)
+                
+                FreeCAD.Console.PrintMessage(f"  [X-Support {i+1}/{len(support_x_positions)}] Completed\n")
+                
+                # Breathing room after each plate
+                FreeCADGui.updateGui()
+                FreeCAD.ActiveDocument.recompute()
+                time.sleep(0.2)
+                
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"FATAL: Failed creating X-support plate {i+1}: {str(e)}\n")
+                raise
+        
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"FATAL: create_x_support_plates failed: {str(e)}\n")
         raise
     
     return plates
@@ -546,6 +667,7 @@ def run_plate_creation(boat_name="MackenSea",
         
         z_cut_plates = []
         z_support_plates = []
+        x_support_plates = []
         y_cut_plates = []
         x_cut_plates = []
         
@@ -569,6 +691,20 @@ def run_plate_creation(boat_name="MackenSea",
             
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create Z-support plates: {str(e)}\n")
+        
+        FreeCADGui.updateGui()
+        
+        # Create X-support plates at 50mm spacing
+        try:
+            x_support_spacing = 50.0  # Fixed 50mm spacing for X-supports
+            x_support_plates = create_x_support_plates(foil, cutting_plan, boat_name,
+                                                      support_plate_thickness, x_support_spacing,
+                                                      bounding_margin, hex_radius, hex_wall_thickness)
+            all_plates.extend(x_support_plates)
+            FreeCAD.Console.PrintMessage(f"✅ Created {len(x_support_plates)} X-support plates\n")
+            
+        except Exception as e:
+            FreeCAD.Console.PrintError(f"❌ Failed to create X-support plates: {str(e)}\n")
         
         FreeCADGui.updateGui()
 
@@ -601,6 +737,8 @@ def run_plate_creation(boat_name="MackenSea",
             FreeCAD.Console.PrintMessage(f"  - {len(z_cut_plates)} Z-cut plates\n")
         if z_support_plates:
             FreeCAD.Console.PrintMessage(f"  - {len(z_support_plates)} Z-support plates\n")
+        if x_support_plates:
+            FreeCAD.Console.PrintMessage(f"  - {len(x_support_plates)} X-support plates (50mm spacing)\n")
         if y_cut_plates:
             FreeCAD.Console.PrintMessage(f"  - {len(y_cut_plates)} Y-cut plate\n")
         if x_cut_plates:
@@ -627,7 +765,7 @@ if __name__ == "__main__":
         boat_name="MackenSea",
         plate_thickness=6.0,
         support_plate_thickness=3.0,
-        plate_spacing=50.0,
+        plate_spacing=150.0,
         bounding_margin=10.0,
         hex_radius=5.0,
         hex_wall_thickness=3.0
