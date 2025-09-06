@@ -692,6 +692,50 @@ def merge_all_plates(boat_name):
         FreeCAD.Console.PrintError(f"FATAL: merge_all_plates failed: {str(e)}\n")
         raise
 
+def export_merged_plates(merged_plates, boat_name):
+    """Export merged plates as STL and STEP files"""
+    try:
+        FreeCAD.Console.PrintMessage("\n=== Exporting Merged Plates ===\n")
+        FreeCADGui.updateGui()
+        
+        # Construct export paths
+        boat_folder = os.path.expanduser(f"~/Rudder_Code/boats/{boat_name}")
+        output_folder = f"{boat_folder}/output"
+        cut_foil_folder = f"{output_folder}/cut_foil"
+        
+        # Create filenames
+        stl_file = f"{cut_foil_folder}/merged_inner_plates.stl"
+        step_file = f"{cut_foil_folder}/merged_inner_plates.step"
+        
+        # Export as STL
+        FreeCAD.Console.PrintMessage(f"  Exporting STL to: {stl_file}\n")
+        FreeCADGui.updateGui()
+        
+        try:
+            import Mesh
+            Mesh.export([merged_plates], stl_file)
+            FreeCAD.Console.PrintMessage(f"    ✅ STL export successful\n")
+        except Exception as e:
+            FreeCAD.Console.PrintError(f"    ❌ STL export failed: {str(e)}\n")
+        
+        # Export as STEP
+        FreeCAD.Console.PrintMessage(f"  Exporting STEP to: {step_file}\n")
+        FreeCADGui.updateGui()
+        
+        try:
+            Import.export([merged_plates], step_file)
+            FreeCAD.Console.PrintMessage(f"    ✅ STEP export successful\n")
+        except Exception as e:
+            FreeCAD.Console.PrintError(f"    ❌ STEP export failed: {str(e)}\n")
+        
+        FreeCAD.Console.PrintMessage(f"\nExports complete:\n")
+        FreeCAD.Console.PrintMessage(f"  - STL: merged_inner_plates.stl\n")
+        FreeCAD.Console.PrintMessage(f"  - STEP: merged_inner_plates.step\n")
+        
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"FATAL: export_merged_plates failed: {str(e)}\n")
+        raise
+
 def run_plate_creation(boat_name="MackenSea", 
                       plate_thickness=6.0,
                       support_plate_thickness=3.0,
@@ -790,6 +834,10 @@ def run_plate_creation(boat_name="MackenSea",
                 merged = merge_all_plates(boat_name)
                 if merged:
                     FreeCAD.Console.PrintMessage(f"✅ Created merged plate assembly\n")
+                    
+                    # Export merged plates
+                    export_merged_plates(merged, boat_name)
+                    
             except Exception as e:
                 FreeCAD.Console.PrintError(f"❌ Failed to merge plates: {str(e)}\n")
         
