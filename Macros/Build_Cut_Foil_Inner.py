@@ -13,8 +13,7 @@ import sys
 print("=== FREECAD MOLD IMPORTER VERSION 3.1.2 - REFACTORED ===")
 FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.1.2 - REFACTORED ===\n")
 
-# Configuration
-boat_name = "MackenSea"
+# System configuration (not user parameters)
 helpers_path = os.path.expanduser("~/Rudder_Code/helpers")
 if helpers_path not in sys.path:
     sys.path.append(helpers_path)
@@ -26,23 +25,15 @@ except ImportError as e:
     FreeCAD.Console.PrintError(f"Could not import hex_array_helper: {str(e)}\n")
     hex_array_helper = None
 
-# Plate parameters
-plate_thickness = 6.0  # mm - cutting plates
-support_plate_thickness = 3.0  # mm - support plates
-plate_spacing = 150.0  # mm - spacing between plates
-bounding_margin = 10.0  # mm
-hex_radius = 5.0  # mm - standard hex size (8mm for Y-plate)
-hex_wall_thickness = 3.0  # mm
-
-# File paths
-boat_folder = os.path.expanduser(f"~/Rudder_Code/boats/{boat_name}")
-output_folder = f"{boat_folder}/output"
-cut_foil_folder = f"{output_folder}/cut_foil"
-cutting_plan_file = f"{cut_foil_folder}/{boat_name}_Cut_Foil_cutting_plan.json"
-foil_step_file = f"{cut_foil_folder}/{boat_name}_Cut_Foil.step"
-
-def import_foil():
+def import_foil(boat_name):
     """Import the cutting plan JSON and foil STEP file"""
+    # Construct file paths
+    boat_folder = os.path.expanduser(f"~/Rudder_Code/boats/{boat_name}")
+    output_folder = f"{boat_folder}/output"
+    cut_foil_folder = f"{output_folder}/cut_foil"
+    cutting_plan_file = f"{cut_foil_folder}/{boat_name}_Cut_Foil_cutting_plan.json"
+    foil_step_file = f"{cut_foil_folder}/{boat_name}_Cut_Foil.step"
+    
     if not os.path.exists(cutting_plan_file):
         FreeCAD.Console.PrintError(f"Cutting plan file not found: {cutting_plan_file}\n")
         return None, None
@@ -158,7 +149,7 @@ def prepare_foil_for_boolean(foil_object):
     
     return foil_object.Shape
 
-def calculate_support_plate_positions(z_cuts, foil_bbox):
+def calculate_support_plate_positions(z_cuts, foil_bbox, plate_spacing):
     """Calculate positions for support plates"""
     support_positions = []
     z_min = foil_bbox.ZMin
@@ -189,7 +180,7 @@ def calculate_support_plate_positions(z_cuts, foil_bbox):
     
     return sorted(support_positions)
 
-def create_z_cut_plates(foil_object, cutting_plan):
+def create_z_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, hex_radius, hex_wall_thickness):
     """Create Z-cut plates (horizontal - XY plane)"""
     plates = []
     
@@ -204,7 +195,7 @@ def create_z_cut_plates(foil_object, cutting_plan):
         working_shape = prepare_foil_for_boolean(foil_object)
         z_cuts = cutting_plan['cutting_plan']['z_cuts']
         
-        FreeCAD.Console.PrintMessage(f"Creating {len(z_cuts)} Z-cut plates (6mm thick)...\n")
+        FreeCAD.Console.PrintMessage(f"Creating {len(z_cuts)} Z-cut plates ({plate_thickness}mm thick)...\n")
         
         for i, z_pos in enumerate(z_cuts):
             try:
@@ -257,7 +248,7 @@ def create_z_cut_plates(foil_object, cutting_plan):
     
     return plates
 
-def create_z_support_plates(foil_object, cutting_plan):
+def create_z_support_plates(foil_object, cutting_plan, boat_name, support_plate_thickness, plate_spacing, bounding_margin, hex_radius, hex_wall_thickness):
     """Create Z support plates (3mm thick)"""
     plates = []
     
@@ -268,8 +259,8 @@ def create_z_support_plates(foil_object, cutting_plan):
         working_shape = prepare_foil_for_boolean(foil_object)
         
         z_cuts = cutting_plan['cutting_plan']['z_cuts']
-        support_z_positions = calculate_support_plate_positions(z_cuts, foil_bbox)
-        FreeCAD.Console.PrintMessage(f"Creating {len(support_z_positions)} Z-support plates (3mm thick)...\n")
+        support_z_positions = calculate_support_plate_positions(z_cuts, foil_bbox, plate_spacing)
+        FreeCAD.Console.PrintMessage(f"Creating {len(support_z_positions)} Z-support plates ({support_plate_thickness}mm thick)...\n")
         
         for i, z_pos in enumerate(support_z_positions):
             try:
@@ -287,7 +278,7 @@ def create_z_support_plates(foil_object, cutting_plan):
                     
                     plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"Z_SupportPlate_{i+1}")
                     plate.Shape = hex_shape
-                    FreeCAD.Console.PrintMessage(f"  Z-Support {i+1}: 3mm thick at Z={z_pos:.2f}\n")
+                    FreeCAD.Console.PrintMessage(f"  Z-Support {i+1}: {support_plate_thickness}mm thick at Z={z_pos:.2f}\n")
                 else:
                     plate = FreeCAD.ActiveDocument.addObject("Part::Box", f"Z_SupportPlate_{i+1}")
                     plate.Length = plate_x_size
@@ -323,7 +314,7 @@ def create_z_support_plates(foil_object, cutting_plan):
     
     return plates
 
-def create_y_cut_plate(foil_object, cutting_plan):
+def create_y_cut_plate(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, hex_wall_thickness):
     """Create Y-cut plate (centerline - XZ plane) at Y=0"""
     plates = []
     
@@ -385,7 +376,7 @@ def create_y_cut_plate(foil_object, cutting_plan):
     
     return plates
 
-def create_x_cut_plates(foil_object, cutting_plan):
+def create_x_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, hex_radius, hex_wall_thickness):
     """Create X-cut plates (vertical - YZ plane)"""
     plates = []
     
@@ -396,7 +387,7 @@ def create_x_cut_plates(foil_object, cutting_plan):
         working_shape = prepare_foil_for_boolean(foil_object)
         x_cuts = cutting_plan['cutting_plan']['x_cuts']
         
-        FreeCAD.Console.PrintMessage(f"Creating {len(x_cuts)} X-cut plates (6mm thick)...\n")
+        FreeCAD.Console.PrintMessage(f"Creating {len(x_cuts)} X-cut plates ({plate_thickness}mm thick)...\n")
         
         for i, x_pos in enumerate(x_cuts):
             try:
@@ -457,12 +448,25 @@ def create_x_cut_plates(foil_object, cutting_plan):
     
     return plates
 
-# Main execution
-if __name__ == "__main__":
-    if not FreeCAD.ActiveDocument:
-        FreeCAD.newDocument()
+def run_plate_creation(boat_name="MackenSea", 
+                      plate_thickness=6.0,
+                      support_plate_thickness=3.0,
+                      plate_spacing=150.0,
+                      bounding_margin=10.0,
+                      hex_radius=5.0,
+                      hex_wall_thickness=3.0):
+    """Main business logic for plate creation
     
-    cutting_plan, foil = import_foil()
+    Args:
+        boat_name: Name of the boat (determines file paths)
+        plate_thickness: Thickness of cutting plates in mm
+        support_plate_thickness: Thickness of support plates in mm  
+        plate_spacing: Target spacing between plates in mm
+        bounding_margin: Margin around foil for plates in mm
+        hex_radius: Radius of hexagonal perforations in mm
+        hex_wall_thickness: Wall thickness between hexagons in mm
+    """
+    cutting_plan, foil = import_foil(boat_name)
     
     if cutting_plan and foil:
         FreeCAD.Console.PrintMessage("Successfully imported cutting plan and foil!\n")
@@ -481,28 +485,41 @@ if __name__ == "__main__":
         x_cut_plates = []
         
         try:
-            z_cut_plates = create_z_cut_plates(foil, cutting_plan)
+            z_cut_plates = create_z_cut_plates(foil, cutting_plan, boat_name, plate_thickness, 
+                                              bounding_margin, hex_radius, hex_wall_thickness)
             all_plates.extend(z_cut_plates)
             FreeCAD.Console.PrintMessage(f"✅ Created {len(z_cut_plates)} Z-cut plates\n")
+            
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create Z-cut plates: {str(e)}\n")
         
+        FreeCADGui.updateGui()
+
         try:
-            z_support_plates = create_z_support_plates(foil, cutting_plan)
+            z_support_plates = create_z_support_plates(foil, cutting_plan, boat_name, 
+                                                      support_plate_thickness, plate_spacing,
+                                                      bounding_margin, hex_radius, hex_wall_thickness)
             all_plates.extend(z_support_plates)
             FreeCAD.Console.PrintMessage(f"✅ Created {len(z_support_plates)} Z-support plates\n")
+            
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create Z-support plates: {str(e)}\n")
         
+        FreeCADGui.updateGui()
+
         try:
-            y_cut_plates = create_y_cut_plate(foil, cutting_plan)
+            y_cut_plates = create_y_cut_plate(foil, cutting_plan, boat_name, plate_thickness,
+                                             bounding_margin, hex_wall_thickness)
             all_plates.extend(y_cut_plates)
             FreeCAD.Console.PrintMessage(f"✅ Created {len(y_cut_plates)} Y-cut plate\n")
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create Y-cut plate: {str(e)}\n")
         
+        FreeCADGui.updateGui()
+
         try:
-            x_cut_plates = create_x_cut_plates(foil, cutting_plan)
+            x_cut_plates = create_x_cut_plates(foil, cutting_plan, boat_name, plate_thickness,
+                                              bounding_margin, hex_radius, hex_wall_thickness)
             all_plates.extend(x_cut_plates)
             FreeCAD.Console.PrintMessage(f"✅ Created {len(x_cut_plates)} X-cut plates\n")
         except Exception as e:
@@ -533,3 +550,20 @@ if __name__ == "__main__":
         
     else:
         FreeCAD.Console.PrintError("Import failed!\n")
+
+# Main execution
+if __name__ == "__main__":
+    # UI setup only
+    if not FreeCAD.ActiveDocument:
+        FreeCAD.newDocument()
+    
+    # Call business logic with parameters
+    run_plate_creation(
+        boat_name="MackenSea",
+        plate_thickness=6.0,
+        support_plate_thickness=3.0,
+        plate_spacing=150.0,
+        bounding_margin=10.0,
+        hex_radius=5.0,
+        hex_wall_thickness=3.0
+    )
