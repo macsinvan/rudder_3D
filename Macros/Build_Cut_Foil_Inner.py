@@ -9,10 +9,10 @@ import sys
 import shutil
 
 # Foil Mold Importer for Boat Manufacturing - FreeCAD 1.1 Compatible
-# VERSION: 3.3.0 - WITH INDIVIDUAL PLATE EXPORT
+# VERSION: 3.3.1 - WITH SHELL IMPORT AND INDIVIDUAL EXPORT
 
-print("=== FREECAD MOLD IMPORTER VERSION 3.3.0 - INDIVIDUAL EXPORT ===")
-FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.3.0 - INDIVIDUAL EXPORT ===\n")
+print("=== FREECAD MOLD IMPORTER VERSION 3.3.1 - SHELL IMPORT ===")
+FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.3.1 - SHELL IMPORT ===\n")
 
 # System configuration (not user parameters)
 helpers_path = os.path.expanduser("~/Rudder_Code/helpers")
@@ -206,6 +206,32 @@ def import_foil(boat_name):
         return cutting_plan, None
     
     return cutting_plan, foil_object
+
+def import_foil_shell(boat_name):
+    """Import the foil shell STL if it exists"""
+    try:
+        boat_folder = os.path.expanduser(f"~/Rudder_Code/boats/{boat_name}")
+        shell_file = f"{boat_folder}/output/cut_foil/{boat_name}_Shell_Foil.stl"
+        
+        if os.path.exists(shell_file):
+            import Mesh
+            mesh = Mesh.read(shell_file)
+            shell_object = FreeCAD.ActiveDocument.addObject("Mesh::Feature", "FoilShell")
+            shell_object.Mesh = mesh
+            shell_object.Label = f"{boat_name}_Foil_Shell"
+            
+            if hasattr(shell_object, 'ViewObject') and shell_object.ViewObject:
+                shell_object.ViewObject.Transparency = 50
+            
+            FreeCAD.Console.PrintMessage(f"✅ Imported foil shell: {boat_name}_Shell_Foil.stl\n")
+            return shell_object
+        else:
+            FreeCAD.Console.PrintMessage(f"ℹ️ No foil shell found at: {shell_file}\n")
+            return None
+            
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"Failed to import foil shell: {str(e)}\n")
+        return None
 
 def configure_display(foil_object, cutting_plan):
     """Configure FreeCAD display for optimal viewing"""
@@ -911,12 +937,15 @@ def run_plate_creation(boat_name="MackenSea",
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create X-cut plates: {str(e)}\n")
         
-        # Export plates individually for 3D printing instead of merging
+        # Import foil shell if available
+        shell = import_foil_shell(boat_name)
+        
+        FreeCADGui.updateGui()
+        FreeCAD.ActiveDocument.recompute()
+        
+        # Export plates individually for 3D printing
         if all_plates:
             export_plates_for_printing(all_plates, boat_name)
-        
-
-        FreeCAD.ActiveDocument.recompute()
         
         # Summary
         FreeCAD.Console.PrintMessage("\n" + "="*50 + "\n")
@@ -937,6 +966,9 @@ def run_plate_creation(boat_name="MackenSea",
         FreeCAD.Console.PrintMessage(f"  Total: {len(all_plates)} plates created\n")
         FreeCAD.Console.PrintMessage(f"  Pattern used: {pattern_type}\n")
         
+        if shell:
+            FreeCAD.Console.PrintMessage(f"  Foil shell imported and visible\n")
+        
         if cutting_plan:
             z_cuts = cutting_plan['cutting_plan']['z_cuts']
             x_cuts = cutting_plan['cutting_plan']['x_cuts']
@@ -955,12 +987,12 @@ if __name__ == "__main__":
     run_plate_creation(
         boat_name="MackenSea",
         plate_thickness=6.0,
-        support_plate_thickness=3.0,
+        support_plate_thickness=2.0,
         plate_spacing=150.0,
         bounding_margin=10.0,
         hex_radius=5.0,
         hex_wall_thickness=3.0,
-        pattern_type='solid',  # 'hex', 'circle', or 'solid'
+        pattern_type='circle',  # 'hex', 'circle', or 'solid'
         hole_diameter=10.0,
-        hole_spacing=15.0
+        hole_spacing=25.0
     )
