@@ -9,10 +9,10 @@ import sys
 import shutil
 
 # Foil Mold Importer for Boat Manufacturing - FreeCAD 1.1 Compatible
-# VERSION: 3.5.0 - DUAL CUT PLATES
+# VERSION: 3.6.0 - DUAL CUT PLATES WITH SHELL SEGMENTATION
 
-print("=== FREECAD MOLD IMPORTER VERSION 3.5.0 - DUAL CUT PLATES ===")
-FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.5.0 - DUAL CUT PLATES ===\n")
+print("=== FREECAD MOLD IMPORTER VERSION 3.6.0 - DUAL PLATES WITH SHELL SEGMENTATION ===")
+FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.6.0 - DUAL PLATES WITH SHELL SEGMENTATION ===\n")
 
 # Stock positioning parameters
 POST_CENTRE_X = 323  # mm - X position for post centre
@@ -231,6 +231,145 @@ def import_foil_shell(boat_name):
     except Exception as e:
         FreeCAD.Console.PrintError(f"Failed to import foil shell: {str(e)}\n")
         return None
+
+def segment_shell(shell_object, cutting_plan, boat_name):
+    """Segment the shell mesh using the cutting planes and export segments"""
+    try:
+        FreeCAD.Console.PrintMessage("\n=== Segmenting Shell ===\n")
+        
+        if not shell_object or not hasattr(shell_object, 'Mesh'):
+            FreeCAD.Console.PrintWarning("No shell mesh to segment\n")
+            return []
+        
+        import Mesh
+        
+        # Get cutting positions from the plan
+        z_cuts = cutting_plan['cutting_plan']['z_cuts']
+        x_cuts = cutting_plan['cutting_plan']['x_cuts']
+        y_cut = 0.0  # Centerline cut
+        
+        # Get shell bounding box
+        shell_bbox = shell_object.Mesh.BoundBox
+        
+        # Sort cuts
+        z_cuts_sorted = sorted(z_cuts)
+        x_cuts_sorted = sorted(x_cuts)
+        
+        # Add boundaries to create segments
+        z_boundaries = [shell_bbox.ZMin - 10] + z_cuts_sorted + [shell_bbox.ZMax + 10]
+        x_boundaries = [shell_bbox.XMin - 10] + x_cuts_sorted + [shell_bbox.XMax + 10]
+        y_boundaries = [shell_bbox.YMin - 10, y_cut, shell_bbox.YMax + 10]
+        
+        FreeCAD.Console.PrintMessage(f"Cutting shell into {(len(z_cuts)+1) * 2 * (len(x_cuts)+1)} segments\n")
+        FreeCAD.Console.PrintMessage(f"  Z segments: {len(z_cuts)+1}\n")
+        FreeCAD.Console.PrintMessage(f"  Y segments: 2\n")
+        FreeCAD.Console.PrintMessage(f"  X segments: {len(x_cuts)+1}\n")
+        
+        segments = []
+        segment_count = 0
+        
+        # Convert mesh to shape for cutting
+        shell_shape = Part.Shape()
+        shell_shape.makeShapeFromMesh(shell_object.Mesh.Topology, 0.1)
+        shell_shape = shell_shape.removeSplitter()
+        
+        # Create segments by cutting with planes
+        for z_idx in range(len(z_boundaries) - 1):
+            z_min = z_boundaries[z_idx]
+            z_max = z_boundaries[z_idx + 1]
+            
+            for y_idx in range(len(y_boundaries) - 1):
+                y_min = y_boundaries[y_idx]
+                y_max = y_boundaries[y_idx + 1]
+                
+                for x_idx in range(len(x_boundaries) - 1):
+                    x_min = x_boundaries[x_idx]
+                    x_max = x_boundaries[x_idx + 1]
+                    
+                    segment_count += 1
+                    FreeCAD.Console.PrintMessage(f"  Creating segment Z{z_idx+1}_Y{y_idx+1}_X{x_idx+1}...\n")
+                    
+                    try:
+                        # Create cutting box slightly larger than segment
+                        cut_box = Part.makeBox(
+                            x_max - x_min,
+                            y_max - y_min,
+                            z_max - z_min,
+                            FreeCAD.Vector(x_min, y_min, z_min)
+                        )
+                        
+                        # Intersect shell with box to get segment
+                        segment_shape = shell_shape.common(cut_box)
+                        
+                        if segment_shape.Volume > 0:
+                            # Create mesh from segment shape
+                            segment_mesh = FreeCAD.ActiveDocument.addObject("Mesh::Feature", 
+                                f"Shell_Segment_Z{z_idx+1}_Y{y_idx+1}_X{x_idx+1}")
+                            
+                            # Convert shape to mesh
+                            mesh_data = Mesh.Mesh()
+                            mesh_data.addFacets(segment_shape.tessellate(1))
+                            segment_mesh.Mesh = mesh_data
+                            
+                            segment_mesh.Label = f"{boat_name}_Shell_Z{z_idx+1}_Y{y_idx+1}_X{x_idx+1}"
+                            
+                            # Set transparency for visibility
+                            if hasattr(segment_mesh, 'ViewObject') and segment_mesh.ViewObject:
+                                segment_mesh.ViewObject.Transparency = 60
+                            
+                            segments.append(segment_mesh)
+                            FreeCAD.Console.PrintMessage(f"    ✅ Segment created\n")
+                        else:
+                            FreeCAD.Console.PrintMessage(f"    ⚠️ Empty segment (no intersection)\n")
+                            
+                    except Exception as e:
+                        FreeCAD.Console.PrintError(f"    ❌ Failed to create segment: {str(e)}\n")
+        
+        FreeCAD.Console.PrintMessage(f"✅ Created {len(segments)} shell segments\n")
+        
+        # Hide original shell
+        if hasattr(shell_object, 'ViewObject') and shell_object.ViewObject:
+            shell_object.ViewObject.Visibility = False
+        
+        return segments
+        
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"Failed to segment shell: {str(e)}\n")
+        return []
+
+def export_shell_segments(segments, boat_name):
+    """Export shell segments as STL files"""
+    if not segments:
+        return
+    
+    try:
+        FreeCAD.Console.PrintMessage("\n=== Exporting Shell Segments ===\n")
+        
+        # Construct export path
+        boat_folder = os.path.expanduser(f"~/Rudder_Code/boats/{boat_name}")
+        output_folder = f"{boat_folder}/output/cut_foil"
+        print_ready_folder = f"{output_folder}/print_ready"
+        
+        # Ensure folder exists
+        if not os.path.exists(print_ready_folder):
+            os.makedirs(print_ready_folder)
+        
+        import Mesh
+        exported_count = 0
+        
+        for segment in segments:
+            try:
+                filename = f"{print_ready_folder}/{segment.Label}.stl"
+                Mesh.export([segment], filename)
+                exported_count += 1
+                FreeCAD.Console.PrintMessage(f"  ✅ Exported: {segment.Label}.stl\n")
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"  ❌ Failed to export {segment.Label}: {str(e)}\n")
+        
+        FreeCAD.Console.PrintMessage(f"✅ Exported {exported_count} shell segment files\n")
+        
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"Failed to export shell segments: {str(e)}\n")
 
 def import_stock_cutout(boat_name):
     """Import and position the stock cutout STEP file"""
@@ -996,6 +1135,7 @@ def run_plate_creation(boat_name="MackenSea",
         stock_cutout = import_stock_cutout(boat_name)
         
         all_plates = []
+        shell_segments = []
         
         FreeCAD.Console.PrintMessage("\n" + "="*50 + "\n")
         FreeCAD.Console.PrintMessage("CREATING CUTTING AND SUPPORT PLATES\n")
@@ -1076,8 +1216,11 @@ def run_plate_creation(boat_name="MackenSea",
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create X-cut plates: {str(e)}\n")
         
-        # Import foil shell if available
+        # Import foil shell if available and segment it
         shell = import_foil_shell(boat_name)
+        if shell:
+            shell_segments = segment_shell(shell, cutting_plan, boat_name)
+            FreeCAD.Console.PrintMessage(f"✅ Segmented shell into {len(shell_segments)} pieces\n")
         
         FreeCADGui.updateGui()
         FreeCAD.ActiveDocument.recompute()
@@ -1085,6 +1228,10 @@ def run_plate_creation(boat_name="MackenSea",
         # Export plates individually for 3D printing
         if all_plates:
             export_plates_for_printing(all_plates, boat_name)
+        
+        # Export shell segments
+        if shell_segments:
+            export_shell_segments(shell_segments, boat_name)
         
         # Summary
         FreeCAD.Console.PrintMessage("\n" + "="*50 + "\n")
@@ -1102,11 +1249,16 @@ def run_plate_creation(boat_name="MackenSea",
         if x_cut_plates:
             FreeCAD.Console.PrintMessage(f"  - {len(x_cut_plates)} X-cut plates (dual half-thickness)\n")
         
-        FreeCAD.Console.PrintMessage(f"  Total: {len(all_plates)} plates created\n")
+        FreeCAD.Console.PrintMessage(f"  Total plates: {len(all_plates)}\n")
+        
+        if shell_segments:
+            FreeCAD.Console.PrintMessage(f"  - {len(shell_segments)} shell segments\n")
+        
+        FreeCAD.Console.PrintMessage(f"  Total pieces: {len(all_plates) + len(shell_segments)}\n")
         FreeCAD.Console.PrintMessage(f"  Pattern used: {pattern_type}\n")
         
         if shell:
-            FreeCAD.Console.PrintMessage(f"  Foil shell imported and visible\n")
+            FreeCAD.Console.PrintMessage(f"  Foil shell: SEGMENTED\n")
         
         if stock_cutout:
             FreeCAD.Console.PrintMessage(f"  Stock cutout: APPLIED to all plates\n")
