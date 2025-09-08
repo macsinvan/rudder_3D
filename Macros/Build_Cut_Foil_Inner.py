@@ -207,7 +207,7 @@ def import_foil(boat_name):
     return cutting_plan, foil_object
 
 def import_foil_shell(boat_name):
-    """Import the foil shell STL if it exists"""
+    """Import the foil shell STL and convert to Part shape for boolean operations"""
     try:
         boat_folder = os.path.expanduser(f"~/Rudder_Code/boats/{boat_name}")
         shell_file = f"{boat_folder}/output/cut_foil/{boat_name}_Shell_Foil.stl"
@@ -215,14 +215,23 @@ def import_foil_shell(boat_name):
         if os.path.exists(shell_file):
             import Mesh
             mesh = Mesh.read(shell_file)
-            shell_object = FreeCAD.ActiveDocument.addObject("Mesh::Feature", "FoilShell")
-            shell_object.Mesh = mesh
+            
+            FreeCAD.Console.PrintMessage(f"✅ Imported foil shell mesh: {boat_name}_Shell_Foil.stl\n")
+            
+            # Convert mesh to Part shape for boolean operations
+            FreeCAD.Console.PrintMessage(f"Converting shell mesh to Part shape for boolean operations...\n")
+            shell_shape = Part.Shape()
+            shell_shape.makeShapeFromMesh(mesh.Topology, 0.1)  # 0.1mm tolerance
+            
+            # Create a Part object to hold the shape
+            shell_object = FreeCAD.ActiveDocument.addObject("Part::Feature", "FoilShell")
+            shell_object.Shape = shell_shape
             shell_object.Label = f"{boat_name}_Foil_Shell"
             
             if hasattr(shell_object, 'ViewObject') and shell_object.ViewObject:
                 shell_object.ViewObject.Transparency = 50
             
-            FreeCAD.Console.PrintMessage(f"✅ Imported foil shell: {boat_name}_Shell_Foil.stl\n")
+            FreeCAD.Console.PrintMessage(f"✅ Shell converted to Part shape\n")
             return shell_object
         else:
             FreeCAD.Console.PrintMessage(f"ℹ️ No foil shell found at: {shell_file}\n")
@@ -230,6 +239,44 @@ def import_foil_shell(boat_name):
             
     except Exception as e:
         FreeCAD.Console.PrintError(f"Failed to import foil shell: {str(e)}\n")
+        return None
+
+def cut_shell_with_stock(shell_object, stock_cutout, boat_name):
+    """Cut the foil shell with the stock cutout to create mounting hole"""
+    try:
+        if not shell_object or not stock_cutout:
+            return None
+            
+        FreeCAD.Console.PrintMessage(f"\n=== Cutting Shell with Stock Cutout ===\n")
+        
+        # Check if objects have valid shapes
+        if not shell_object.Shape or not stock_cutout.Shape:
+            FreeCAD.Console.PrintError(f"Invalid shapes for boolean operation\n")
+            return None
+            
+        # Perform boolean cut operation
+        FreeCAD.Console.PrintMessage(f"Performing boolean cut on shell...\n")
+        cut_shell_shape = shell_object.Shape.cut(stock_cutout.Shape)
+        
+        # Create new object for cut shell
+        cut_shell_object = FreeCAD.ActiveDocument.addObject("Part::Feature", f"{boat_name}_Shell_Cut")
+        cut_shell_object.Shape = cut_shell_shape
+        cut_shell_object.Label = f"{boat_name}_Foil_Shell_Cut"
+        
+        # Hide original shell and show cut version
+        if hasattr(shell_object, 'ViewObject') and shell_object.ViewObject:
+            shell_object.ViewObject.Visibility = False
+            
+        if hasattr(cut_shell_object, 'ViewObject') and cut_shell_object.ViewObject:
+            cut_shell_object.ViewObject.Visibility = True
+            cut_shell_object.ViewObject.Transparency = 50
+            cut_shell_object.ViewObject.ShapeColor = (0.2, 0.4, 0.8)  # Blue tint
+            
+        FreeCAD.Console.PrintMessage(f"✅ Shell cut complete - mounting hole created\n")
+        return cut_shell_object
+        
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"Failed to cut shell with stock: {str(e)}\n")
         return None
 
 def import_stock_cutout(boat_name):
@@ -898,10 +945,10 @@ def create_x_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, b
     
     return plates
 
-def export_plates_for_printing(plates, boat_name):
-    """Export all plates as individual STL files to print_ready folder"""
+def export_plates_for_printing(plates, boat_name, cut_shell=None):
+    """Export all plates and cut shell as individual STL files to print_ready folder"""
     try:
-        FreeCAD.Console.PrintMessage("\n=== Exporting Plates for 3D Printing ===\n")
+        FreeCAD.Console.PrintMessage("\n=== Exporting Plates and Shell for 3D Printing ===\n")
         FreeCADGui.updateGui()
         
         # Construct export path
@@ -919,6 +966,7 @@ def export_plates_for_printing(plates, boat_name):
         
         # Export each plate as STL
         import Mesh
+        import MeshPart
         exported_count = 0
         
         for plate in plates:
@@ -930,12 +978,25 @@ def export_plates_for_printing(plates, boat_name):
             except Exception as e:
                 FreeCAD.Console.PrintError(f"  ❌ Failed to export {plate.Label}: {str(e)}\n")
         
+        # Export cut shell if provided
+        if cut_shell:
+            try:
+                filename = f"{print_ready_folder}/{cut_shell.Label}.stl"
+                # Convert Part shape to mesh before exporting
+                mesh_obj = FreeCAD.ActiveDocument.addObject("Mesh::Feature", "TempMesh")
+                mesh_obj.Mesh = MeshPart.meshFromShape(cut_shell.Shape, LinearDeflection=0.1)
+                Mesh.export([mesh_obj], filename)
+                FreeCAD.ActiveDocument.removeObject(mesh_obj.Name)  # Clean up temp object
+                exported_count += 1
+                FreeCAD.Console.PrintMessage(f"  ✅ Exported cut shell: {cut_shell.Label}.stl\n")
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"  ❌ Failed to export cut shell: {str(e)}\n")
+        
         FreeCAD.Console.PrintMessage(f"\n✅ Successfully exported {exported_count} STL files\n")
         FreeCAD.Console.PrintMessage(f"📁 Files ready in: {print_ready_folder}\n")
         FreeCAD.Console.PrintMessage("\nNext steps:\n")
-        FreeCAD.Console.PrintMessage("1. Add your foil shell STL to the print_ready folder\n")
-        FreeCAD.Console.PrintMessage("2. Import all files into Bambu Lab Studio\n")
-        FreeCAD.Console.PrintMessage("3. Slice and print as single object\n")
+        FreeCAD.Console.PrintMessage("1. Import all files into Bambu Lab Studio\n")
+        FreeCAD.Console.PrintMessage("2. Slice and print as single object\n")
         
     except Exception as e:
         FreeCAD.Console.PrintError(f"FATAL: export_plates_for_printing failed: {str(e)}\n")
@@ -972,8 +1033,14 @@ def run_plate_creation(boat_name="MackenSea",
         FreeCAD.Console.PrintMessage(f"Foil object: {foil.Label}\n")
         configure_display(foil, cutting_plan)
         
-        # Import stock cutout early so it can be used for plate cutting
+        # Import foil shell and stock cutout
+        shell = import_foil_shell(boat_name)
         stock_cutout = import_stock_cutout(boat_name)
+        
+        # Cut shell with stock if both exist
+        cut_shell = None
+        if shell and stock_cutout:
+            cut_shell = cut_shell_with_stock(shell, stock_cutout, boat_name)
         
         all_plates = []
         
@@ -1054,15 +1121,12 @@ def run_plate_creation(boat_name="MackenSea",
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create X-cut plates: {str(e)}\n")
         
-        # Import foil shell if available
-        shell = import_foil_shell(boat_name)
-        
         FreeCADGui.updateGui()
         FreeCAD.ActiveDocument.recompute()
         
-        # Export plates individually for 3D printing
+        # Export plates and cut shell individually for 3D printing
         if all_plates:
-            export_plates_for_printing(all_plates, boat_name)
+            export_plates_for_printing(all_plates, boat_name, cut_shell)
         
         # Summary
         FreeCAD.Console.PrintMessage("\n" + "="*50 + "\n")
@@ -1083,11 +1147,13 @@ def run_plate_creation(boat_name="MackenSea",
         FreeCAD.Console.PrintMessage(f"  Total: {len(all_plates)} plates created\n")
         FreeCAD.Console.PrintMessage(f"  Pattern used: {pattern_type}\n")
         
-        if shell:
-            FreeCAD.Console.PrintMessage(f"  Foil shell imported and visible\n")
+        if cut_shell:
+            FreeCAD.Console.PrintMessage(f"  Foil shell: CUT with stock and exported\n")
+        elif shell:
+            FreeCAD.Console.PrintMessage(f"  Foil shell: imported (no stock cut)\n")
         
         if stock_cutout:
-            FreeCAD.Console.PrintMessage(f"  Stock cutout: APPLIED to all plates\n")
+            FreeCAD.Console.PrintMessage(f"  Stock cutout: APPLIED to all plates and shell\n")
         
         if cutting_plan:
             z_cuts = cutting_plan['cutting_plan']['z_cuts']
