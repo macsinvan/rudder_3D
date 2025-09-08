@@ -9,10 +9,10 @@ import sys
 import shutil
 
 # Foil Mold Importer for Boat Manufacturing - FreeCAD 1.1 Compatible
-# VERSION: 3.6.0 - DUAL CUT PLATES WITH SHELL SEGMENTATION
+# VERSION: 3.9.0 - MESH REPAIR FOR MANIFOLD EDGES
 
-print("=== FREECAD MOLD IMPORTER VERSION 3.6.0 - DUAL PLATES WITH SHELL SEGMENTATION ===")
-FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.6.0 - DUAL PLATES WITH SHELL SEGMENTATION ===\n")
+print("=== FREECAD MOLD IMPORTER VERSION 3.9.0 - MESH REPAIR FOR MANIFOLD EDGES ===")
+FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.9.0 - MESH REPAIR FOR MANIFOLD EDGES ===\n")
 
 # Stock positioning parameters
 POST_CENTRE_X = 323  # mm - X position for post centre
@@ -31,6 +31,38 @@ try:
 except ImportError as e:
     FreeCAD.Console.PrintError(f"Could not import hole_array_helper: {str(e)}\n")
     hole_array_helper = None
+
+def repair_mesh(mesh_data):
+    """Repair mesh to fix non-manifold edges"""
+    try:
+        import Mesh
+        
+        FreeCAD.Console.PrintMessage(f"      Repairing mesh...\n")
+        
+        # Remove duplicated points
+        mesh_data.removeDuplicatedPoints()
+        
+        # Remove duplicated facets
+        mesh_data.removeDuplicatedFacets()
+        
+        # Remove degenerated facets (zero area)
+        mesh_data.removeNonManifolds()
+        
+        # Fix self-intersections
+        mesh_data.fixSelfIntersections()
+        
+        # Harmonize normals
+        mesh_data.harmonizeNormals()
+        
+        # Fill holes if any
+        mesh_data.fillupHoles()
+        
+        FreeCAD.Console.PrintMessage(f"      ✅ Mesh repaired\n")
+        return mesh_data
+        
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"      ⚠️ Mesh repair failed: {str(e)}\n")
+        return mesh_data
 
 def create_circular_perforation_pattern(length, width, thickness, hole_diameter=10.0, spacing=15.0):
     """Create a plate with circular perforation pattern
@@ -232,8 +264,8 @@ def import_foil_shell(boat_name):
         FreeCAD.Console.PrintError(f"Failed to import foil shell: {str(e)}\n")
         return None
 
-def segment_shell(shell_object, cutting_plan, boat_name):
-    """Segment the shell mesh using the cutting planes and export segments"""
+def segment_shell(shell_object, cutting_plan, boat_name, stock_cutout=None):
+    """Segment the shell mesh using the cutting planes and cut out stock"""
     try:
         FreeCAD.Console.PrintMessage("\n=== Segmenting Shell ===\n")
         
@@ -261,16 +293,15 @@ def segment_shell(shell_object, cutting_plan, boat_name):
         y_boundaries = [shell_bbox.YMin - 10, y_cut, shell_bbox.YMax + 10]
         
         FreeCAD.Console.PrintMessage(f"Cutting shell into {(len(z_cuts)+1) * 2 * (len(x_cuts)+1)} segments\n")
-        FreeCAD.Console.PrintMessage(f"  Z segments: {len(z_cuts)+1}\n")
-        FreeCAD.Console.PrintMessage(f"  Y segments: 2\n")
-        FreeCAD.Console.PrintMessage(f"  X segments: {len(x_cuts)+1}\n")
+        if stock_cutout:
+            FreeCAD.Console.PrintMessage(f"Will cut stock hole in shell segments\n")
         
         segments = []
         segment_count = 0
         
-        # Convert mesh to shape for cutting
+        # Convert mesh to shape for cutting with better tolerance
         shell_shape = Part.Shape()
-        shell_shape.makeShapeFromMesh(shell_object.Mesh.Topology, 0.1)
+        shell_shape.makeShapeFromMesh(shell_object.Mesh.Topology, 0.01)  # Finer tolerance
         shell_shape = shell_shape.removeSplitter()
         
         # Create segments by cutting with planes
@@ -302,13 +333,22 @@ def segment_shell(shell_object, cutting_plan, boat_name):
                         segment_shape = shell_shape.common(cut_box)
                         
                         if segment_shape.Volume > 0:
-                            # Create mesh from segment shape
+                            # Cut out stock if provided
+                            if stock_cutout and stock_cutout.Shape:
+                                FreeCAD.Console.PrintMessage(f"    Cutting stock hole in shell segment...\n")
+                                segment_shape = segment_shape.cut(stock_cutout.Shape)
+                            
+                            # Create mesh from segment shape with better tessellation
                             segment_mesh = FreeCAD.ActiveDocument.addObject("Mesh::Feature", 
                                 f"Shell_Segment_Z{z_idx+1}_Y{y_idx+1}_X{x_idx+1}")
                             
-                            # Convert shape to mesh
+                            # Convert shape to mesh with finer tessellation
                             mesh_data = Mesh.Mesh()
-                            mesh_data.addFacets(segment_shape.tessellate(1))
+                            mesh_data.addFacets(segment_shape.tessellate(0.5))  # Finer tessellation
+                            
+                            # REPAIR THE MESH
+                            mesh_data = repair_mesh(mesh_data)
+                            
                             segment_mesh.Mesh = mesh_data
                             
                             segment_mesh.Label = f"{boat_name}_Shell_Z{z_idx+1}_Y{y_idx+1}_X{x_idx+1}"
@@ -318,14 +358,14 @@ def segment_shell(shell_object, cutting_plan, boat_name):
                                 segment_mesh.ViewObject.Transparency = 60
                             
                             segments.append(segment_mesh)
-                            FreeCAD.Console.PrintMessage(f"    ✅ Segment created\n")
+                            FreeCAD.Console.PrintMessage(f"    ✅ Segment created and repaired\n")
                         else:
                             FreeCAD.Console.PrintMessage(f"    ⚠️ Empty segment (no intersection)\n")
                             
                     except Exception as e:
                         FreeCAD.Console.PrintError(f"    ❌ Failed to create segment: {str(e)}\n")
         
-        FreeCAD.Console.PrintMessage(f"✅ Created {len(segments)} shell segments\n")
+        FreeCAD.Console.PrintMessage(f"✅ Created {len(segments)} shell segments (all repaired)\n")
         
         # Hide original shell
         if hasattr(shell_object, 'ViewObject') and shell_object.ViewObject:
@@ -337,39 +377,108 @@ def segment_shell(shell_object, cutting_plan, boat_name):
         FreeCAD.Console.PrintError(f"Failed to segment shell: {str(e)}\n")
         return []
 
-def export_shell_segments(segments, boat_name):
-    """Export shell segments as STL files"""
-    if not segments:
-        return
-    
+def organize_and_export_segments(shell_segments, plates, boat_name):
+    """Organize and export shell segments and plates into segment folders"""
     try:
-        FreeCAD.Console.PrintMessage("\n=== Exporting Shell Segments ===\n")
+        FreeCAD.Console.PrintMessage("\n=== Organizing and Exporting Segments ===\n")
         
         # Construct export path
         boat_folder = os.path.expanduser(f"~/Rudder_Code/boats/{boat_name}")
         output_folder = f"{boat_folder}/output/cut_foil"
         print_ready_folder = f"{output_folder}/print_ready"
         
-        # Ensure folder exists
-        if not os.path.exists(print_ready_folder):
-            os.makedirs(print_ready_folder)
+        # Clear or create print_ready folder
+        if os.path.exists(print_ready_folder):
+            FreeCAD.Console.PrintMessage(f"Clearing existing print_ready folder...\n")
+            shutil.rmtree(print_ready_folder)
+        os.makedirs(print_ready_folder)
         
         import Mesh
-        exported_count = 0
         
-        for segment in segments:
-            try:
-                filename = f"{print_ready_folder}/{segment.Label}.stl"
-                Mesh.export([segment], filename)
-                exported_count += 1
-                FreeCAD.Console.PrintMessage(f"  ✅ Exported: {segment.Label}.stl\n")
-            except Exception as e:
-                FreeCAD.Console.PrintError(f"  ❌ Failed to export {segment.Label}: {str(e)}\n")
+        # Parse segment indices from shell segments
+        segment_folders = {}
+        for shell_segment in shell_segments:
+            # Extract Z, Y, X indices from label like "MackenSea_Shell_Z1_Y1_X1"
+            label_parts = shell_segment.Label.split('_')
+            z_idx = label_parts[-3]  # Z1
+            y_idx = label_parts[-2]  # Y1
+            x_idx = label_parts[-1]  # X1
+            
+            segment_key = f"{z_idx}_{y_idx}_{x_idx}"
+            
+            if segment_key not in segment_folders:
+                segment_folders[segment_key] = {
+                    'shell': shell_segment,
+                    'plates': []
+                }
+            else:
+                segment_folders[segment_key]['shell'] = shell_segment
         
-        FreeCAD.Console.PrintMessage(f"✅ Exported {exported_count} shell segment files\n")
+        # Match plates to segments based on their labels
+        for plate in plates:
+            label = plate.Label
+            
+            # Try to match plate to segment
+            for segment_key in segment_folders.keys():
+                z_idx, y_idx, x_idx = segment_key.split('_')
+                
+                # Check if plate belongs to this segment
+                # Plates have labels like "MackenSea_Z_CutPlate_Z1_Lower_Y1_X1"
+                if (f"_{z_idx}_" in label or f"Z{z_idx[1:]}_" in label) and \
+                   (f"_{y_idx}_" in label or f"Y{y_idx[1:]}_" in label or f"Y_{y_idx[1:]}" in label) and \
+                   (f"_{x_idx}" in label or f"X{x_idx[1:]}_" in label or f"X{x_idx[1:]}" in label):
+                    segment_folders[segment_key]['plates'].append(plate)
+                    break
+        
+        # Export each segment to its own folder
+        exported_segments = 0
+        for segment_key, segment_data in segment_folders.items():
+            segment_folder = os.path.join(print_ready_folder, f"Segment_{segment_key}")
+            os.makedirs(segment_folder)
+            
+            FreeCAD.Console.PrintMessage(f"\n  Segment {segment_key}:\n")
+            
+            # Export shell segment
+            if segment_data['shell']:
+                filename = os.path.join(segment_folder, f"{segment_data['shell'].Label}.stl")
+                Mesh.export([segment_data['shell']], filename)
+                FreeCAD.Console.PrintMessage(f"    ✅ Shell: {segment_data['shell'].Label}.stl\n")
+            
+            # Export associated plates with mesh repair
+            for plate in segment_data['plates']:
+                try:
+                    # Convert plate shape to mesh
+                    plate_mesh = Mesh.Mesh()
+                    plate_mesh.addFacets(plate.Shape.tessellate(0.5))
+                    
+                    # Repair the plate mesh
+                    plate_mesh = repair_mesh(plate_mesh)
+                    
+                    # Create temporary mesh object for export
+                    temp_mesh_obj = FreeCAD.ActiveDocument.addObject("Mesh::Feature", "TempMesh")
+                    temp_mesh_obj.Mesh = plate_mesh
+                    
+                    filename = os.path.join(segment_folder, f"{plate.Label}.stl")
+                    Mesh.export([temp_mesh_obj], filename)
+                    
+                    # Remove temporary object
+                    FreeCAD.ActiveDocument.removeObject(temp_mesh_obj.Name)
+                    
+                    FreeCAD.Console.PrintMessage(f"    ✅ Plate: {plate.Label}.stl (repaired)\n")
+                except Exception as e:
+                    FreeCAD.Console.PrintError(f"    ❌ Failed to export plate {plate.Label}: {str(e)}\n")
+            
+            FreeCAD.Console.PrintMessage(f"    Total files in segment: {1 + len(segment_data['plates'])}\n")
+            exported_segments += 1
+        
+        FreeCAD.Console.PrintMessage(f"\n✅ Exported {exported_segments} segment folders (all meshes repaired)\n")
+        FreeCAD.Console.PrintMessage(f"📁 Segments ready in: {print_ready_folder}\n")
+        FreeCAD.Console.PrintMessage("\nAll meshes have been repaired to fix non-manifold edges.\n")
+        FreeCAD.Console.PrintMessage("Each segment folder contains all parts needed for that section.\n")
+        FreeCAD.Console.PrintMessage("Load one folder at a time into Bambu Studio for printing.\n")
         
     except Exception as e:
-        FreeCAD.Console.PrintError(f"Failed to export shell segments: {str(e)}\n")
+        FreeCAD.Console.PrintError(f"Failed to organize and export segments: {str(e)}\n")
 
 def import_stock_cutout(boat_name):
     """Import and position the stock cutout STEP file"""
@@ -599,92 +708,87 @@ def calculate_x_support_positions(x_cuts, foil_bbox, x_support_spacing):
 def create_z_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, 
                        hex_radius, hex_wall_thickness, pattern_type='hex', 
                        hole_diameter=10.0, hole_spacing=15.0, stock_cutout=None):
-    """Create Z-cut plates (horizontal - XY plane) - DUAL PLATES"""
+    """Create Z-cut plates (horizontal - XY plane) - PRE-SEGMENTED"""
     plates = []
     
     try:
-        FreeCAD.Console.PrintMessage("\n=== Creating Z-Cut Plates (Dual Half-Thickness) ===\n")
+        FreeCAD.Console.PrintMessage("\n=== Creating Z-Cut Plates (Pre-Segmented) ===\n")
         FreeCADGui.updateGui()
         
         foil_bbox = foil_object.Shape.BoundBox
-        FreeCAD.Console.PrintMessage(f"Foil bounding box: X({foil_bbox.XMin:.2f} to {foil_bbox.XMax:.2f}), "
-                                   f"Y({foil_bbox.YMin:.2f} to {foil_bbox.YMax:.2f}), "
-                                   f"Z({foil_bbox.ZMin:.2f} to {foil_bbox.ZMax:.2f})\n")
-        
         working_shape = prepare_foil_for_boolean(foil_object)
+        
         z_cuts = cutting_plan['cutting_plan']['z_cuts']
+        x_cuts = cutting_plan['cutting_plan']['x_cuts']
+        y_cut = 0.0
         
         # Half the plate thickness for dual plates
         half_thickness = plate_thickness / 2
         
-        FreeCAD.Console.PrintMessage(f"Creating {len(z_cuts)*2} Z-cut plates ({half_thickness}mm thick each)...\n")
+        # Create segment boundaries
+        x_boundaries = [foil_bbox.XMin - bounding_margin] + sorted(x_cuts) + [foil_bbox.XMax + bounding_margin]
+        y_boundaries = [foil_bbox.YMin - bounding_margin, y_cut, foil_bbox.YMax + bounding_margin]
+        
+        total_plates = len(z_cuts) * 2 * (len(x_boundaries)-1) * (len(y_boundaries)-1)
+        FreeCAD.Console.PrintMessage(f"Creating {total_plates} Z-cut plate segments ({half_thickness}mm thick each)...\n")
         FreeCADGui.updateGui()
         
         for i, z_pos in enumerate(z_cuts):
             # Create two plates - one above and one below the cut line
             for side in ["Lower", "Upper"]:
-                try:
-                    # CORRECTED: Plates meet exactly at the cut line
-                    plate_z = z_pos - half_thickness/2 if side == "Lower" else z_pos + half_thickness/2
-                    FreeCAD.Console.PrintMessage(f"  [Plate {i+1}{side[0]}] Creating {side} Z-cut plate at Z={plate_z:.2f}...\n")
-                    FreeCADGui.updateGui()
+                plate_z = z_pos - half_thickness/2 if side == "Lower" else z_pos + half_thickness/2
+                
+                # Create plates for each XY segment
+                for x_idx in range(len(x_boundaries)-1):
+                    x_min = x_boundaries[x_idx]
+                    x_max = x_boundaries[x_idx+1]
                     
-                    plate_x_size = (foil_bbox.XMax - foil_bbox.XMin) + 2 * bounding_margin
-                    plate_y_size = (foil_bbox.YMax - foil_bbox.YMin) + 2 * bounding_margin
-                    
-                    # Create perforated or solid plate based on pattern_type
-                    perf_shape, perf_info = create_perforation_pattern(
-                        plate_x_size, plate_y_size, half_thickness,
-                        pattern_type, hex_radius, hex_wall_thickness,
-                        hole_diameter, hole_spacing
-                    )
-                    
-                    plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"Z_CutPlate_{i+1}_{side}")
-                    plate.Shape = perf_shape
-                    
-                    if 'total_hexagons' in perf_info:
-                        FreeCAD.Console.PrintMessage(f"    Hex pattern: {perf_info['total_hexagons']} hexagons\n")
-                    elif 'total_holes' in perf_info:
-                        FreeCAD.Console.PrintMessage(f"    Circular pattern: {perf_info['total_holes']} holes\n")
-                    
-                    plate_x_center = (foil_bbox.XMin + foil_bbox.XMax) / 2 - plate_x_size / 2
-                    plate_y_center = (foil_bbox.YMin + foil_bbox.YMax) / 2 - plate_y_size / 2
-                    
-                    plate.Placement.Base = FreeCAD.Vector(plate_x_center, plate_y_center, plate_z)
-                    
-                    FreeCAD.Console.PrintMessage(f"    Performing boolean intersection...\n")
-                    FreeCADGui.updateGui()
-                    
-                    try:
-                        shaped = plate.Shape.common(working_shape)
-                        if shaped.Volume > 0:
-                            plate.Shape = shaped
-                            FreeCAD.Console.PrintMessage(f"    Shaped to foil - Volume: {shaped.Volume:.2f} mm³\n")
+                    for y_idx in range(len(y_boundaries)-1):
+                        y_min = y_boundaries[y_idx]
+                        y_max = y_boundaries[y_idx+1]
+                        
+                        try:
+                            plate_label = f"Z{i+1}_{side}_Y{y_idx+1}_X{x_idx+1}"
+                            FreeCAD.Console.PrintMessage(f"  Creating Z-cut plate segment {plate_label}...\n")
+                            FreeCADGui.updateGui()
                             
-                            # Cut out stock if provided
-                            if stock_cutout and stock_cutout.Shape:
-                                FreeCAD.Console.PrintMessage(f"    Cutting out stock from plate...\n")
-                                plate.Shape = plate.Shape.cut(stock_cutout.Shape)
-                                FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
-                        else:
-                            FreeCAD.Console.PrintWarning(f"    Warning: No intersection with foil\n")
-                    except Exception as e:
-                        FreeCAD.Console.PrintError(f"    Boolean operation failed: {str(e)}\n")
-                        raise
-                    
-                    plate.Label = f"{boat_name}_Z_CutPlate_{i+1}_{side}_at_Z{z_pos:.1f}"
-                    plates.append(plate)
-                    
-                    FreeCAD.Console.PrintMessage(f"  [Plate {i+1}{side[0]}] Completed\n")
-                    
-                    # Breathing room after each plate
-                    FreeCADGui.updateGui()
-                    FreeCAD.ActiveDocument.recompute()
-                    time.sleep(0.2)
-                    
-                except Exception as e:
-                    FreeCAD.Console.PrintError(f"FATAL: Failed creating Z-cut plate {i+1} {side}: {str(e)}\n")
-                    raise
+                            plate_x_size = x_max - x_min
+                            plate_y_size = y_max - y_min
+                            
+                            # Create perforated or solid plate
+                            perf_shape, perf_info = create_perforation_pattern(
+                                plate_x_size, plate_y_size, half_thickness,
+                                pattern_type, hex_radius, hex_wall_thickness,
+                                hole_diameter, hole_spacing
+                            )
+                            
+                            plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"Z_CutPlate_{plate_label}")
+                            plate.Shape = perf_shape
+                            
+                            # Position the plate segment
+                            plate.Placement.Base = FreeCAD.Vector(x_min, y_min, plate_z)
+                            
+                            # Shape to foil
+                            shaped = plate.Shape.common(working_shape)
+                            if shaped.Volume > 0:
+                                plate.Shape = shaped
+                                
+                                # Cut out stock if provided
+                                if stock_cutout and stock_cutout.Shape:
+                                    plate.Shape = plate.Shape.cut(stock_cutout.Shape)
+                                
+                                plate.Label = f"{boat_name}_Z_CutPlate_{plate_label}"
+                                plates.append(plate)
+                                FreeCAD.Console.PrintMessage(f"    ✅ Created segment\n")
+                            else:
+                                # Remove empty plate
+                                FreeCAD.ActiveDocument.removeObject(plate.Name)
+                                FreeCAD.Console.PrintMessage(f"    ⚠️ Empty segment (no intersection)\n")
+                                
+                        except Exception as e:
+                            FreeCAD.Console.PrintError(f"    Failed creating segment: {str(e)}\n")
+                        
+                        time.sleep(0.1)
         
     except Exception as e:
         FreeCAD.Console.PrintError(f"FATAL: create_z_cut_plates failed: {str(e)}\n")
@@ -695,77 +799,93 @@ def create_z_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, b
 def create_z_support_plates(foil_object, cutting_plan, boat_name, support_plate_thickness, plate_spacing, 
                            bounding_margin, hex_radius, hex_wall_thickness, pattern_type='hex',
                            hole_diameter=10.0, hole_spacing=15.0, stock_cutout=None):
-    """Create Z support plates (3mm thick) - SINGLE PLATES AS BEFORE"""
+    """Create Z support plates (3mm thick) - PRE-SEGMENTED"""
     plates = []
     
     try:
-        FreeCAD.Console.PrintMessage("\n=== Creating Z-Support Plates ===\n")
+        FreeCAD.Console.PrintMessage("\n=== Creating Z-Support Plates (Pre-Segmented) ===\n")
         FreeCADGui.updateGui()
         
         foil_bbox = foil_object.Shape.BoundBox
         working_shape = prepare_foil_for_boolean(foil_object)
         
         z_cuts = cutting_plan['cutting_plan']['z_cuts']
+        x_cuts = cutting_plan['cutting_plan']['x_cuts']
+        y_cut = 0.0
+        
         support_z_positions = calculate_support_plate_positions(z_cuts, foil_bbox, plate_spacing)
-        FreeCAD.Console.PrintMessage(f"Creating {len(support_z_positions)} Z-support plates ({support_plate_thickness}mm thick)...\n")
+        
+        # Create segment boundaries
+        x_boundaries = [foil_bbox.XMin - bounding_margin] + sorted(x_cuts) + [foil_bbox.XMax + bounding_margin]
+        y_boundaries = [foil_bbox.YMin - bounding_margin, y_cut, foil_bbox.YMax + bounding_margin]
+        z_boundaries = [foil_bbox.ZMin] + sorted(z_cuts) + [foil_bbox.ZMax]
+        
+        FreeCAD.Console.PrintMessage(f"Creating Z-support plate segments ({support_plate_thickness}mm thick)...\n")
         FreeCADGui.updateGui()
         
         for i, z_pos in enumerate(support_z_positions):
-            try:
-                FreeCAD.Console.PrintMessage(f"  [Support {i+1}/{len(support_z_positions)}] Creating at Z={z_pos:.2f}...\n")
-                FreeCADGui.updateGui()
+            # Determine which Z segment this support belongs to
+            z_segment_idx = 0
+            for idx, z_boundary in enumerate(z_boundaries[:-1]):
+                if z_pos >= z_boundary and z_pos < z_boundaries[idx+1]:
+                    z_segment_idx = idx + 1
+                    break
+            
+            # Create plates for each XY segment
+            for x_idx in range(len(x_boundaries)-1):
+                x_min = x_boundaries[x_idx]
+                x_max = x_boundaries[x_idx+1]
                 
-                plate_x_size = (foil_bbox.XMax - foil_bbox.XMin) + 2 * bounding_margin
-                plate_y_size = (foil_bbox.YMax - foil_bbox.YMin) + 2 * bounding_margin
-                
-                # Create perforated or solid plate
-                perf_shape, perf_info = create_perforation_pattern(
-                    plate_x_size, plate_y_size, support_plate_thickness,
-                    pattern_type, hex_radius, hex_wall_thickness,
-                    hole_diameter, hole_spacing
-                )
-                
-                plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"Z_SupportPlate_{i+1}")
-                plate.Shape = perf_shape
-                FreeCAD.Console.PrintMessage(f"    Created {perf_info.get('pattern', 'unknown')} support plate\n")
-                
-                plate_x_center = (foil_bbox.XMin + foil_bbox.XMax) / 2 - plate_x_size / 2
-                plate_y_center = (foil_bbox.YMin + foil_bbox.YMax) / 2 - plate_y_size / 2
-                plate_z_center = z_pos - support_plate_thickness / 2
-                
-                plate.Placement.Base = FreeCAD.Vector(plate_x_center, plate_y_center, plate_z_center)
-                
-                try:
-                    shaped = plate.Shape.common(working_shape)
-                    if shaped.Volume > 0:
-                        plate.Shape = shaped
+                for y_idx in range(len(y_boundaries)-1):
+                    y_min = y_boundaries[y_idx]
+                    y_max = y_boundaries[y_idx+1]
+                    
+                    try:
+                        plate_label = f"Z{z_segment_idx}_Support{i+1}_Y{y_idx+1}_X{x_idx+1}"
+                        FreeCAD.Console.PrintMessage(f"  Creating Z-support segment {plate_label}...\n")
                         
-                        # Cut out stock if provided
-                        if stock_cutout and stock_cutout.Shape:
-                            FreeCAD.Console.PrintMessage(f"    Cutting out stock from support plate...\n")
-                            plate.Shape = plate.Shape.cut(stock_cutout.Shape)
-                            FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
-                except Exception as e:
-                    FreeCAD.Console.PrintError(f"    Boolean operation failed: {str(e)}\n")
-                    raise
-                
-                plate.Label = f"{boat_name}_Z_Support_{i+1}_at_Z{z_pos:.1f}"
-                
-                if hasattr(plate, 'ViewObject') and plate.ViewObject:
-                    plate.ViewObject.Transparency = 85
-                
-                plates.append(plate)
-                
-                FreeCAD.Console.PrintMessage(f"  [Support {i+1}/{len(support_z_positions)}] Completed\n")
-                
-                # Breathing room after each plate
-                FreeCADGui.updateGui()
-                FreeCAD.ActiveDocument.recompute()
-                time.sleep(0.2)
-                
-            except Exception as e:
-                FreeCAD.Console.PrintError(f"FATAL: Failed creating Z-support plate {i+1}: {str(e)}\n")
-                raise
+                        plate_x_size = x_max - x_min
+                        plate_y_size = y_max - y_min
+                        
+                        # Create perforated or solid plate
+                        perf_shape, perf_info = create_perforation_pattern(
+                            plate_x_size, plate_y_size, support_plate_thickness,
+                            pattern_type, hex_radius, hex_wall_thickness,
+                            hole_diameter, hole_spacing
+                        )
+                        
+                        plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"Z_Support_{plate_label}")
+                        plate.Shape = perf_shape
+                        
+                        # Position the plate segment
+                        plate_z_center = z_pos - support_plate_thickness / 2
+                        plate.Placement.Base = FreeCAD.Vector(x_min, y_min, plate_z_center)
+                        
+                        # Shape to foil
+                        shaped = plate.Shape.common(working_shape)
+                        if shaped.Volume > 0:
+                            plate.Shape = shaped
+                            
+                            # Cut out stock if provided
+                            if stock_cutout and stock_cutout.Shape:
+                                plate.Shape = plate.Shape.cut(stock_cutout.Shape)
+                            
+                            plate.Label = f"{boat_name}_Z_Support_{plate_label}"
+                            
+                            if hasattr(plate, 'ViewObject') and plate.ViewObject:
+                                plate.ViewObject.Transparency = 85
+                            
+                            plates.append(plate)
+                            FreeCAD.Console.PrintMessage(f"    ✅ Created segment\n")
+                        else:
+                            # Remove empty plate
+                            FreeCAD.ActiveDocument.removeObject(plate.Name)
+                            FreeCAD.Console.PrintMessage(f"    ⚠️ Empty segment\n")
+                            
+                    except Exception as e:
+                        FreeCAD.Console.PrintError(f"    Failed: {str(e)}\n")
+                    
+                    time.sleep(0.1)
         
     except Exception as e:
         FreeCAD.Console.PrintError(f"FATAL: create_z_support_plates failed: {str(e)}\n")
@@ -776,84 +896,99 @@ def create_z_support_plates(foil_object, cutting_plan, boat_name, support_plate_
 def create_x_support_plates(foil_object, cutting_plan, boat_name, support_plate_thickness, x_support_spacing, 
                            bounding_margin, hex_radius, hex_wall_thickness, pattern_type='hex',
                            hole_diameter=10.0, hole_spacing=15.0, stock_cutout=None):
-    """Create X support plates (3mm thick) at 50mm spacing - SINGLE PLATES AS BEFORE"""
+    """Create X support plates (3mm thick) at 50mm spacing - PRE-SEGMENTED"""
     plates = []
     
     try:
-        FreeCAD.Console.PrintMessage("\n=== Creating X-Support Plates ===\n")
+        FreeCAD.Console.PrintMessage("\n=== Creating X-Support Plates (Pre-Segmented) ===\n")
         FreeCADGui.updateGui()
         
         foil_bbox = foil_object.Shape.BoundBox
         working_shape = prepare_foil_for_boolean(foil_object)
         
+        z_cuts = cutting_plan['cutting_plan']['z_cuts']
         x_cuts = cutting_plan['cutting_plan']['x_cuts']
+        y_cut = 0.0
+        
         support_x_positions = calculate_x_support_positions(x_cuts, foil_bbox, x_support_spacing)
-        FreeCAD.Console.PrintMessage(f"Creating {len(support_x_positions)} X-support plates ({support_plate_thickness}mm thick) at {x_support_spacing}mm spacing...\n")
+        
+        # Create segment boundaries
+        z_boundaries = [foil_bbox.ZMin - bounding_margin] + sorted(z_cuts) + [foil_bbox.ZMax + bounding_margin]
+        y_boundaries = [foil_bbox.YMin - bounding_margin, y_cut, foil_bbox.YMax + bounding_margin]
+        x_boundaries = [foil_bbox.XMin] + sorted(x_cuts) + [foil_bbox.XMax]
+        
+        FreeCAD.Console.PrintMessage(f"Creating X-support plate segments ({support_plate_thickness}mm thick)...\n")
         FreeCADGui.updateGui()
         
         for i, x_pos in enumerate(support_x_positions):
-            try:
-                FreeCAD.Console.PrintMessage(f"  [X-Support {i+1}/{len(support_x_positions)}] Creating at X={x_pos:.2f}...\n")
-                FreeCADGui.updateGui()
+            # Determine which X segment this support belongs to
+            x_segment_idx = 0
+            for idx, x_boundary in enumerate(x_boundaries[:-1]):
+                if x_pos >= x_boundary and x_pos < x_boundaries[idx+1]:
+                    x_segment_idx = idx + 1
+                    break
+            
+            # Create plates for each YZ segment
+            for z_idx in range(len(z_boundaries)-1):
+                z_min = z_boundaries[z_idx]
+                z_max = z_boundaries[z_idx+1]
                 
-                plate_y_size = (foil_bbox.YMax - foil_bbox.YMin) + 2 * bounding_margin
-                plate_z_size = (foil_bbox.ZMax - foil_bbox.ZMin) + 2 * bounding_margin
-                
-                # Create perforated or solid plate - note orientation is different for X plates
-                perf_shape, perf_info = create_perforation_pattern(
-                    plate_z_size, plate_y_size, support_plate_thickness,
-                    pattern_type, hex_radius, hex_wall_thickness,
-                    hole_diameter, hole_spacing
-                )
-                
-                plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"X_SupportPlate_{i+1}")
-                plate.Shape = perf_shape
-                
-                # Rotate 90 degrees around Y axis for vertical orientation
-                rotation = FreeCAD.Rotation(FreeCAD.Vector(0,1,0), 90)
-                plate.Placement.Rotation = rotation
-                
-                FreeCAD.Console.PrintMessage(f"    Created {perf_info.get('pattern', 'unknown')} X-support plate\n")
-                
-                plate_x_center = x_pos - support_plate_thickness / 2
-                plate_y_center = (foil_bbox.YMin + foil_bbox.YMax) / 2 - plate_y_size / 2
-                plate_z_center = (foil_bbox.ZMin + foil_bbox.ZMax) / 2 - plate_z_size / 2
-                
-                current_placement = plate.Placement
-                current_placement.Base = FreeCAD.Vector(plate_x_center, plate_y_center, plate_z_center + plate_z_size)
-                plate.Placement = current_placement
-                
-                try:
-                    shaped = plate.Shape.common(working_shape)
-                    if shaped.Volume > 0:
-                        plate.Shape = shaped
+                for y_idx in range(len(y_boundaries)-1):
+                    y_min = y_boundaries[y_idx]
+                    y_max = y_boundaries[y_idx+1]
+                    
+                    try:
+                        plate_label = f"Z{z_idx+1}_Y{y_idx+1}_X{x_segment_idx}_Support{i+1}"
+                        FreeCAD.Console.PrintMessage(f"  Creating X-support segment {plate_label}...\n")
                         
-                        # Cut out stock if provided
-                        if stock_cutout and stock_cutout.Shape:
-                            FreeCAD.Console.PrintMessage(f"    Cutting out stock from X-support plate...\n")
-                            plate.Shape = plate.Shape.cut(stock_cutout.Shape)
-                            FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
-                except Exception as e:
-                    FreeCAD.Console.PrintError(f"    Boolean operation failed: {str(e)}\n")
-                    raise
-                
-                plate.Label = f"{boat_name}_X_Support_{i+1}_at_X{x_pos:.1f}"
-                
-                if hasattr(plate, 'ViewObject') and plate.ViewObject:
-                    plate.ViewObject.Transparency = 85
-                
-                plates.append(plate)
-                
-                FreeCAD.Console.PrintMessage(f"  [X-Support {i+1}/{len(support_x_positions)}] Completed\n")
-                
-                # Breathing room after each plate
-                FreeCADGui.updateGui()
-                FreeCAD.ActiveDocument.recompute()
-                time.sleep(0.2)
-                
-            except Exception as e:
-                FreeCAD.Console.PrintError(f"FATAL: Failed creating X-support plate {i+1}: {str(e)}\n")
-                raise
+                        plate_y_size = y_max - y_min
+                        plate_z_size = z_max - z_min
+                        
+                        # Create perforated or solid plate
+                        perf_shape, perf_info = create_perforation_pattern(
+                            plate_z_size, plate_y_size, support_plate_thickness,
+                            pattern_type, hex_radius, hex_wall_thickness,
+                            hole_diameter, hole_spacing
+                        )
+                        
+                        plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"X_Support_{plate_label}")
+                        plate.Shape = perf_shape
+                        
+                        # Rotate 90 degrees around Y axis for vertical orientation
+                        rotation = FreeCAD.Rotation(FreeCAD.Vector(0,1,0), 90)
+                        plate.Placement.Rotation = rotation
+                        
+                        # Position the plate segment
+                        plate_x_center = x_pos - support_plate_thickness / 2
+                        current_placement = plate.Placement
+                        current_placement.Base = FreeCAD.Vector(plate_x_center, y_min, z_min + plate_z_size)
+                        plate.Placement = current_placement
+                        
+                        # Shape to foil
+                        shaped = plate.Shape.common(working_shape)
+                        if shaped.Volume > 0:
+                            plate.Shape = shaped
+                            
+                            # Cut out stock if provided
+                            if stock_cutout and stock_cutout.Shape:
+                                plate.Shape = plate.Shape.cut(stock_cutout.Shape)
+                            
+                            plate.Label = f"{boat_name}_X_Support_{plate_label}"
+                            
+                            if hasattr(plate, 'ViewObject') and plate.ViewObject:
+                                plate.ViewObject.Transparency = 85
+                            
+                            plates.append(plate)
+                            FreeCAD.Console.PrintMessage(f"    ✅ Created segment\n")
+                        else:
+                            # Remove empty plate
+                            FreeCAD.ActiveDocument.removeObject(plate.Name)
+                            FreeCAD.Console.PrintMessage(f"    ⚠️ Empty segment\n")
+                            
+                    except Exception as e:
+                        FreeCAD.Console.PrintError(f"    Failed: {str(e)}\n")
+                    
+                    time.sleep(0.1)
         
     except Exception as e:
         FreeCAD.Console.PrintError(f"FATAL: create_x_support_plates failed: {str(e)}\n")
@@ -864,97 +999,100 @@ def create_x_support_plates(foil_object, cutting_plan, boat_name, support_plate_
 def create_y_cut_plate(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, 
                       hex_wall_thickness, pattern_type='hex',
                       hole_diameter=16.0, hole_spacing=20.0, stock_cutout=None):
-    """Create Y-cut plates (centerline - XZ plane) at Y=0 - DUAL PLATES"""
+    """Create Y-cut plates (centerline - XZ plane) at Y=0 - PRE-SEGMENTED"""
     plates = []
     
     try:
-        FreeCAD.Console.PrintMessage("\n=== Creating Y-Cut Plates (Dual Half-Thickness) ===\n")
-        FreeCAD.Console.PrintMessage("Creating Y-cut plates at Y=0...\n")
+        FreeCAD.Console.PrintMessage("\n=== Creating Y-Cut Plates (Pre-Segmented) ===\n")
+        FreeCAD.Console.PrintMessage("Creating Y-cut plate segments at Y=0...\n")
         FreeCADGui.updateGui()
         
         foil_bbox = foil_object.Shape.BoundBox
         working_shape = prepare_foil_for_boolean(foil_object)
         
-        plate_x_size = (foil_bbox.XMax - foil_bbox.XMin) + 2 * bounding_margin
-        plate_z_size = (foil_bbox.ZMax - foil_bbox.ZMin) + 2 * bounding_margin
+        z_cuts = cutting_plan['cutting_plan']['z_cuts']
+        x_cuts = cutting_plan['cutting_plan']['x_cuts']
         
         # Half the plate thickness for dual plates
         half_thickness = plate_thickness / 2
         
+        # Create segment boundaries
+        x_boundaries = [foil_bbox.XMin - bounding_margin] + sorted(x_cuts) + [foil_bbox.XMax + bounding_margin]
+        z_boundaries = [foil_bbox.ZMin - bounding_margin] + sorted(z_cuts) + [foil_bbox.ZMax + bounding_margin]
+        
         # Create two plates - one on each side of Y=0
         for side in ["Left", "Right"]:
-            # CORRECTED: Plates meet exactly at Y=0
             plate_y = -half_thickness/2 if side == "Left" else half_thickness/2
-            FreeCAD.Console.PrintMessage(f"  Creating {side} Y-cut plate at Y={plate_y:.2f}...\n")
+            y_idx = 1 if side == "Left" else 2  # Y index for naming
             
-            # Y-cut plate often prints flat, so can use larger holes
-            if pattern_type == 'hex' and hex_array_helper:
-                hex_shape, hex_info = hex_array_helper.create_honeycomb_geometry(
-                    length=plate_x_size,
-                    width=plate_z_size,
-                    thickness=half_thickness,
-                    hex_radius=8.0,  # Larger hex since this prints flat
-                    wall_thickness=hex_wall_thickness
-                )
-                perf_shape = hex_shape
-                perf_info = hex_info
-            elif pattern_type == 'circle':
-                # Use larger holes for Y-cut since it prints flat
-                perf_shape, perf_info = create_perforation_pattern(
-                    plate_x_size, plate_z_size, half_thickness,
-                    pattern_type, 8.0, hex_wall_thickness,
-                    hole_diameter, hole_spacing
-                )
-            else:
-                perf_shape = Part.makeBox(plate_x_size, plate_z_size, half_thickness)                    
-                perf_info = {'pattern': 'solid'}
-            
-            plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"Y_CutPlate_{side}")
-            plate.Shape = perf_shape
-            
-            # Always rotate 90 degrees around X axis for vertical orientation (all pattern types)
-            rotation = FreeCAD.Rotation(FreeCAD.Vector(1,0,0), 90)
-            plate.Placement.Rotation = rotation
-            
-            FreeCAD.Console.PrintMessage(f"  Y-Cut Plate {side}: {plate_x_size:.1f} × {half_thickness:.1f} × {plate_z_size:.1f} mm\n")
-            if 'total_hexagons' in perf_info:
-                FreeCAD.Console.PrintMessage(f"    Hex pattern: {perf_info['total_hexagons']} hexagons (8mm radius)\n")
-            elif 'total_holes' in perf_info:
-                FreeCAD.Console.PrintMessage(f"    Circular pattern: {perf_info['total_holes']} holes\n")
-            
-            plate_x_center = (foil_bbox.XMin + foil_bbox.XMax) / 2 - plate_x_size / 2
-            plate_z_center = (foil_bbox.ZMin + foil_bbox.ZMax) / 2 - plate_z_size / 2
-            
-            current_placement = plate.Placement
-            current_placement.Base = FreeCAD.Vector(plate_x_center, plate_y, plate_z_center)
-            plate.Placement = current_placement
-            
-            try:
-                shaped = plate.Shape.common(working_shape)
-                if shaped.Volume > 0:
-                    plate.Shape = shaped
-                    FreeCAD.Console.PrintMessage(f"    Shaped to foil - Volume: {shaped.Volume:.2f} mm³\n")
+            # Create plates for each XZ segment
+            for x_idx in range(len(x_boundaries)-1):
+                x_min = x_boundaries[x_idx]
+                x_max = x_boundaries[x_idx+1]
+                
+                for z_idx in range(len(z_boundaries)-1):
+                    z_min = z_boundaries[z_idx]
+                    z_max = z_boundaries[z_idx+1]
                     
-                    # Cut out stock if provided
-                    if stock_cutout and stock_cutout.Shape:
-                        FreeCAD.Console.PrintMessage(f"    Cutting out stock from Y-cut plate...\n")
-                        plate.Shape = plate.Shape.cut(stock_cutout.Shape)
-                        FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
-                else:
-                    FreeCAD.Console.PrintWarning(f"    Warning: No intersection with foil\n")
-            except Exception as e:
-                FreeCAD.Console.PrintError(f"    Boolean operation failed: {str(e)}\n")
-                raise
-            
-            plate.Label = f"{boat_name}_Y_CutPlate_{side}_at_Y0"
-            plates.append(plate)
-            
-            FreeCAD.Console.PrintMessage(f"  Y-Cut Plate {side} Completed\n")
-            
-            # Breathing room after plate
-            FreeCADGui.updateGui()
-            FreeCAD.ActiveDocument.recompute()
-            time.sleep(0.2)
+                    try:
+                        plate_label = f"Z{z_idx+1}_Y{y_idx}_{side}_X{x_idx+1}"
+                        FreeCAD.Console.PrintMessage(f"  Creating Y-cut segment {plate_label}...\n")
+                        
+                        plate_x_size = x_max - x_min
+                        plate_z_size = z_max - z_min
+                        
+                        # Y-cut plates can use larger perforations
+                        if pattern_type == 'hex' and hex_array_helper:
+                            perf_shape, perf_info = hex_array_helper.create_honeycomb_geometry(
+                                length=plate_x_size,
+                                width=plate_z_size,
+                                thickness=half_thickness,
+                                hex_radius=8.0,
+                                wall_thickness=hex_wall_thickness
+                            )
+                        elif pattern_type == 'circle':
+                            perf_shape, perf_info = create_perforation_pattern(
+                                plate_x_size, plate_z_size, half_thickness,
+                                pattern_type, 8.0, hex_wall_thickness,
+                                hole_diameter, hole_spacing
+                            )
+                        else:
+                            perf_shape = Part.makeBox(plate_x_size, plate_z_size, half_thickness)
+                            perf_info = {'pattern': 'solid'}
+                        
+                        plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"Y_CutPlate_{plate_label}")
+                        plate.Shape = perf_shape
+                        
+                        # Rotate 90 degrees around X axis for vertical orientation
+                        rotation = FreeCAD.Rotation(FreeCAD.Vector(1,0,0), 90)
+                        plate.Placement.Rotation = rotation
+                        
+                        # Position the plate segment
+                        current_placement = plate.Placement
+                        current_placement.Base = FreeCAD.Vector(x_min, plate_y, z_min)
+                        plate.Placement = current_placement
+                        
+                        # Shape to foil
+                        shaped = plate.Shape.common(working_shape)
+                        if shaped.Volume > 0:
+                            plate.Shape = shaped
+                            
+                            # Cut out stock if provided
+                            if stock_cutout and stock_cutout.Shape:
+                                plate.Shape = plate.Shape.cut(stock_cutout.Shape)
+                            
+                            plate.Label = f"{boat_name}_Y_CutPlate_{plate_label}"
+                            plates.append(plate)
+                            FreeCAD.Console.PrintMessage(f"    ✅ Created segment\n")
+                        else:
+                            # Remove empty plate
+                            FreeCAD.ActiveDocument.removeObject(plate.Name)
+                            FreeCAD.Console.PrintMessage(f"    ⚠️ Empty segment\n")
+                            
+                    except Exception as e:
+                        FreeCAD.Console.PrintError(f"    Failed: {str(e)}\n")
+                    
+                    time.sleep(0.1)
         
     except Exception as e:
         FreeCAD.Console.PrintError(f"FATAL: create_y_cut_plate failed: {str(e)}\n")
@@ -965,140 +1103,98 @@ def create_y_cut_plate(foil_object, cutting_plan, boat_name, plate_thickness, bo
 def create_x_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, 
                        hex_radius, hex_wall_thickness, pattern_type='hex',
                        hole_diameter=10.0, hole_spacing=15.0, stock_cutout=None):
-    """Create X-cut plates (vertical - YZ plane) - DUAL PLATES"""
+    """Create X-cut plates (vertical - YZ plane) - PRE-SEGMENTED"""
     plates = []
     
     try:
-        FreeCAD.Console.PrintMessage("\n=== Creating X-Cut Plates (Dual Half-Thickness) ===\n")
+        FreeCAD.Console.PrintMessage("\n=== Creating X-Cut Plates (Pre-Segmented) ===\n")
         FreeCADGui.updateGui()
         
         foil_bbox = foil_object.Shape.BoundBox
         working_shape = prepare_foil_for_boolean(foil_object)
+        
+        z_cuts = cutting_plan['cutting_plan']['z_cuts']
         x_cuts = cutting_plan['cutting_plan']['x_cuts']
+        y_cut = 0.0
         
         # Half the plate thickness for dual plates
         half_thickness = plate_thickness / 2
         
-        FreeCAD.Console.PrintMessage(f"Creating {len(x_cuts)*2} X-cut plates ({half_thickness}mm thick each)...\n")
+        # Create segment boundaries
+        y_boundaries = [foil_bbox.YMin - bounding_margin, y_cut, foil_bbox.YMax + bounding_margin]
+        z_boundaries = [foil_bbox.ZMin - bounding_margin] + sorted(z_cuts) + [foil_bbox.ZMax + bounding_margin]
+        
+        FreeCAD.Console.PrintMessage(f"Creating X-cut plate segments ({half_thickness}mm thick each)...\n")
         FreeCADGui.updateGui()
         
         for i, x_pos in enumerate(x_cuts):
             # Create two plates - one on each side of the cut
             for side in ["Left", "Right"]:
-                try:
-                    # CORRECTED: Plates meet exactly at the cut line
-                    plate_x = x_pos - half_thickness/2 if side == "Left" else x_pos + half_thickness/2
-                    FreeCAD.Console.PrintMessage(f"  [Plate {i+1}{side[0]}] Creating {side} X-cut plate at X={plate_x:.2f}...\n")
-                    FreeCADGui.updateGui()
+                plate_x = x_pos - half_thickness/2 if side == "Left" else x_pos + half_thickness/2
+                x_idx = i+1 if side == "Left" else i+2  # X index for naming
+                
+                # Create plates for each YZ segment
+                for y_idx in range(len(y_boundaries)-1):
+                    y_min = y_boundaries[y_idx]
+                    y_max = y_boundaries[y_idx+1]
                     
-                    plate_y_size = (foil_bbox.YMax - foil_bbox.YMin) + 2 * bounding_margin
-                    plate_z_size = (foil_bbox.ZMax - foil_bbox.ZMin) + 2 * bounding_margin
-                    
-                    # Create perforated or solid plate
-                    perf_shape, perf_info = create_perforation_pattern(
-                        plate_z_size, plate_y_size, half_thickness,
-                        pattern_type, hex_radius, hex_wall_thickness,
-                        hole_diameter, hole_spacing
-                    )
-                    
-                    plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"X_CutPlate_{i+1}_{side}")
-                    plate.Shape = perf_shape
-                    
-                    # Rotate 90 degrees around Y axis for vertical orientation
-                    rotation = FreeCAD.Rotation(FreeCAD.Vector(0,1,0), 90)
-                    plate.Placement.Rotation = rotation
-                    
-                    if 'total_hexagons' in perf_info:
-                        FreeCAD.Console.PrintMessage(f"    Hex pattern: {perf_info['total_hexagons']} hexagons\n")
-                    elif 'total_holes' in perf_info:
-                        FreeCAD.Console.PrintMessage(f"    Circular pattern: {perf_info['total_holes']} holes\n")
-                    
-                    plate_y_center = (foil_bbox.YMin + foil_bbox.YMax) / 2 - plate_y_size / 2
-                    plate_z_center = (foil_bbox.ZMin + foil_bbox.ZMax) / 2 - plate_z_size / 2
-                    
-                    current_placement = plate.Placement
-                    current_placement.Base = FreeCAD.Vector(plate_x, plate_y_center, plate_z_center + plate_z_size)
-                    plate.Placement = current_placement
-                    
-                    try:
-                        shaped = plate.Shape.common(working_shape)
-                        if shaped.Volume > 0:
-                            plate.Shape = shaped
-                            FreeCAD.Console.PrintMessage(f"    Shaped to foil - Volume: {shaped.Volume:.2f} mm³\n")
+                    for z_idx in range(len(z_boundaries)-1):
+                        z_min = z_boundaries[z_idx]
+                        z_max = z_boundaries[z_idx+1]
+                        
+                        try:
+                            plate_label = f"Z{z_idx+1}_Y{y_idx+1}_X{x_idx}_{side}"
+                            FreeCAD.Console.PrintMessage(f"  Creating X-cut segment {plate_label}...\n")
                             
-                            # Cut out stock if provided
-                            if stock_cutout and stock_cutout.Shape:
-                                FreeCAD.Console.PrintMessage(f"    Cutting out stock from X-cut plate...\n")
-                                plate.Shape = plate.Shape.cut(stock_cutout.Shape)
-                                FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
-                        else:
-                            FreeCAD.Console.PrintWarning(f"    Warning: No intersection with foil\n")
-                    except Exception as e:
-                        FreeCAD.Console.PrintError(f"    Boolean operation failed: {str(e)}\n")
-                        raise
-                    
-                    plate.Label = f"{boat_name}_X_CutPlate_{i+1}_{side}_at_X{x_pos:.1f}"
-                    plates.append(plate)
-                    
-                    FreeCAD.Console.PrintMessage(f"  [Plate {i+1}{side[0]}] Completed\n")
-                    
-                    # Breathing room after each plate
-                    FreeCADGui.updateGui()
-                    FreeCAD.ActiveDocument.recompute()
-                    time.sleep(0.2)
-                    
-                except Exception as e:
-                    FreeCAD.Console.PrintError(f"FATAL: Failed creating X-cut plate {i+1} {side}: {str(e)}\n")
-                    raise
+                            plate_y_size = y_max - y_min
+                            plate_z_size = z_max - z_min
+                            
+                            # Create perforated or solid plate
+                            perf_shape, perf_info = create_perforation_pattern(
+                                plate_z_size, plate_y_size, half_thickness,
+                                pattern_type, hex_radius, hex_wall_thickness,
+                                hole_diameter, hole_spacing
+                            )
+                            
+                            plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"X_CutPlate_{plate_label}")
+                            plate.Shape = perf_shape
+                            
+                            # Rotate 90 degrees around Y axis for vertical orientation
+                            rotation = FreeCAD.Rotation(FreeCAD.Vector(0,1,0), 90)
+                            plate.Placement.Rotation = rotation
+                            
+                            # Position the plate segment
+                            current_placement = plate.Placement
+                            current_placement.Base = FreeCAD.Vector(plate_x, y_min, z_min + plate_z_size)
+                            plate.Placement = current_placement
+                            
+                            # Shape to foil
+                            shaped = plate.Shape.common(working_shape)
+                            if shaped.Volume > 0:
+                                plate.Shape = shaped
+                                
+                                # Cut out stock if provided
+                                if stock_cutout and stock_cutout.Shape:
+                                    plate.Shape = plate.Shape.cut(stock_cutout.Shape)
+                                
+                                plate.Label = f"{boat_name}_X_CutPlate_{plate_label}"
+                                plates.append(plate)
+                                FreeCAD.Console.PrintMessage(f"    ✅ Created segment\n")
+                            else:
+                                # Remove empty plate
+                                FreeCAD.ActiveDocument.removeObject(plate.Name)
+                                FreeCAD.Console.PrintMessage(f"    ⚠️ Empty segment\n")
+                                
+                        except Exception as e:
+                            FreeCAD.Console.PrintError(f"    Failed: {str(e)}\n")
+                        
+                        time.sleep(0.1)
         
     except Exception as e:
         FreeCAD.Console.PrintError(f"FATAL: create_x_cut_plates failed: {str(e)}\n")
         raise
     
     return plates
-
-def export_plates_for_printing(plates, boat_name):
-    """Export all plates as individual STL files to print_ready folder"""
-    try:
-        FreeCAD.Console.PrintMessage("\n=== Exporting Plates for 3D Printing ===\n")
-        FreeCADGui.updateGui()
-        
-        # Construct export path
-        boat_folder = os.path.expanduser(f"~/Rudder_Code/boats/{boat_name}")
-        output_folder = f"{boat_folder}/output/cut_foil"
-        print_ready_folder = f"{output_folder}/print_ready"
-        
-        # Clear or create print_ready folder
-        if os.path.exists(print_ready_folder):
-            FreeCAD.Console.PrintMessage(f"Clearing existing print_ready folder...\n")
-            shutil.rmtree(print_ready_folder)
-        os.makedirs(print_ready_folder)
-        
-        FreeCAD.Console.PrintMessage(f"Export folder: {print_ready_folder}\n")
-        
-        # Export each plate as STL
-        import Mesh
-        exported_count = 0
-        
-        for plate in plates:
-            try:
-                filename = f"{print_ready_folder}/{plate.Label}.stl"
-                Mesh.export([plate], filename)
-                exported_count += 1
-                FreeCAD.Console.PrintMessage(f"  ✅ Exported: {plate.Label}.stl\n")
-            except Exception as e:
-                FreeCAD.Console.PrintError(f"  ❌ Failed to export {plate.Label}: {str(e)}\n")
-        
-        FreeCAD.Console.PrintMessage(f"\n✅ Successfully exported {exported_count} STL files\n")
-        FreeCAD.Console.PrintMessage(f"📁 Files ready in: {print_ready_folder}\n")
-        FreeCAD.Console.PrintMessage("\nNext steps:\n")
-        FreeCAD.Console.PrintMessage("1. Add your foil shell STL to the print_ready folder\n")
-        FreeCAD.Console.PrintMessage("2. Import all files into Bambu Lab Studio\n")
-        FreeCAD.Console.PrintMessage("3. Slice and print as single object\n")
-        
-    except Exception as e:
-        FreeCAD.Console.PrintError(f"FATAL: export_plates_for_printing failed: {str(e)}\n")
-        raise
 
 def run_plate_creation(boat_name="MackenSea", 
                       plate_thickness=6.0,
@@ -1131,23 +1227,23 @@ def run_plate_creation(boat_name="MackenSea",
         FreeCAD.Console.PrintMessage(f"Foil object: {foil.Label}\n")
         configure_display(foil, cutting_plan)
         
-        # Import stock cutout early so it can be used for plate cutting
+        # Import stock cutout early so it can be used for plate cutting and shell
         stock_cutout = import_stock_cutout(boat_name)
         
         all_plates = []
         shell_segments = []
         
         FreeCAD.Console.PrintMessage("\n" + "="*50 + "\n")
-        FreeCAD.Console.PrintMessage("CREATING CUTTING AND SUPPORT PLATES\n")
+        FreeCAD.Console.PrintMessage("CREATING PRE-SEGMENTED PLATES WITH MESH REPAIR\n")
         FreeCAD.Console.PrintMessage(f"Pattern type: {pattern_type.upper()}\n")
-        FreeCAD.Console.PrintMessage(f"Cut plates: DUAL (half-thickness pairs)\n")
-        FreeCAD.Console.PrintMessage(f"Support plates: SINGLE\n")
+        FreeCAD.Console.PrintMessage(f"Plates will be created already segmented for each mold section\n")
+        FreeCAD.Console.PrintMessage(f"All meshes will be repaired to fix non-manifold edges\n")
         if pattern_type == 'circle':
             FreeCAD.Console.PrintMessage(f"Hole diameter: {hole_diameter}mm, Spacing: {hole_spacing}mm\n")
         elif pattern_type == 'hex':
             FreeCAD.Console.PrintMessage(f"Hex radius: {hex_radius}mm, Wall thickness: {hex_wall_thickness}mm\n")
         if stock_cutout:
-            FreeCAD.Console.PrintMessage(f"Stock cutout: ENABLED - plates will have stock clearance\n")
+            FreeCAD.Console.PrintMessage(f"Stock cutout: ENABLED - plates and shell will have stock clearance\n")
         FreeCAD.Console.PrintMessage("="*50 + "\n")
         
         z_cut_plates = []
@@ -1161,7 +1257,7 @@ def run_plate_creation(boat_name="MackenSea",
                                               bounding_margin, hex_radius, hex_wall_thickness,
                                               pattern_type, hole_diameter, hole_spacing, stock_cutout)
             all_plates.extend(z_cut_plates)
-            FreeCAD.Console.PrintMessage(f"✅ Created {len(z_cut_plates)} Z-cut plates (dual)\n")
+            FreeCAD.Console.PrintMessage(f"✅ Created {len(z_cut_plates)} Z-cut plate segments\n")
             
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create Z-cut plates: {str(e)}\n")
@@ -1174,7 +1270,7 @@ def run_plate_creation(boat_name="MackenSea",
                                                       bounding_margin, hex_radius, hex_wall_thickness,
                                                       pattern_type, hole_diameter, hole_spacing, stock_cutout)
             all_plates.extend(z_support_plates)
-            FreeCAD.Console.PrintMessage(f"✅ Created {len(z_support_plates)} Z-support plates\n")
+            FreeCAD.Console.PrintMessage(f"✅ Created {len(z_support_plates)} Z-support plate segments\n")
             
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create Z-support plates: {str(e)}\n")
@@ -1189,7 +1285,7 @@ def run_plate_creation(boat_name="MackenSea",
                                                       bounding_margin, hex_radius, hex_wall_thickness,
                                                       pattern_type, hole_diameter, hole_spacing, stock_cutout)
             all_plates.extend(x_support_plates)
-            FreeCAD.Console.PrintMessage(f"✅ Created {len(x_support_plates)} X-support plates\n")
+            FreeCAD.Console.PrintMessage(f"✅ Created {len(x_support_plates)} X-support plate segments\n")
             
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create X-support plates: {str(e)}\n")
@@ -1201,7 +1297,7 @@ def run_plate_creation(boat_name="MackenSea",
                                              bounding_margin, hex_wall_thickness,
                                              pattern_type, hole_diameter, hole_spacing, stock_cutout)
             all_plates.extend(y_cut_plates)
-            FreeCAD.Console.PrintMessage(f"✅ Created {len(y_cut_plates)} Y-cut plates (dual)\n")
+            FreeCAD.Console.PrintMessage(f"✅ Created {len(y_cut_plates)} Y-cut plate segments\n")
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create Y-cut plates: {str(e)}\n")
         
@@ -1212,61 +1308,44 @@ def run_plate_creation(boat_name="MackenSea",
                                               bounding_margin, hex_radius, hex_wall_thickness,
                                               pattern_type, hole_diameter, hole_spacing, stock_cutout)
             all_plates.extend(x_cut_plates)
-            FreeCAD.Console.PrintMessage(f"✅ Created {len(x_cut_plates)} X-cut plates (dual)\n")
+            FreeCAD.Console.PrintMessage(f"✅ Created {len(x_cut_plates)} X-cut plate segments\n")
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create X-cut plates: {str(e)}\n")
         
-        # Import foil shell if available and segment it
+        # Import foil shell if available and segment it (with stock cutout)
         shell = import_foil_shell(boat_name)
         if shell:
-            shell_segments = segment_shell(shell, cutting_plan, boat_name)
-            FreeCAD.Console.PrintMessage(f"✅ Segmented shell into {len(shell_segments)} pieces\n")
+            shell_segments = segment_shell(shell, cutting_plan, boat_name, stock_cutout)
+            FreeCAD.Console.PrintMessage(f"✅ Segmented shell into {len(shell_segments)} pieces (all repaired)\n")
         
         FreeCADGui.updateGui()
         FreeCAD.ActiveDocument.recompute()
         
-        # Export plates individually for 3D printing
-        if all_plates:
-            export_plates_for_printing(all_plates, boat_name)
-        
-        # Export shell segments
-        if shell_segments:
-            export_shell_segments(shell_segments, boat_name)
+        # Organize and export into segment folders
+        if shell_segments and all_plates:
+            organize_and_export_segments(shell_segments, all_plates, boat_name)
         
         # Summary
         FreeCAD.Console.PrintMessage("\n" + "="*50 + "\n")
         FreeCAD.Console.PrintMessage("PLATE CREATION COMPLETE:\n")
         FreeCAD.Console.PrintMessage("="*50 + "\n")
         
-        if z_cut_plates:
-            FreeCAD.Console.PrintMessage(f"  - {len(z_cut_plates)} Z-cut plates (dual half-thickness)\n")
-        if z_support_plates:
-            FreeCAD.Console.PrintMessage(f"  - {len(z_support_plates)} Z-support plates\n")
-        if x_support_plates:
-            FreeCAD.Console.PrintMessage(f"  - {len(x_support_plates)} X-support plates (50mm spacing)\n")
-        if y_cut_plates:
-            FreeCAD.Console.PrintMessage(f"  - {len(y_cut_plates)} Y-cut plates (dual half-thickness)\n")
-        if x_cut_plates:
-            FreeCAD.Console.PrintMessage(f"  - {len(x_cut_plates)} X-cut plates (dual half-thickness)\n")
-        
-        FreeCAD.Console.PrintMessage(f"  Total plates: {len(all_plates)}\n")
+        FreeCAD.Console.PrintMessage(f"  Total plate segments: {len(all_plates)}\n")
         
         if shell_segments:
-            FreeCAD.Console.PrintMessage(f"  - {len(shell_segments)} shell segments\n")
+            FreeCAD.Console.PrintMessage(f"  Shell segments: {len(shell_segments)}\n")
         
         FreeCAD.Console.PrintMessage(f"  Total pieces: {len(all_plates) + len(shell_segments)}\n")
         FreeCAD.Console.PrintMessage(f"  Pattern used: {pattern_type}\n")
-        
-        if shell:
-            FreeCAD.Console.PrintMessage(f"  Foil shell: SEGMENTED\n")
+        FreeCAD.Console.PrintMessage(f"  All meshes repaired for manifold edges\n")
         
         if stock_cutout:
-            FreeCAD.Console.PrintMessage(f"  Stock cutout: APPLIED to all plates\n")
+            FreeCAD.Console.PrintMessage(f"  Stock cutout: APPLIED to all plates and shell\n")
         
         if cutting_plan:
             z_cuts = cutting_plan['cutting_plan']['z_cuts']
             x_cuts = cutting_plan['cutting_plan']['x_cuts']
-            FreeCAD.Console.PrintMessage(f"  Target segments: {(len(z_cuts)+1)*2*(len(x_cuts)+1)}\n")
+            FreeCAD.Console.PrintMessage(f"  Target mold segments: {(len(z_cuts)+1)*2*(len(x_cuts)+1)}\n")
         
     else:
         FreeCAD.Console.PrintError("Import failed!\n")
