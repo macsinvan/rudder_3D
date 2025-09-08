@@ -9,10 +9,10 @@ import sys
 import shutil
 
 # Foil Mold Importer for Boat Manufacturing - FreeCAD 1.1 Compatible
-# VERSION: 3.4.0 - WITH STOCK CUTOUT IMPORT
+# VERSION: 3.5.0 - DUAL CUT PLATES
 
-print("=== FREECAD MOLD IMPORTER VERSION 3.4.0 - STOCK CUTOUT ===")
-FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.4.0 - STOCK CUTOUT ===\n")
+print("=== FREECAD MOLD IMPORTER VERSION 3.5.0 - DUAL CUT PLATES ===")
+FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.5.0 - DUAL CUT PLATES ===\n")
 
 # Stock positioning parameters
 POST_CENTRE_X = 323  # mm - X position for post centre
@@ -460,11 +460,11 @@ def calculate_x_support_positions(x_cuts, foil_bbox, x_support_spacing):
 def create_z_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, 
                        hex_radius, hex_wall_thickness, pattern_type='hex', 
                        hole_diameter=10.0, hole_spacing=15.0, stock_cutout=None):
-    """Create Z-cut plates (horizontal - XY plane)"""
+    """Create Z-cut plates (horizontal - XY plane) - DUAL PLATES"""
     plates = []
     
     try:
-        FreeCAD.Console.PrintMessage("\n=== Creating Z-Cut Plates ===\n")
+        FreeCAD.Console.PrintMessage("\n=== Creating Z-Cut Plates (Dual Half-Thickness) ===\n")
         FreeCADGui.updateGui()
         
         foil_bbox = foil_object.Shape.BoundBox
@@ -475,71 +475,77 @@ def create_z_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, b
         working_shape = prepare_foil_for_boolean(foil_object)
         z_cuts = cutting_plan['cutting_plan']['z_cuts']
         
-        FreeCAD.Console.PrintMessage(f"Creating {len(z_cuts)} Z-cut plates ({plate_thickness}mm thick)...\n")
+        # Half the plate thickness for dual plates
+        half_thickness = plate_thickness / 2
+        
+        FreeCAD.Console.PrintMessage(f"Creating {len(z_cuts)*2} Z-cut plates ({half_thickness}mm thick each)...\n")
         FreeCADGui.updateGui()
         
         for i, z_pos in enumerate(z_cuts):
-            try:
-                FreeCAD.Console.PrintMessage(f"  [Plate {i+1}/{len(z_cuts)}] Starting Z-cut plate at Z={z_pos:.2f}...\n")
-                FreeCADGui.updateGui()
-                
-                plate_x_size = (foil_bbox.XMax - foil_bbox.XMin) + 2 * bounding_margin
-                plate_y_size = (foil_bbox.YMax - foil_bbox.YMin) + 2 * bounding_margin
-                
-                # Create perforated or solid plate based on pattern_type
-                perf_shape, perf_info = create_perforation_pattern(
-                    plate_x_size, plate_y_size, plate_thickness,
-                    pattern_type, hex_radius, hex_wall_thickness,
-                    hole_diameter, hole_spacing
-                )
-                
-                plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"Z_CutPlate_{i+1}")
-                plate.Shape = perf_shape
-                
-                if 'total_hexagons' in perf_info:
-                    FreeCAD.Console.PrintMessage(f"    Hex pattern: {perf_info['total_hexagons']} hexagons\n")
-                elif 'total_holes' in perf_info:
-                    FreeCAD.Console.PrintMessage(f"    Circular pattern: {perf_info['total_holes']} holes\n")
-                
-                plate_x_center = (foil_bbox.XMin + foil_bbox.XMax) / 2 - plate_x_size / 2
-                plate_y_center = (foil_bbox.YMin + foil_bbox.YMax) / 2 - plate_y_size / 2
-                plate_z_center = z_pos - plate_thickness / 2
-                
-                plate.Placement.Base = FreeCAD.Vector(plate_x_center, plate_y_center, plate_z_center)
-                
-                FreeCAD.Console.PrintMessage(f"    Performing boolean intersection...\n")
-                FreeCADGui.updateGui()
-                
+            # Create two plates - one above and one below the cut line
+            for side in ["Lower", "Upper"]:
                 try:
-                    shaped = plate.Shape.common(working_shape)
-                    if shaped.Volume > 0:
-                        plate.Shape = shaped
-                        FreeCAD.Console.PrintMessage(f"    Shaped to foil - Volume: {shaped.Volume:.2f} mm³\n")
-                        
-                        # Cut out stock if provided
-                        if stock_cutout and stock_cutout.Shape:
-                            FreeCAD.Console.PrintMessage(f"    Cutting out stock from plate...\n")
-                            plate.Shape = plate.Shape.cut(stock_cutout.Shape)
-                            FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
-                    else:
-                        FreeCAD.Console.PrintWarning(f"    Warning: No intersection with foil\n")
+                    # CORRECTED: Plates meet exactly at the cut line
+                    plate_z = z_pos - half_thickness/2 if side == "Lower" else z_pos + half_thickness/2
+                    FreeCAD.Console.PrintMessage(f"  [Plate {i+1}{side[0]}] Creating {side} Z-cut plate at Z={plate_z:.2f}...\n")
+                    FreeCADGui.updateGui()
+                    
+                    plate_x_size = (foil_bbox.XMax - foil_bbox.XMin) + 2 * bounding_margin
+                    plate_y_size = (foil_bbox.YMax - foil_bbox.YMin) + 2 * bounding_margin
+                    
+                    # Create perforated or solid plate based on pattern_type
+                    perf_shape, perf_info = create_perforation_pattern(
+                        plate_x_size, plate_y_size, half_thickness,
+                        pattern_type, hex_radius, hex_wall_thickness,
+                        hole_diameter, hole_spacing
+                    )
+                    
+                    plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"Z_CutPlate_{i+1}_{side}")
+                    plate.Shape = perf_shape
+                    
+                    if 'total_hexagons' in perf_info:
+                        FreeCAD.Console.PrintMessage(f"    Hex pattern: {perf_info['total_hexagons']} hexagons\n")
+                    elif 'total_holes' in perf_info:
+                        FreeCAD.Console.PrintMessage(f"    Circular pattern: {perf_info['total_holes']} holes\n")
+                    
+                    plate_x_center = (foil_bbox.XMin + foil_bbox.XMax) / 2 - plate_x_size / 2
+                    plate_y_center = (foil_bbox.YMin + foil_bbox.YMax) / 2 - plate_y_size / 2
+                    
+                    plate.Placement.Base = FreeCAD.Vector(plate_x_center, plate_y_center, plate_z)
+                    
+                    FreeCAD.Console.PrintMessage(f"    Performing boolean intersection...\n")
+                    FreeCADGui.updateGui()
+                    
+                    try:
+                        shaped = plate.Shape.common(working_shape)
+                        if shaped.Volume > 0:
+                            plate.Shape = shaped
+                            FreeCAD.Console.PrintMessage(f"    Shaped to foil - Volume: {shaped.Volume:.2f} mm³\n")
+                            
+                            # Cut out stock if provided
+                            if stock_cutout and stock_cutout.Shape:
+                                FreeCAD.Console.PrintMessage(f"    Cutting out stock from plate...\n")
+                                plate.Shape = plate.Shape.cut(stock_cutout.Shape)
+                                FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
+                        else:
+                            FreeCAD.Console.PrintWarning(f"    Warning: No intersection with foil\n")
+                    except Exception as e:
+                        FreeCAD.Console.PrintError(f"    Boolean operation failed: {str(e)}\n")
+                        raise
+                    
+                    plate.Label = f"{boat_name}_Z_CutPlate_{i+1}_{side}_at_Z{z_pos:.1f}"
+                    plates.append(plate)
+                    
+                    FreeCAD.Console.PrintMessage(f"  [Plate {i+1}{side[0]}] Completed\n")
+                    
+                    # Breathing room after each plate
+                    FreeCADGui.updateGui()
+                    FreeCAD.ActiveDocument.recompute()
+                    time.sleep(0.2)
+                    
                 except Exception as e:
-                    FreeCAD.Console.PrintError(f"    Boolean operation failed: {str(e)}\n")
+                    FreeCAD.Console.PrintError(f"FATAL: Failed creating Z-cut plate {i+1} {side}: {str(e)}\n")
                     raise
-                
-                plate.Label = f"{boat_name}_Z_CutPlate_{i+1}_at_Z{z_pos:.1f}"
-                plates.append(plate)
-                
-                FreeCAD.Console.PrintMessage(f"  [Plate {i+1}/{len(z_cuts)}] Completed\n")
-                
-                # Breathing room after each plate
-                FreeCADGui.updateGui()
-                FreeCAD.ActiveDocument.recompute()
-                time.sleep(0.2)
-                
-            except Exception as e:
-                FreeCAD.Console.PrintError(f"FATAL: Failed creating Z-cut plate {i+1}: {str(e)}\n")
-                raise
         
     except Exception as e:
         FreeCAD.Console.PrintError(f"FATAL: create_z_cut_plates failed: {str(e)}\n")
@@ -550,7 +556,7 @@ def create_z_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, b
 def create_z_support_plates(foil_object, cutting_plan, boat_name, support_plate_thickness, plate_spacing, 
                            bounding_margin, hex_radius, hex_wall_thickness, pattern_type='hex',
                            hole_diameter=10.0, hole_spacing=15.0, stock_cutout=None):
-    """Create Z support plates (3mm thick)"""
+    """Create Z support plates (3mm thick) - SINGLE PLATES AS BEFORE"""
     plates = []
     
     try:
@@ -631,7 +637,7 @@ def create_z_support_plates(foil_object, cutting_plan, boat_name, support_plate_
 def create_x_support_plates(foil_object, cutting_plan, boat_name, support_plate_thickness, x_support_spacing, 
                            bounding_margin, hex_radius, hex_wall_thickness, pattern_type='hex',
                            hole_diameter=10.0, hole_spacing=15.0, stock_cutout=None):
-    """Create X support plates (3mm thick) at 50mm spacing"""
+    """Create X support plates (3mm thick) at 50mm spacing - SINGLE PLATES AS BEFORE"""
     plates = []
     
     try:
@@ -719,12 +725,12 @@ def create_x_support_plates(foil_object, cutting_plan, boat_name, support_plate_
 def create_y_cut_plate(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, 
                       hex_wall_thickness, pattern_type='hex',
                       hole_diameter=16.0, hole_spacing=20.0, stock_cutout=None):
-    """Create Y-cut plate (centerline - XZ plane) at Y=0"""
+    """Create Y-cut plates (centerline - XZ plane) at Y=0 - DUAL PLATES"""
     plates = []
     
     try:
-        FreeCAD.Console.PrintMessage("\n=== Creating Y-Cut Plate ===\n")
-        FreeCAD.Console.PrintMessage("Creating Y-cut plate at Y=0...\n")
+        FreeCAD.Console.PrintMessage("\n=== Creating Y-Cut Plates (Dual Half-Thickness) ===\n")
+        FreeCAD.Console.PrintMessage("Creating Y-cut plates at Y=0...\n")
         FreeCADGui.updateGui()
         
         foil_bbox = foil_object.Shape.BoundBox
@@ -733,75 +739,83 @@ def create_y_cut_plate(foil_object, cutting_plan, boat_name, plate_thickness, bo
         plate_x_size = (foil_bbox.XMax - foil_bbox.XMin) + 2 * bounding_margin
         plate_z_size = (foil_bbox.ZMax - foil_bbox.ZMin) + 2 * bounding_margin
         
-        # Y-cut plate often prints flat, so can use larger holes
-        if pattern_type == 'hex' and hex_array_helper:
-            hex_shape, hex_info = hex_array_helper.create_honeycomb_geometry(
-                length=plate_x_size,
-                width=plate_z_size,
-                thickness=plate_thickness,
-                hex_radius=8.0,  # Larger hex since this prints flat
-                wall_thickness=hex_wall_thickness
-            )
-            perf_shape = hex_shape
-            perf_info = hex_info
-        elif pattern_type == 'circle':
-            # Use larger holes for Y-cut since it prints flat
-            perf_shape, perf_info = create_perforation_pattern(
-                plate_x_size, plate_z_size, plate_thickness,
-                pattern_type, 8.0, hex_wall_thickness,
-                hole_diameter, hole_spacing
-            )
-        else:
-            perf_shape = Part.makeBox(plate_x_size, plate_z_size, plate_thickness)                    
-            perf_info = {'pattern': 'solid'}
+        # Half the plate thickness for dual plates
+        half_thickness = plate_thickness / 2
         
-        plate = FreeCAD.ActiveDocument.addObject("Part::Feature", "Y_CutPlate_Center")
-        plate.Shape = perf_shape
-        
-        # Always rotate 90 degrees around X axis for vertical orientation (all pattern types)
-        rotation = FreeCAD.Rotation(FreeCAD.Vector(1,0,0), 90)
-        plate.Placement.Rotation = rotation
-        
-        FreeCAD.Console.PrintMessage(f"  Y-Cut Plate: {plate_x_size:.1f} × {plate_thickness:.1f} × {plate_z_size:.1f} mm\n")
-        if 'total_hexagons' in perf_info:
-            FreeCAD.Console.PrintMessage(f"    Hex pattern: {perf_info['total_hexagons']} hexagons (8mm radius)\n")
-        elif 'total_holes' in perf_info:
-            FreeCAD.Console.PrintMessage(f"    Circular pattern: {perf_info['total_holes']} holes\n")
-        
-        plate_x_center = (foil_bbox.XMin + foil_bbox.XMax) / 2 - plate_x_size / 2
-        plate_y_center = 0 - plate_thickness / 2
-        plate_z_center = (foil_bbox.ZMin + foil_bbox.ZMax) / 2 - plate_z_size / 2
-        
-        current_placement = plate.Placement
-        current_placement.Base = FreeCAD.Vector(plate_x_center, plate_y_center, plate_z_center)
-        plate.Placement = current_placement
-        
-        try:
-            shaped = plate.Shape.common(working_shape)
-            if shaped.Volume > 0:
-                plate.Shape = shaped
-                FreeCAD.Console.PrintMessage(f"    Shaped to foil - Volume: {shaped.Volume:.2f} mm³\n")
-                
-                # Cut out stock if provided
-                if stock_cutout and stock_cutout.Shape:
-                    FreeCAD.Console.PrintMessage(f"    Cutting out stock from Y-cut plate...\n")
-                    plate.Shape = plate.Shape.cut(stock_cutout.Shape)
-                    FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
+        # Create two plates - one on each side of Y=0
+        for side in ["Left", "Right"]:
+            # CORRECTED: Plates meet exactly at Y=0
+            plate_y = -half_thickness/2 if side == "Left" else half_thickness/2
+            FreeCAD.Console.PrintMessage(f"  Creating {side} Y-cut plate at Y={plate_y:.2f}...\n")
+            
+            # Y-cut plate often prints flat, so can use larger holes
+            if pattern_type == 'hex' and hex_array_helper:
+                hex_shape, hex_info = hex_array_helper.create_honeycomb_geometry(
+                    length=plate_x_size,
+                    width=plate_z_size,
+                    thickness=half_thickness,
+                    hex_radius=8.0,  # Larger hex since this prints flat
+                    wall_thickness=hex_wall_thickness
+                )
+                perf_shape = hex_shape
+                perf_info = hex_info
+            elif pattern_type == 'circle':
+                # Use larger holes for Y-cut since it prints flat
+                perf_shape, perf_info = create_perforation_pattern(
+                    plate_x_size, plate_z_size, half_thickness,
+                    pattern_type, 8.0, hex_wall_thickness,
+                    hole_diameter, hole_spacing
+                )
             else:
-                FreeCAD.Console.PrintWarning(f"    Warning: No intersection with foil\n")
-        except Exception as e:
-            FreeCAD.Console.PrintError(f"    Boolean operation failed: {str(e)}\n")
-            raise
-        
-        plate.Label = f"{boat_name}_Y_CutPlate_Center_at_Y0"
-        plates.append(plate)
-        
-        FreeCAD.Console.PrintMessage(f"  Y-Cut Plate Completed\n")
-        
-        # Breathing room after plate
-        FreeCADGui.updateGui()
-        FreeCAD.ActiveDocument.recompute()
-        time.sleep(0.2)
+                perf_shape = Part.makeBox(plate_x_size, plate_z_size, half_thickness)                    
+                perf_info = {'pattern': 'solid'}
+            
+            plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"Y_CutPlate_{side}")
+            plate.Shape = perf_shape
+            
+            # Always rotate 90 degrees around X axis for vertical orientation (all pattern types)
+            rotation = FreeCAD.Rotation(FreeCAD.Vector(1,0,0), 90)
+            plate.Placement.Rotation = rotation
+            
+            FreeCAD.Console.PrintMessage(f"  Y-Cut Plate {side}: {plate_x_size:.1f} × {half_thickness:.1f} × {plate_z_size:.1f} mm\n")
+            if 'total_hexagons' in perf_info:
+                FreeCAD.Console.PrintMessage(f"    Hex pattern: {perf_info['total_hexagons']} hexagons (8mm radius)\n")
+            elif 'total_holes' in perf_info:
+                FreeCAD.Console.PrintMessage(f"    Circular pattern: {perf_info['total_holes']} holes\n")
+            
+            plate_x_center = (foil_bbox.XMin + foil_bbox.XMax) / 2 - plate_x_size / 2
+            plate_z_center = (foil_bbox.ZMin + foil_bbox.ZMax) / 2 - plate_z_size / 2
+            
+            current_placement = plate.Placement
+            current_placement.Base = FreeCAD.Vector(plate_x_center, plate_y, plate_z_center)
+            plate.Placement = current_placement
+            
+            try:
+                shaped = plate.Shape.common(working_shape)
+                if shaped.Volume > 0:
+                    plate.Shape = shaped
+                    FreeCAD.Console.PrintMessage(f"    Shaped to foil - Volume: {shaped.Volume:.2f} mm³\n")
+                    
+                    # Cut out stock if provided
+                    if stock_cutout and stock_cutout.Shape:
+                        FreeCAD.Console.PrintMessage(f"    Cutting out stock from Y-cut plate...\n")
+                        plate.Shape = plate.Shape.cut(stock_cutout.Shape)
+                        FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
+                else:
+                    FreeCAD.Console.PrintWarning(f"    Warning: No intersection with foil\n")
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"    Boolean operation failed: {str(e)}\n")
+                raise
+            
+            plate.Label = f"{boat_name}_Y_CutPlate_{side}_at_Y0"
+            plates.append(plate)
+            
+            FreeCAD.Console.PrintMessage(f"  Y-Cut Plate {side} Completed\n")
+            
+            # Breathing room after plate
+            FreeCADGui.updateGui()
+            FreeCAD.ActiveDocument.recompute()
+            time.sleep(0.2)
         
     except Exception as e:
         FreeCAD.Console.PrintError(f"FATAL: create_y_cut_plate failed: {str(e)}\n")
@@ -812,85 +826,91 @@ def create_y_cut_plate(foil_object, cutting_plan, boat_name, plate_thickness, bo
 def create_x_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, 
                        hex_radius, hex_wall_thickness, pattern_type='hex',
                        hole_diameter=10.0, hole_spacing=15.0, stock_cutout=None):
-    """Create X-cut plates (vertical - YZ plane)"""
+    """Create X-cut plates (vertical - YZ plane) - DUAL PLATES"""
     plates = []
     
     try:
-        FreeCAD.Console.PrintMessage("\n=== Creating X-Cut Plates ===\n")
+        FreeCAD.Console.PrintMessage("\n=== Creating X-Cut Plates (Dual Half-Thickness) ===\n")
         FreeCADGui.updateGui()
         
         foil_bbox = foil_object.Shape.BoundBox
         working_shape = prepare_foil_for_boolean(foil_object)
         x_cuts = cutting_plan['cutting_plan']['x_cuts']
         
-        FreeCAD.Console.PrintMessage(f"Creating {len(x_cuts)} X-cut plates ({plate_thickness}mm thick)...\n")
+        # Half the plate thickness for dual plates
+        half_thickness = plate_thickness / 2
+        
+        FreeCAD.Console.PrintMessage(f"Creating {len(x_cuts)*2} X-cut plates ({half_thickness}mm thick each)...\n")
         FreeCADGui.updateGui()
         
         for i, x_pos in enumerate(x_cuts):
-            try:
-                FreeCAD.Console.PrintMessage(f"  [Plate {i+1}/{len(x_cuts)}] Starting X-cut plate at X={x_pos:.2f}...\n")
-                FreeCADGui.updateGui()
-                
-                plate_y_size = (foil_bbox.YMax - foil_bbox.YMin) + 2 * bounding_margin
-                plate_z_size = (foil_bbox.ZMax - foil_bbox.ZMin) + 2 * bounding_margin
-                
-                # Create perforated or solid plate
-                perf_shape, perf_info = create_perforation_pattern(
-                    plate_z_size, plate_y_size, plate_thickness,
-                    pattern_type, hex_radius, hex_wall_thickness,
-                    hole_diameter, hole_spacing
-                )
-                
-                plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"X_CutPlate_{i+1}")
-                plate.Shape = perf_shape
-                
-                # Rotate 90 degrees around Y axis for vertical orientation
-                rotation = FreeCAD.Rotation(FreeCAD.Vector(0,1,0), 90)
-                plate.Placement.Rotation = rotation
-                
-                if 'total_hexagons' in perf_info:
-                    FreeCAD.Console.PrintMessage(f"    Hex pattern: {perf_info['total_hexagons']} hexagons\n")
-                elif 'total_holes' in perf_info:
-                    FreeCAD.Console.PrintMessage(f"    Circular pattern: {perf_info['total_holes']} holes\n")
-                
-                plate_x_center = x_pos - plate_thickness / 2
-                plate_y_center = (foil_bbox.YMin + foil_bbox.YMax) / 2 - plate_y_size / 2
-                plate_z_center = (foil_bbox.ZMin + foil_bbox.ZMax) / 2 - plate_z_size / 2
-                
-                current_placement = plate.Placement
-                current_placement.Base = FreeCAD.Vector(plate_x_center, plate_y_center, plate_z_center + plate_z_size)
-                plate.Placement = current_placement
-                
+            # Create two plates - one on each side of the cut
+            for side in ["Left", "Right"]:
                 try:
-                    shaped = plate.Shape.common(working_shape)
-                    if shaped.Volume > 0:
-                        plate.Shape = shaped
-                        FreeCAD.Console.PrintMessage(f"    Shaped to foil - Volume: {shaped.Volume:.2f} mm³\n")
-                        
-                        # Cut out stock if provided
-                        if stock_cutout and stock_cutout.Shape:
-                            FreeCAD.Console.PrintMessage(f"    Cutting out stock from X-cut plate...\n")
-                            plate.Shape = plate.Shape.cut(stock_cutout.Shape)
-                            FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
-                    else:
-                        FreeCAD.Console.PrintWarning(f"    Warning: No intersection with foil\n")
+                    # CORRECTED: Plates meet exactly at the cut line
+                    plate_x = x_pos - half_thickness/2 if side == "Left" else x_pos + half_thickness/2
+                    FreeCAD.Console.PrintMessage(f"  [Plate {i+1}{side[0]}] Creating {side} X-cut plate at X={plate_x:.2f}...\n")
+                    FreeCADGui.updateGui()
+                    
+                    plate_y_size = (foil_bbox.YMax - foil_bbox.YMin) + 2 * bounding_margin
+                    plate_z_size = (foil_bbox.ZMax - foil_bbox.ZMin) + 2 * bounding_margin
+                    
+                    # Create perforated or solid plate
+                    perf_shape, perf_info = create_perforation_pattern(
+                        plate_z_size, plate_y_size, half_thickness,
+                        pattern_type, hex_radius, hex_wall_thickness,
+                        hole_diameter, hole_spacing
+                    )
+                    
+                    plate = FreeCAD.ActiveDocument.addObject("Part::Feature", f"X_CutPlate_{i+1}_{side}")
+                    plate.Shape = perf_shape
+                    
+                    # Rotate 90 degrees around Y axis for vertical orientation
+                    rotation = FreeCAD.Rotation(FreeCAD.Vector(0,1,0), 90)
+                    plate.Placement.Rotation = rotation
+                    
+                    if 'total_hexagons' in perf_info:
+                        FreeCAD.Console.PrintMessage(f"    Hex pattern: {perf_info['total_hexagons']} hexagons\n")
+                    elif 'total_holes' in perf_info:
+                        FreeCAD.Console.PrintMessage(f"    Circular pattern: {perf_info['total_holes']} holes\n")
+                    
+                    plate_y_center = (foil_bbox.YMin + foil_bbox.YMax) / 2 - plate_y_size / 2
+                    plate_z_center = (foil_bbox.ZMin + foil_bbox.ZMax) / 2 - plate_z_size / 2
+                    
+                    current_placement = plate.Placement
+                    current_placement.Base = FreeCAD.Vector(plate_x, plate_y_center, plate_z_center + plate_z_size)
+                    plate.Placement = current_placement
+                    
+                    try:
+                        shaped = plate.Shape.common(working_shape)
+                        if shaped.Volume > 0:
+                            plate.Shape = shaped
+                            FreeCAD.Console.PrintMessage(f"    Shaped to foil - Volume: {shaped.Volume:.2f} mm³\n")
+                            
+                            # Cut out stock if provided
+                            if stock_cutout and stock_cutout.Shape:
+                                FreeCAD.Console.PrintMessage(f"    Cutting out stock from X-cut plate...\n")
+                                plate.Shape = plate.Shape.cut(stock_cutout.Shape)
+                                FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
+                        else:
+                            FreeCAD.Console.PrintWarning(f"    Warning: No intersection with foil\n")
+                    except Exception as e:
+                        FreeCAD.Console.PrintError(f"    Boolean operation failed: {str(e)}\n")
+                        raise
+                    
+                    plate.Label = f"{boat_name}_X_CutPlate_{i+1}_{side}_at_X{x_pos:.1f}"
+                    plates.append(plate)
+                    
+                    FreeCAD.Console.PrintMessage(f"  [Plate {i+1}{side[0]}] Completed\n")
+                    
+                    # Breathing room after each plate
+                    FreeCADGui.updateGui()
+                    FreeCAD.ActiveDocument.recompute()
+                    time.sleep(0.2)
+                    
                 except Exception as e:
-                    FreeCAD.Console.PrintError(f"    Boolean operation failed: {str(e)}\n")
+                    FreeCAD.Console.PrintError(f"FATAL: Failed creating X-cut plate {i+1} {side}: {str(e)}\n")
                     raise
-                
-                plate.Label = f"{boat_name}_X_CutPlate_{i+1}_at_X{x_pos:.1f}"
-                plates.append(plate)
-                
-                FreeCAD.Console.PrintMessage(f"  [Plate {i+1}/{len(x_cuts)}] Completed\n")
-                
-                # Breathing room after each plate
-                FreeCADGui.updateGui()
-                FreeCAD.ActiveDocument.recompute()
-                time.sleep(0.2)
-                
-            except Exception as e:
-                FreeCAD.Console.PrintError(f"FATAL: Failed creating X-cut plate {i+1}: {str(e)}\n")
-                raise
         
     except Exception as e:
         FreeCAD.Console.PrintError(f"FATAL: create_x_cut_plates failed: {str(e)}\n")
@@ -980,6 +1000,8 @@ def run_plate_creation(boat_name="MackenSea",
         FreeCAD.Console.PrintMessage("\n" + "="*50 + "\n")
         FreeCAD.Console.PrintMessage("CREATING CUTTING AND SUPPORT PLATES\n")
         FreeCAD.Console.PrintMessage(f"Pattern type: {pattern_type.upper()}\n")
+        FreeCAD.Console.PrintMessage(f"Cut plates: DUAL (half-thickness pairs)\n")
+        FreeCAD.Console.PrintMessage(f"Support plates: SINGLE\n")
         if pattern_type == 'circle':
             FreeCAD.Console.PrintMessage(f"Hole diameter: {hole_diameter}mm, Spacing: {hole_spacing}mm\n")
         elif pattern_type == 'hex':
@@ -999,7 +1021,7 @@ def run_plate_creation(boat_name="MackenSea",
                                               bounding_margin, hex_radius, hex_wall_thickness,
                                               pattern_type, hole_diameter, hole_spacing, stock_cutout)
             all_plates.extend(z_cut_plates)
-            FreeCAD.Console.PrintMessage(f"✅ Created {len(z_cut_plates)} Z-cut plates\n")
+            FreeCAD.Console.PrintMessage(f"✅ Created {len(z_cut_plates)} Z-cut plates (dual)\n")
             
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create Z-cut plates: {str(e)}\n")
@@ -1039,9 +1061,9 @@ def run_plate_creation(boat_name="MackenSea",
                                              bounding_margin, hex_wall_thickness,
                                              pattern_type, hole_diameter, hole_spacing, stock_cutout)
             all_plates.extend(y_cut_plates)
-            FreeCAD.Console.PrintMessage(f"✅ Created {len(y_cut_plates)} Y-cut plate\n")
+            FreeCAD.Console.PrintMessage(f"✅ Created {len(y_cut_plates)} Y-cut plates (dual)\n")
         except Exception as e:
-            FreeCAD.Console.PrintError(f"❌ Failed to create Y-cut plate: {str(e)}\n")
+            FreeCAD.Console.PrintError(f"❌ Failed to create Y-cut plates: {str(e)}\n")
         
         FreeCADGui.updateGui()
 
@@ -1050,7 +1072,7 @@ def run_plate_creation(boat_name="MackenSea",
                                               bounding_margin, hex_radius, hex_wall_thickness,
                                               pattern_type, hole_diameter, hole_spacing, stock_cutout)
             all_plates.extend(x_cut_plates)
-            FreeCAD.Console.PrintMessage(f"✅ Created {len(x_cut_plates)} X-cut plates\n")
+            FreeCAD.Console.PrintMessage(f"✅ Created {len(x_cut_plates)} X-cut plates (dual)\n")
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create X-cut plates: {str(e)}\n")
         
@@ -1070,15 +1092,15 @@ def run_plate_creation(boat_name="MackenSea",
         FreeCAD.Console.PrintMessage("="*50 + "\n")
         
         if z_cut_plates:
-            FreeCAD.Console.PrintMessage(f"  - {len(z_cut_plates)} Z-cut plates\n")
+            FreeCAD.Console.PrintMessage(f"  - {len(z_cut_plates)} Z-cut plates (dual half-thickness)\n")
         if z_support_plates:
             FreeCAD.Console.PrintMessage(f"  - {len(z_support_plates)} Z-support plates\n")
         if x_support_plates:
             FreeCAD.Console.PrintMessage(f"  - {len(x_support_plates)} X-support plates (50mm spacing)\n")
         if y_cut_plates:
-            FreeCAD.Console.PrintMessage(f"  - {len(y_cut_plates)} Y-cut plate\n")
+            FreeCAD.Console.PrintMessage(f"  - {len(y_cut_plates)} Y-cut plates (dual half-thickness)\n")
         if x_cut_plates:
-            FreeCAD.Console.PrintMessage(f"  - {len(x_cut_plates)} X-cut plates\n")
+            FreeCAD.Console.PrintMessage(f"  - {len(x_cut_plates)} X-cut plates (dual half-thickness)\n")
         
         FreeCAD.Console.PrintMessage(f"  Total: {len(all_plates)} plates created\n")
         FreeCAD.Console.PrintMessage(f"  Pattern used: {pattern_type}\n")
