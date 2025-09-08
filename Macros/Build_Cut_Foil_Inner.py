@@ -16,7 +16,7 @@ FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.4.0 - STOCK CU
 
 # Stock positioning parameters
 POST_CENTRE_X = 323  # mm - X position for post centre
-POST_TOP_Z = -79     # mm - Z position for top of post
+POST_TOP_Z = -77     # mm - Z position for top of post
 POST_DIAMETER = 44   # mm - diameter of the post
 POST_DIAMETER_DELTA = 4  # mm - difference in post diameter for cutout stock
 
@@ -769,7 +769,7 @@ def create_y_cut_plate(foil_object, cutting_plan, boat_name, plate_thickness, bo
             FreeCAD.Console.PrintMessage(f"    Circular pattern: {perf_info['total_holes']} holes\n")
         
         plate_x_center = (foil_bbox.XMin + foil_bbox.XMax) / 2 - plate_x_size / 2
-        plate_y_center = 0 - plate_thickness / 2
+        plate_y_center = 0
         plate_z_center = (foil_bbox.ZMin + foil_bbox.ZMax) / 2 - plate_z_size / 2
         
         current_placement = plate.Placement
