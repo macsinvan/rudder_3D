@@ -459,7 +459,7 @@ def calculate_x_support_positions(x_cuts, foil_bbox, x_support_spacing):
 
 def create_z_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, 
                        hex_radius, hex_wall_thickness, pattern_type='hex', 
-                       hole_diameter=10.0, hole_spacing=15.0):
+                       hole_diameter=10.0, hole_spacing=15.0, stock_cutout=None):
     """Create Z-cut plates (horizontal - XY plane)"""
     plates = []
     
@@ -515,6 +515,12 @@ def create_z_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, b
                     if shaped.Volume > 0:
                         plate.Shape = shaped
                         FreeCAD.Console.PrintMessage(f"    Shaped to foil - Volume: {shaped.Volume:.2f} mm³\n")
+                        
+                        # Cut out stock if provided
+                        if stock_cutout and stock_cutout.Shape:
+                            FreeCAD.Console.PrintMessage(f"    Cutting out stock from plate...\n")
+                            plate.Shape = plate.Shape.cut(stock_cutout.Shape)
+                            FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
                     else:
                         FreeCAD.Console.PrintWarning(f"    Warning: No intersection with foil\n")
                 except Exception as e:
@@ -543,7 +549,7 @@ def create_z_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, b
 
 def create_z_support_plates(foil_object, cutting_plan, boat_name, support_plate_thickness, plate_spacing, 
                            bounding_margin, hex_radius, hex_wall_thickness, pattern_type='hex',
-                           hole_diameter=10.0, hole_spacing=15.0):
+                           hole_diameter=10.0, hole_spacing=15.0, stock_cutout=None):
     """Create Z support plates (3mm thick)"""
     plates = []
     
@@ -588,6 +594,12 @@ def create_z_support_plates(foil_object, cutting_plan, boat_name, support_plate_
                     shaped = plate.Shape.common(working_shape)
                     if shaped.Volume > 0:
                         plate.Shape = shaped
+                        
+                        # Cut out stock if provided
+                        if stock_cutout and stock_cutout.Shape:
+                            FreeCAD.Console.PrintMessage(f"    Cutting out stock from support plate...\n")
+                            plate.Shape = plate.Shape.cut(stock_cutout.Shape)
+                            FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
                 except Exception as e:
                     FreeCAD.Console.PrintError(f"    Boolean operation failed: {str(e)}\n")
                     raise
@@ -618,7 +630,7 @@ def create_z_support_plates(foil_object, cutting_plan, boat_name, support_plate_
 
 def create_x_support_plates(foil_object, cutting_plan, boat_name, support_plate_thickness, x_support_spacing, 
                            bounding_margin, hex_radius, hex_wall_thickness, pattern_type='hex',
-                           hole_diameter=10.0, hole_spacing=15.0):
+                           hole_diameter=10.0, hole_spacing=15.0, stock_cutout=None):
     """Create X support plates (3mm thick) at 50mm spacing"""
     plates = []
     
@@ -670,6 +682,12 @@ def create_x_support_plates(foil_object, cutting_plan, boat_name, support_plate_
                     shaped = plate.Shape.common(working_shape)
                     if shaped.Volume > 0:
                         plate.Shape = shaped
+                        
+                        # Cut out stock if provided
+                        if stock_cutout and stock_cutout.Shape:
+                            FreeCAD.Console.PrintMessage(f"    Cutting out stock from X-support plate...\n")
+                            plate.Shape = plate.Shape.cut(stock_cutout.Shape)
+                            FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
                 except Exception as e:
                     FreeCAD.Console.PrintError(f"    Boolean operation failed: {str(e)}\n")
                     raise
@@ -700,7 +718,7 @@ def create_x_support_plates(foil_object, cutting_plan, boat_name, support_plate_
 
 def create_y_cut_plate(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, 
                       hex_wall_thickness, pattern_type='hex',
-                      hole_diameter=16.0, hole_spacing=20.0):
+                      hole_diameter=16.0, hole_spacing=20.0, stock_cutout=None):
     """Create Y-cut plate (centerline - XZ plane) at Y=0"""
     plates = []
     
@@ -763,6 +781,12 @@ def create_y_cut_plate(foil_object, cutting_plan, boat_name, plate_thickness, bo
             if shaped.Volume > 0:
                 plate.Shape = shaped
                 FreeCAD.Console.PrintMessage(f"    Shaped to foil - Volume: {shaped.Volume:.2f} mm³\n")
+                
+                # Cut out stock if provided
+                if stock_cutout and stock_cutout.Shape:
+                    FreeCAD.Console.PrintMessage(f"    Cutting out stock from Y-cut plate...\n")
+                    plate.Shape = plate.Shape.cut(stock_cutout.Shape)
+                    FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
             else:
                 FreeCAD.Console.PrintWarning(f"    Warning: No intersection with foil\n")
         except Exception as e:
@@ -787,7 +811,7 @@ def create_y_cut_plate(foil_object, cutting_plan, boat_name, plate_thickness, bo
 
 def create_x_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, 
                        hex_radius, hex_wall_thickness, pattern_type='hex',
-                       hole_diameter=10.0, hole_spacing=15.0):
+                       hole_diameter=10.0, hole_spacing=15.0, stock_cutout=None):
     """Create X-cut plates (vertical - YZ plane)"""
     plates = []
     
@@ -842,6 +866,12 @@ def create_x_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, b
                     if shaped.Volume > 0:
                         plate.Shape = shaped
                         FreeCAD.Console.PrintMessage(f"    Shaped to foil - Volume: {shaped.Volume:.2f} mm³\n")
+                        
+                        # Cut out stock if provided
+                        if stock_cutout and stock_cutout.Shape:
+                            FreeCAD.Console.PrintMessage(f"    Cutting out stock from X-cut plate...\n")
+                            plate.Shape = plate.Shape.cut(stock_cutout.Shape)
+                            FreeCAD.Console.PrintMessage(f"    Stock cutout complete\n")
                     else:
                         FreeCAD.Console.PrintWarning(f"    Warning: No intersection with foil\n")
                 except Exception as e:
@@ -942,6 +972,9 @@ def run_plate_creation(boat_name="MackenSea",
         FreeCAD.Console.PrintMessage(f"Foil object: {foil.Label}\n")
         configure_display(foil, cutting_plan)
         
+        # Import stock cutout early so it can be used for plate cutting
+        stock_cutout = import_stock_cutout(boat_name)
+        
         all_plates = []
         
         FreeCAD.Console.PrintMessage("\n" + "="*50 + "\n")
@@ -951,6 +984,8 @@ def run_plate_creation(boat_name="MackenSea",
             FreeCAD.Console.PrintMessage(f"Hole diameter: {hole_diameter}mm, Spacing: {hole_spacing}mm\n")
         elif pattern_type == 'hex':
             FreeCAD.Console.PrintMessage(f"Hex radius: {hex_radius}mm, Wall thickness: {hex_wall_thickness}mm\n")
+        if stock_cutout:
+            FreeCAD.Console.PrintMessage(f"Stock cutout: ENABLED - plates will have stock clearance\n")
         FreeCAD.Console.PrintMessage("="*50 + "\n")
         
         z_cut_plates = []
@@ -962,7 +997,7 @@ def run_plate_creation(boat_name="MackenSea",
         try:
             z_cut_plates = create_z_cut_plates(foil, cutting_plan, boat_name, plate_thickness, 
                                               bounding_margin, hex_radius, hex_wall_thickness,
-                                              pattern_type, hole_diameter, hole_spacing)
+                                              pattern_type, hole_diameter, hole_spacing, stock_cutout)
             all_plates.extend(z_cut_plates)
             FreeCAD.Console.PrintMessage(f"✅ Created {len(z_cut_plates)} Z-cut plates\n")
             
@@ -975,7 +1010,7 @@ def run_plate_creation(boat_name="MackenSea",
             z_support_plates = create_z_support_plates(foil, cutting_plan, boat_name, 
                                                       support_plate_thickness, plate_spacing,
                                                       bounding_margin, hex_radius, hex_wall_thickness,
-                                                      pattern_type, hole_diameter, hole_spacing)
+                                                      pattern_type, hole_diameter, hole_spacing, stock_cutout)
             all_plates.extend(z_support_plates)
             FreeCAD.Console.PrintMessage(f"✅ Created {len(z_support_plates)} Z-support plates\n")
             
@@ -990,7 +1025,7 @@ def run_plate_creation(boat_name="MackenSea",
             x_support_plates = create_x_support_plates(foil, cutting_plan, boat_name,
                                                       support_plate_thickness, x_support_spacing,
                                                       bounding_margin, hex_radius, hex_wall_thickness,
-                                                      pattern_type, hole_diameter, hole_spacing)
+                                                      pattern_type, hole_diameter, hole_spacing, stock_cutout)
             all_plates.extend(x_support_plates)
             FreeCAD.Console.PrintMessage(f"✅ Created {len(x_support_plates)} X-support plates\n")
             
@@ -1002,7 +1037,7 @@ def run_plate_creation(boat_name="MackenSea",
         try:
             y_cut_plates = create_y_cut_plate(foil, cutting_plan, boat_name, plate_thickness,
                                              bounding_margin, hex_wall_thickness,
-                                             pattern_type, hole_diameter, hole_spacing)
+                                             pattern_type, hole_diameter, hole_spacing, stock_cutout)
             all_plates.extend(y_cut_plates)
             FreeCAD.Console.PrintMessage(f"✅ Created {len(y_cut_plates)} Y-cut plate\n")
         except Exception as e:
@@ -1013,7 +1048,7 @@ def run_plate_creation(boat_name="MackenSea",
         try:
             x_cut_plates = create_x_cut_plates(foil, cutting_plan, boat_name, plate_thickness,
                                               bounding_margin, hex_radius, hex_wall_thickness,
-                                              pattern_type, hole_diameter, hole_spacing)
+                                              pattern_type, hole_diameter, hole_spacing, stock_cutout)
             all_plates.extend(x_cut_plates)
             FreeCAD.Console.PrintMessage(f"✅ Created {len(x_cut_plates)} X-cut plates\n")
         except Exception as e:
@@ -1021,9 +1056,6 @@ def run_plate_creation(boat_name="MackenSea",
         
         # Import foil shell if available
         shell = import_foil_shell(boat_name)
-        
-        # Import stock cutout if available
-        stock_cutout = import_stock_cutout(boat_name)
         
         FreeCADGui.updateGui()
         FreeCAD.ActiveDocument.recompute()
@@ -1055,7 +1087,7 @@ def run_plate_creation(boat_name="MackenSea",
             FreeCAD.Console.PrintMessage(f"  Foil shell imported and visible\n")
         
         if stock_cutout:
-            FreeCAD.Console.PrintMessage(f"  Stock cutout imported and positioned\n")
+            FreeCAD.Console.PrintMessage(f"  Stock cutout: APPLIED to all plates\n")
         
         if cutting_plan:
             z_cuts = cutting_plan['cutting_plan']['z_cuts']
