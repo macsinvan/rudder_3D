@@ -8,7 +8,7 @@ import time
 import sys
 
 # Foil Mold Importer for Boat Manufacturing - FreeCAD 1.1 Compatible
-# VERSION: 3.2.0 - WITH CIRCULAR PERFORATION OPTION
+# VERSION: 3.2.0 - WITH CIRCULAR PERFORATION OPTION ~/Rudder_Code/helpers/hole_array_helper.py
 
 print("=== FREECAD MOLD IMPORTER VERSION 3.2.0 - CIRCLE/HEX OPTIONS ===")
 FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.2.0 - CIRCLE/HEX OPTIONS ===\n")
@@ -24,13 +24,6 @@ try:
 except ImportError as e:
     FreeCAD.Console.PrintError(f"Could not import hex_array_helper: {str(e)}\n")
     hex_array_helper = None
-
-try:
-    import hole_array_helper
-    FreeCAD.Console.PrintMessage("Successfully imported hole_array_helper module\n")
-except ImportError as e:
-    FreeCAD.Console.PrintError(f"Could not import hole_array_helper: {str(e)}\n")
-    hole_array_helper = None
 
 def create_circular_perforation_pattern(length, width, thickness, hole_diameter=10.0, spacing=15.0):
     """Create a plate with circular perforation pattern
@@ -140,17 +133,8 @@ def create_perforation_pattern(length, width, thickness, pattern_type='hex',
             hex_radius=hex_radius,
             wall_thickness=hex_wall_thickness
         )
-    elif pattern_type == 'circle' and hole_array_helper:
-        FreeCAD.Console.PrintMessage(f"    Creating circular perforation pattern (using hole_array_helper)...\n")
-        return hole_array_helper.create_circular_perforation_pattern(
-            length=length,
-            width=width,
-            thickness=thickness,
-            hole_diameter=hole_diameter,
-            spacing=hole_spacing
-        )
     elif pattern_type == 'circle':
-        FreeCAD.Console.PrintMessage(f"    Creating circular perforation pattern (built-in)...\n")
+        FreeCAD.Console.PrintMessage(f"    Creating circular perforation pattern...\n")
         return create_circular_perforation_pattern(
             length=length,
             width=width,
@@ -349,13 +333,14 @@ def calculate_x_support_positions(x_cuts, foil_bbox, x_support_spacing):
     return sorted(support_positions)
 
 def create_z_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, 
-                       hex_radius, hex_wall_thickness, pattern_type='hex', 
+                       pattern_type='hex', hex_radius=5.0, hex_wall_thickness=3.0,
                        hole_diameter=10.0, hole_spacing=15.0):
     """Create Z-cut plates (horizontal - XY plane)"""
     plates = []
     
     try:
         FreeCAD.Console.PrintMessage("\n=== Creating Z-Cut Plates ===\n")
+        FreeCAD.Console.PrintMessage(f"Pattern type: {pattern_type}\n")
         FreeCADGui.updateGui()
         
         foil_bbox = foil_object.Shape.BoundBox
@@ -432,14 +417,15 @@ def create_z_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, b
     
     return plates
 
-def create_z_support_plates(foil_object, cutting_plan, boat_name, support_plate_thickness, plate_spacing, 
-                           bounding_margin, hex_radius, hex_wall_thickness, pattern_type='hex',
+def create_z_support_plates(foil_object, cutting_plan, boat_name, support_plate_thickness, plate_spacing, bounding_margin,
+                           pattern_type='hex', hex_radius=5.0, hex_wall_thickness=3.0,
                            hole_diameter=10.0, hole_spacing=15.0):
     """Create Z support plates (3mm thick)"""
     plates = []
     
     try:
         FreeCAD.Console.PrintMessage("\n=== Creating Z-Support Plates ===\n")
+        FreeCAD.Console.PrintMessage(f"Pattern type: {pattern_type}\n")
         FreeCADGui.updateGui()
         
         foil_bbox = foil_object.Shape.BoundBox
@@ -507,14 +493,15 @@ def create_z_support_plates(foil_object, cutting_plan, boat_name, support_plate_
     
     return plates
 
-def create_x_support_plates(foil_object, cutting_plan, boat_name, support_plate_thickness, x_support_spacing, 
-                           bounding_margin, hex_radius, hex_wall_thickness, pattern_type='hex',
+def create_x_support_plates(foil_object, cutting_plan, boat_name, support_plate_thickness, x_support_spacing, bounding_margin,
+                           pattern_type='hex', hex_radius=5.0, hex_wall_thickness=3.0,
                            hole_diameter=10.0, hole_spacing=15.0):
     """Create X support plates (3mm thick) at 50mm spacing"""
     plates = []
     
     try:
         FreeCAD.Console.PrintMessage("\n=== Creating X-Support Plates ===\n")
+        FreeCAD.Console.PrintMessage(f"Pattern type: {pattern_type}\n")
         FreeCADGui.updateGui()
         
         foil_bbox = foil_object.Shape.BoundBox
@@ -589,14 +576,15 @@ def create_x_support_plates(foil_object, cutting_plan, boat_name, support_plate_
     
     return plates
 
-def create_y_cut_plate(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, 
-                      hex_wall_thickness, pattern_type='hex',
+def create_y_cut_plate(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin,
+                      pattern_type='hex', hex_wall_thickness=3.0,
                       hole_diameter=16.0, hole_spacing=20.0):
     """Create Y-cut plate (centerline - XZ plane) at Y=0"""
     plates = []
     
     try:
         FreeCAD.Console.PrintMessage("\n=== Creating Y-Cut Plate ===\n")
+        FreeCAD.Console.PrintMessage(f"Pattern type: {pattern_type}\n")
         FreeCAD.Console.PrintMessage("Creating Y-cut plate at Y=0...\n")
         FreeCADGui.updateGui()
         
@@ -619,19 +607,18 @@ def create_y_cut_plate(foil_object, cutting_plan, boat_name, plate_thickness, bo
             perf_info = hex_info
         elif pattern_type == 'circle':
             # Use larger holes for Y-cut since it prints flat
-            perf_shape, perf_info = create_perforation_pattern(
+            perf_shape, perf_info = create_circular_perforation_pattern(
                 plate_x_size, plate_z_size, plate_thickness,
-                pattern_type, 8.0, hex_wall_thickness,
                 hole_diameter, hole_spacing
             )
         else:
-            perf_shape = Part.makeBox(plate_x_size, plate_z_size, plate_thickness)                    
+            perf_shape = Part.makeBox(plate_x_size, plate_thickness, plate_z_size)
             perf_info = {'pattern': 'solid'}
         
         plate = FreeCAD.ActiveDocument.addObject("Part::Feature", "Y_CutPlate_Center")
         plate.Shape = perf_shape
         
-        # Always rotate 90 degrees around X axis for vertical orientation (all pattern types)
+        # Rotate 90 degrees around X axis for vertical orientation
         rotation = FreeCAD.Rotation(FreeCAD.Vector(1,0,0), 90)
         plate.Placement.Rotation = rotation
         
@@ -676,14 +663,15 @@ def create_y_cut_plate(foil_object, cutting_plan, boat_name, plate_thickness, bo
     
     return plates
 
-def create_x_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin, 
-                       hex_radius, hex_wall_thickness, pattern_type='hex',
+def create_x_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, bounding_margin,
+                       pattern_type='hex', hex_radius=5.0, hex_wall_thickness=3.0,
                        hole_diameter=10.0, hole_spacing=15.0):
     """Create X-cut plates (vertical - YZ plane)"""
     plates = []
     
     try:
         FreeCAD.Console.PrintMessage("\n=== Creating X-Cut Plates ===\n")
+        FreeCAD.Console.PrintMessage(f"Pattern type: {pattern_type}\n")
         FreeCADGui.updateGui()
         
         foil_bbox = foil_object.Shape.BoundBox
@@ -866,9 +854,9 @@ def run_plate_creation(boat_name="MackenSea",
                       support_plate_thickness=3.0,
                       plate_spacing=150.0,
                       bounding_margin=10.0,
+                      pattern_type='circle',  # 'hex', 'circle', or 'solid'
                       hex_radius=5.0,
                       hex_wall_thickness=3.0,
-                      pattern_type='circle',
                       hole_diameter=10.0,
                       hole_spacing=15.0):
     """Main business logic for plate creation
@@ -879,17 +867,18 @@ def run_plate_creation(boat_name="MackenSea",
         support_plate_thickness: Thickness of support plates in mm  
         plate_spacing: Target spacing between plates in mm
         bounding_margin: Margin around foil for plates in mm
-        hex_radius: Radius of hexagonal perforations in mm
-        hex_wall_thickness: Wall thickness between hexagons in mm
-        pattern_type: 'hex', 'circle', or 'solid'
-        hole_diameter: Diameter of circular holes in mm
-        hole_spacing: Center-to-center spacing of holes in mm
+        pattern_type: 'hex' for hexagonal, 'circle' for circular holes, 'solid' for no holes
+        hex_radius: Radius of hexagonal perforations in mm (for hex pattern)
+        hex_wall_thickness: Wall thickness between hexagons in mm (for hex pattern)
+        hole_diameter: Diameter of circular holes in mm (for circle pattern)
+        hole_spacing: Center-to-center spacing of holes in mm (for circle pattern)
     """
     cutting_plan, foil = import_foil(boat_name)
     
     if cutting_plan and foil:
         FreeCAD.Console.PrintMessage("Successfully imported cutting plan and foil!\n")
         FreeCAD.Console.PrintMessage(f"Foil object: {foil.Label}\n")
+        FreeCAD.Console.PrintMessage(f"Using perforation pattern: {pattern_type}\n")
         configure_display(foil, cutting_plan)
         
         all_plates = []
@@ -911,8 +900,8 @@ def run_plate_creation(boat_name="MackenSea",
         
         try:
             z_cut_plates = create_z_cut_plates(foil, cutting_plan, boat_name, plate_thickness, 
-                                              bounding_margin, hex_radius, hex_wall_thickness,
-                                              pattern_type, hole_diameter, hole_spacing)
+                                              bounding_margin, pattern_type, hex_radius, hex_wall_thickness,
+                                              hole_diameter, hole_spacing)
             all_plates.extend(z_cut_plates)
             FreeCAD.Console.PrintMessage(f"✅ Created {len(z_cut_plates)} Z-cut plates\n")
             
@@ -924,8 +913,8 @@ def run_plate_creation(boat_name="MackenSea",
         try:
             z_support_plates = create_z_support_plates(foil, cutting_plan, boat_name, 
                                                       support_plate_thickness, plate_spacing,
-                                                      bounding_margin, hex_radius, hex_wall_thickness,
-                                                      pattern_type, hole_diameter, hole_spacing)
+                                                      bounding_margin, pattern_type, hex_radius, hex_wall_thickness,
+                                                      hole_diameter, hole_spacing)
             all_plates.extend(z_support_plates)
             FreeCAD.Console.PrintMessage(f"✅ Created {len(z_support_plates)} Z-support plates\n")
             
@@ -939,8 +928,8 @@ def run_plate_creation(boat_name="MackenSea",
             x_support_spacing = 50.0  # Fixed 50mm spacing for X-supports
             x_support_plates = create_x_support_plates(foil, cutting_plan, boat_name,
                                                       support_plate_thickness, x_support_spacing,
-                                                      bounding_margin, hex_radius, hex_wall_thickness,
-                                                      pattern_type, hole_diameter, hole_spacing)
+                                                      bounding_margin, pattern_type, hex_radius, hex_wall_thickness,
+                                                      hole_diameter, hole_spacing)
             all_plates.extend(x_support_plates)
             FreeCAD.Console.PrintMessage(f"✅ Created {len(x_support_plates)} X-support plates\n")
             
@@ -951,8 +940,8 @@ def run_plate_creation(boat_name="MackenSea",
 
         try:
             y_cut_plates = create_y_cut_plate(foil, cutting_plan, boat_name, plate_thickness,
-                                             bounding_margin, hex_wall_thickness,
-                                             pattern_type, hole_diameter, hole_spacing)
+                                             bounding_margin, pattern_type, hex_wall_thickness,
+                                             hole_diameter, hole_spacing)
             all_plates.extend(y_cut_plates)
             FreeCAD.Console.PrintMessage(f"✅ Created {len(y_cut_plates)} Y-cut plate\n")
         except Exception as e:
@@ -962,8 +951,8 @@ def run_plate_creation(boat_name="MackenSea",
 
         try:
             x_cut_plates = create_x_cut_plates(foil, cutting_plan, boat_name, plate_thickness,
-                                              bounding_margin, hex_radius, hex_wall_thickness,
-                                              pattern_type, hole_diameter, hole_spacing)
+                                              bounding_margin, pattern_type, hex_radius, hex_wall_thickness,
+                                              hole_diameter, hole_spacing)
             all_plates.extend(x_cut_plates)
             FreeCAD.Console.PrintMessage(f"✅ Created {len(x_cut_plates)} X-cut plates\n")
         except Exception as e:
@@ -1018,15 +1007,17 @@ if __name__ == "__main__":
         FreeCAD.newDocument()
     
     # Call business logic with parameters
+    # CHOOSE YOUR PATTERN TYPE HERE:
+    # Options: 'hex', 'circle', or 'solid'
     run_plate_creation(
         boat_name="MackenSea",
         plate_thickness=6.0,
         support_plate_thickness=3.0,
         plate_spacing=150.0,
         bounding_margin=10.0,
-        hex_radius=5.0,
-        hex_wall_thickness=3.0,
-        pattern_type='solid',  # 'hex', 'circle', or 'solid'
-        hole_diameter=10.0,
-        hole_spacing=15.0
+        pattern_type='circle',  # ← CHANGE THIS: 'hex', 'circle', or 'solid'
+        hex_radius=5.0,         # Used only for hex pattern
+        hex_wall_thickness=3.0,  # Used only for hex pattern
+        hole_diameter=10.0,     # Used only for circle pattern (2x your hex radius)
+        hole_spacing=15.0       # Used only for circle pattern
     )

@@ -1,171 +1,96 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""
-FreeCAD Macro: Honeycomb Plate GUI
-Light GUI wrapper for honeycomb geometry generation
-Uses hex_array_helper module for all geometry logic
-Version: 4.0 - Modularized architecture
-"""
-
+# Test Circular Holes Pattern - FreeCAD Macro
 import FreeCAD
 import FreeCADGui
-import sys
-import os
+import Part
 
-# Add helpers directory to path to import helper
-macro_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(macro_dir)  # Go up one level from Macros
-helpers_dir = os.path.join(parent_dir, 'helpers')
-
-# Add helpers directory to path
-if helpers_dir not in sys.path:
-    sys.path.append(helpers_dir)
-
-# Import the geometry helper module
-try:
-    from hex_array_helper import create_honeycomb_geometry, create_honeycomb_structure
-    print(f"Successfully imported hex_array_helper module from: {helpers_dir}")
-except ImportError as e:
-    print(f"Error importing hex_array_helper: {e}")
-    print(f"Looking in: {helpers_dir}")
-    print(f"Make sure hex_array_helper.py is in: {helpers_dir}")
-    raise
-
-# GUI version tracking
-GUI_VERSION = "4.0"
-
-
-def apply_to_freecad_document(shape, info, doc=None, object_name="HoneycombObject"):
-    """
-    Applies the generated geometry to a FreeCAD document
+def create_circular_holes_test(length=100, width=80, thickness=6, hole_diameter=10, spacing=15):
+    """Test function to create a plate with circular holes"""
     
-    Parameters:
-    -----------
-    shape : Part.Shape
-        The shape to add to the document
-    info : dict
-        Information about the geometry
-    doc : FreeCAD.Document, optional
-        Document to use (creates new if None)
-    object_name : str
-        Name for the created object
+    print("="*50)
+    print(f"Creating test plate: {length}x{width}x{thickness}mm")
+    print(f"Hole diameter: {hole_diameter}mm, Spacing: {spacing}mm")
+    print("="*50)
     
-    Returns:
-    --------
-    FreeCAD object : The created document object
-    """
-    if doc is None:
-        doc = FreeCAD.activeDocument()
-        if doc is None:
-            doc = FreeCAD.newDocument("HoneycombPlate")
+    # Create base plate
+    base_plate = Part.makeBox(length, width, thickness)
     
-    # Create the FreeCAD object
-    obj = doc.addObject("Part::Feature", object_name)
-    obj.Shape = shape
+    # Calculate hole grid
+    margin = spacing / 2
+    nx = int((length - 2 * margin) / spacing) + 1
+    ny = int((width - 2 * margin) / spacing) + 1
     
-    # Set visual properties if available
-    if hasattr(obj, 'ViewObject'):
-        obj.ViewObject.ShapeColor = (0.7, 0.7, 0.85)
-        obj.ViewObject.DisplayMode = "Shaded"
+    actual_spacing_x = (length - 2 * margin) / max(1, (nx - 1)) if nx > 1 else 0
+    actual_spacing_y = (width - 2 * margin) / max(1, (ny - 1)) if ny > 1 else 0
     
-    # Add custom properties to store parameters
-    obj.addProperty("App::PropertyString", "GeneratorVersion", "Honeycomb", "Version of generator used")
-    obj.GeneratorVersion = f"GUI: {GUI_VERSION}, Module: {info.get('module_version', 'unknown')}"
+    print(f"Creating {nx}x{ny} grid of holes...")
     
-    if 'total_hexagons' in info:
-        obj.addProperty("App::PropertyInteger", "TotalHexagons", "Honeycomb", "Total number of hexagon holes")
-        obj.TotalHexagons = info['total_hexagons']
-    elif 'total_pillars' in info:
-        obj.addProperty("App::PropertyInteger", "TotalPillars", "Honeycomb", "Total number of hexagon pillars")
-        obj.TotalPillars = info['total_pillars']
+    # Create holes
+    holes = []
+    hole_count = 0
     
-    obj.addProperty("App::PropertyInteger", "Rows", "Honeycomb", "Number of rows")
-    obj.Rows = info['rows']
+    for i in range(nx):
+        for j in range(ny):
+            x = margin + i * actual_spacing_x if nx > 1 else length / 2
+            y = margin + j * actual_spacing_y if ny > 1 else width / 2
+            
+            if (x - hole_diameter/2 > 1 and x + hole_diameter/2 < length - 1 and
+                y - hole_diameter/2 > 1 and y + hole_diameter/2 < width - 1):
+                
+                cylinder = Part.makeCylinder(
+                    hole_diameter / 2,
+                    thickness + 2,
+                    FreeCAD.Vector(x, y, -1),
+                    FreeCAD.Vector(0, 0, 1)
+                )
+                holes.append(cylinder)
+                hole_count += 1
     
-    # Add spacing info
-    if 'x_spacing' in info:
-        obj.addProperty("App::PropertyFloat", "XSpacing", "Honeycomb", "Horizontal spacing")
-        obj.XSpacing = info['x_spacing']
+    print(f"Created {hole_count} holes")
     
-    if 'y_spacing' in info:
-        obj.addProperty("App::PropertyFloat", "YSpacing", "Honeycomb", "Vertical spacing")
-        obj.YSpacing = info['y_spacing']
-    
-    doc.recompute()
-    
-    # Fit view if GUI is available
-    try:
-        FreeCADGui.ActiveDocument.ActiveView.fitAll()
-    except:
-        pass  # No GUI available
-    
-    return obj
-
-
-def create_honeycomb_plate(params, create_structure=False):
-    """
-    Main function to create honeycomb geometry with given parameters
-    
-    Parameters:
-    -----------
-    params : dict
-        Dictionary with keys: length, width, thickness, hex_radius, wall_thickness
-    create_structure : bool
-        If True, creates pillars; if False, creates perforated plate
-    
-    Returns:
-    --------
-    FreeCAD object : The created object in the document
-    """
-    print(f"\n=== Honeycomb Plate GUI v{GUI_VERSION} ===")
-    print(f"Creating: {'Honeycomb Structure' if create_structure else 'Perforated Plate'}")
-    print(f"Parameters: {params}")
-    
-    if create_structure:
-        # Generate honeycomb structure (solid pillars with base)
-        shape, info = create_honeycomb_structure(**params)
-        object_name = "HoneycombStructure"
+    # Boolean subtract
+    if holes:
+        print("Performing boolean operations...")
+        
+        # Fuse holes
+        if len(holes) > 1:
+            holes_union = holes[0]
+            for hole in holes[1:]:
+                holes_union = holes_union.fuse(hole)
+        else:
+            holes_union = holes[0]
+        
+        # Cut from plate
+        result = base_plate.cut(holes_union)
+        
+        print(f"Final volume: {result.Volume:.2f} mm³")
+        print(f"Original volume: {base_plate.Volume:.2f} mm³")
+        print(f"Material removed: {base_plate.Volume - result.Volume:.2f} mm³")
+        
+        return result
     else:
-        # Generate perforated plate (plate with holes)
-        shape, info = create_honeycomb_geometry(**params)
-        object_name = "PerforatedPlate"
-    
-    # Apply to FreeCAD document
-    obj = apply_to_freecad_document(shape, info, object_name=object_name)
-    
-    print("\n=== Operation completed successfully! ===")
-    if create_structure:
-        print(f"Total pillars: {info.get('total_pillars', 'N/A')}")
-        if 'total_thickness' in info:
-            print(f"Total thickness: {info['total_thickness']}mm")
-            print(f"  Base: {info.get('base_thickness', 0):.2f}mm")
-            print(f"  Pillars: {info.get('pillar_height', 0):.2f}mm")
-    else:
-        print(f"Total hexagon holes: {info.get('total_hexagons', 'N/A')}")
-    
-    print(f"Configuration: {info.get('rows', 0)} rows")
-    
-    return obj
+        print("No holes created")
+        return base_plate
 
+# Main execution
+if not FreeCAD.ActiveDocument:
+    FreeCAD.newDocument("HoleTest")
 
-# ============ MAIN EXECUTION ============
-if __name__ == "__main__":
-    
-    # Default parameters
-    params = {
-        'length': 400.0,        # X dimension (mm)
-        'width': 100.0,         # Y dimension (mm)
-        'thickness': 6.0,       # Z dimension - plate thickness OR total structure height
-        'hex_radius': 5.0,      # Hexagon radius (mm)
-        'wall_thickness': 2.0   # Wall between holes/pillars (mm)
-    }
-    
-    # User configuration
-    CREATE_STRUCTURE = False  # Set to True for pillars, False for perforated plate
-    
-    # Create the honeycomb geometry
-    result = create_honeycomb_plate(params, create_structure=CREATE_STRUCTURE)
-    
-    print(f"\nCreated object: {result.Name}")
-    print(f"Shape volume: {result.Shape.Volume:.2f} mm³")
-    print(f"Shape area: {result.Shape.Area:.2f} mm²")
+# Run test
+test_shape = create_circular_holes_test(
+    length=100,
+    width=80,
+    thickness=6,
+    hole_diameter=10,
+    spacing=15
+)
+
+# Create FreeCAD object to display
+obj = FreeCAD.ActiveDocument.addObject("Part::Feature", "TestPlateWithHoles")
+obj.Shape = test_shape
+
+# Set view
+FreeCAD.ActiveDocument.recompute()
+FreeCADGui.activeView().viewIsometric()
+FreeCADGui.activeView().fitAll()
+
+print("\n✅ Test complete - check the 3D view")
