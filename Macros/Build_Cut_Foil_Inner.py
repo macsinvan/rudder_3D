@@ -9,22 +9,21 @@ import sys
 import shutil
 
 # Foil Mold Importer for Boat Manufacturing - FreeCAD 1.1 Compatible
-# VERSION: 3.3.1 - WITH SHELL IMPORT AND INDIVIDUAL EXPORT
+# VERSION: 3.4.0 - WITH STOCK CUTOUT IMPORT
 
-print("=== FREECAD MOLD IMPORTER VERSION 3.3.1 - SHELL IMPORT ===")
-FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.3.1 - SHELL IMPORT ===\n")
+print("=== FREECAD MOLD IMPORTER VERSION 3.4.0 - STOCK CUTOUT ===")
+FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.4.0 - STOCK CUTOUT ===\n")
+
+# Stock positioning parameters
+POST_CENTRE_X = 323  # mm - X position for post centre
+POST_TOP_Z = -79     # mm - Z position for top of post
+POST_DIAMETER = 44   # mm - diameter of the post
+POST_DIAMETER_DELTA = 4  # mm - difference in post diameter for cutout stock
 
 # System configuration (not user parameters)
 helpers_path = os.path.expanduser("~/Rudder_Code/helpers")
 if helpers_path not in sys.path:
     sys.path.append(helpers_path)
-
-try:
-    import hex_array_helper
-    FreeCAD.Console.PrintMessage("Successfully imported hex_array_helper module\n")
-except ImportError as e:
-    FreeCAD.Console.PrintError(f"Could not import hex_array_helper: {str(e)}\n")
-    hex_array_helper = None
 
 try:
     import hole_array_helper
@@ -231,6 +230,89 @@ def import_foil_shell(boat_name):
             
     except Exception as e:
         FreeCAD.Console.PrintError(f"Failed to import foil shell: {str(e)}\n")
+        return None
+
+def import_stock_cutout(boat_name):
+    """Import and position the stock cutout STEP file"""
+    try:
+        boat_folder = os.path.expanduser(f"~/Rudder_Code/boats/{boat_name}")
+        cutout_folder = f"{boat_folder}/output/cutout"
+        stock_cutout_file = f"{cutout_folder}/{boat_name}_Stock_Cutout.step"
+        
+        if not os.path.exists(stock_cutout_file):
+            FreeCAD.Console.PrintMessage(f"ℹ️ No stock cutout found at: {stock_cutout_file}\n")
+            return None
+        
+        FreeCAD.Console.PrintMessage(f"\n=== Importing Stock Cutout ===\n")
+        
+        # Import the STEP file
+        imported_shape = Part.read(stock_cutout_file)
+        
+        # Create object in document
+        stock_cutout_obj = FreeCAD.ActiveDocument.addObject("Part::Feature", f"{boat_name}_Stock_Cutout")
+        stock_cutout_obj.Shape = imported_shape
+        
+        FreeCAD.Console.PrintMessage(f"✅ Imported stock cutout\n")
+        FreeCAD.Console.PrintMessage(f"   Bounds: {stock_cutout_obj.Shape.BoundBox}\n")
+        
+        # Rotate stock cutout 180° around Z-axis to orient tangs toward trailing edge
+        FreeCAD.Console.PrintMessage(f"🔄 Rotating stock cutout 180° to orient tangs correctly...\n")
+        stock_cutout_matrix = FreeCAD.Matrix()
+        stock_cutout_matrix.rotateZ(3.14159)  # 180° in radians
+        rotated_cutout_shape = stock_cutout_obj.Shape.transformGeometry(stock_cutout_matrix)
+        stock_cutout_obj.Shape = rotated_cutout_shape
+        FreeCAD.Console.PrintMessage(f"   ✅ Stock cutout rotated - tangs now point toward trailing edge\n")
+        
+        # Position the stock cutout based on post location
+        FreeCAD.Console.PrintMessage(f"📍 Positioning stock cutout based on post location...\n")
+        cutout_post_diameter = POST_DIAMETER + POST_DIAMETER_DELTA
+        cutout_target_x = POST_CENTRE_X  # Use the same X as regular stock
+        FreeCAD.Console.PrintMessage(f"   Post centre target: X={cutout_target_x}mm\n")
+        FreeCAD.Console.PrintMessage(f"   Post top target: Z={POST_TOP_Z}mm\n")
+        FreeCAD.Console.PrintMessage(f"   Post diameter for cutout: {cutout_post_diameter}mm\n")
+        
+        # Get current bounding box of stock cutout
+        current_cutout_bbox = stock_cutout_obj.Shape.BoundBox
+        
+        # Calculate post centre X position for cutout
+        current_cutout_post_centre_x = current_cutout_bbox.XMax - (cutout_post_diameter / 2)
+        current_cutout_post_top_z = current_cutout_bbox.ZMax
+        
+        FreeCAD.Console.PrintMessage(f"   Current cutout post centre X: {current_cutout_post_centre_x:.1f}mm\n")
+        FreeCAD.Console.PrintMessage(f"   Current cutout post top Z: {current_cutout_post_top_z:.1f}mm\n")
+        
+        # Calculate offset needed to move cutout post to target position
+        cutout_offset = FreeCAD.Vector(
+            cutout_target_x - current_cutout_post_centre_x,  # Move post centre to target X
+            0,                                                # Keep Y unchanged
+            POST_TOP_Z - current_cutout_post_top_z           # Move post top to specified Z
+        )
+        
+        # Apply translation to cutout
+        cutout_translation_matrix = FreeCAD.Matrix()
+        cutout_translation_matrix.move(cutout_offset)
+        positioned_cutout_shape = stock_cutout_obj.Shape.transformGeometry(cutout_translation_matrix)
+        stock_cutout_obj.Shape = positioned_cutout_shape
+        
+        # Report final cutout position
+        final_cutout_bbox = stock_cutout_obj.Shape.BoundBox
+        final_cutout_post_centre_x = final_cutout_bbox.XMax - (cutout_post_diameter / 2)
+        final_cutout_post_top_z = final_cutout_bbox.ZMax
+        
+        FreeCAD.Console.PrintMessage(f"   ✅ Stock cutout positioned:\n")
+        FreeCAD.Console.PrintMessage(f"      Post centre X: {final_cutout_post_centre_x:.1f}mm (target: {cutout_target_x}mm)\n")
+        FreeCAD.Console.PrintMessage(f"      Post top Z: {final_cutout_post_top_z:.1f}mm (target: {POST_TOP_Z}mm)\n")
+        
+        # Make visible with transparency
+        if hasattr(stock_cutout_obj, 'ViewObject') and stock_cutout_obj.ViewObject:
+            stock_cutout_obj.ViewObject.Visibility = True
+            stock_cutout_obj.ViewObject.Transparency = 70
+            stock_cutout_obj.ViewObject.ShapeColor = (0.8, 0.2, 0.2)  # Red tint to distinguish
+        
+        return stock_cutout_obj
+        
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"Failed to import stock cutout: {str(e)}\n")
         return None
 
 def configure_display(foil_object, cutting_plan):
@@ -940,6 +1022,9 @@ def run_plate_creation(boat_name="MackenSea",
         # Import foil shell if available
         shell = import_foil_shell(boat_name)
         
+        # Import stock cutout if available
+        stock_cutout = import_stock_cutout(boat_name)
+        
         FreeCADGui.updateGui()
         FreeCAD.ActiveDocument.recompute()
         
@@ -969,6 +1054,9 @@ def run_plate_creation(boat_name="MackenSea",
         if shell:
             FreeCAD.Console.PrintMessage(f"  Foil shell imported and visible\n")
         
+        if stock_cutout:
+            FreeCAD.Console.PrintMessage(f"  Stock cutout imported and positioned\n")
+        
         if cutting_plan:
             z_cuts = cutting_plan['cutting_plan']['z_cuts']
             x_cuts = cutting_plan['cutting_plan']['x_cuts']
@@ -987,12 +1075,12 @@ if __name__ == "__main__":
     run_plate_creation(
         boat_name="MackenSea",
         plate_thickness=6.0,
-        support_plate_thickness=2.0,
+        support_plate_thickness=3.0,
         plate_spacing=150.0,
         bounding_margin=10.0,
         hex_radius=5.0,
         hex_wall_thickness=3.0,
-        pattern_type='circle',  # 'hex', 'circle', or 'solid'
+        pattern_type='solid',  # 'hex', 'circle', or 'solid'
         hole_diameter=10.0,
         hole_spacing=25.0
     )
