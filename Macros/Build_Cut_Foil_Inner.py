@@ -6,12 +6,13 @@ import json
 import os
 import time
 import sys
+import shutil
 
 # Foil Mold Importer for Boat Manufacturing - FreeCAD 1.1 Compatible
-# VERSION: 3.2.0 - WITH CIRCULAR PERFORATION OPTION
+# VERSION: 3.3.0 - WITH INDIVIDUAL PLATE EXPORT
 
-print("=== FREECAD MOLD IMPORTER VERSION 3.2.0 - CIRCLE/HEX OPTIONS ===")
-FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.2.0 - CIRCLE/HEX OPTIONS ===\n")
+print("=== FREECAD MOLD IMPORTER VERSION 3.3.0 - INDIVIDUAL EXPORT ===")
+FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.3.0 - INDIVIDUAL EXPORT ===\n")
 
 # System configuration (not user parameters)
 helpers_path = os.path.expanduser("~/Rudder_Code/helpers")
@@ -759,106 +760,47 @@ def create_x_cut_plates(foil_object, cutting_plan, boat_name, plate_thickness, b
     
     return plates
 
-def merge_all_plates(boat_name):
-    """Merge all plates into a single unified structure"""
+def export_plates_for_printing(plates, boat_name):
+    """Export all plates as individual STL files to print_ready folder"""
     try:
-        FreeCAD.Console.PrintMessage("\n=== Merging All Plates ===\n")
+        FreeCAD.Console.PrintMessage("\n=== Exporting Plates for 3D Printing ===\n")
         FreeCADGui.updateGui()
         
-        # Find all plate objects
-        plates_to_merge = []
-        for obj in FreeCAD.ActiveDocument.Objects:
-            if any(x in obj.Label for x in ['_CutPlate_', '_SupportPlate_', '_Support_']):
-                plates_to_merge.append(obj)
-                FreeCAD.Console.PrintMessage(f"  Found plate: {obj.Label}\n")
-        
-        if not plates_to_merge:
-            FreeCAD.Console.PrintError("No plates found to merge!\n")
-            return None
-        
-        FreeCAD.Console.PrintMessage(f"\nMerging {len(plates_to_merge)} plates...\n")
-        FreeCADGui.updateGui()
-        
-        # Start with first plate shape
-        merged_shape = plates_to_merge[0].Shape
-        
-        # Fuse with remaining plates
-        for i, plate in enumerate(plates_to_merge[1:], 1):
-            FreeCAD.Console.PrintMessage(f"  Merging plate {i+1}/{len(plates_to_merge)}...\n")
-            FreeCADGui.updateGui()
-            
-            try:
-                merged_shape = merged_shape.fuse(plate.Shape)
-            except Exception as e:
-                FreeCAD.Console.PrintError(f"    Error merging {plate.Label}: {str(e)}\n")
-            
-            # Breathing room every 5 plates
-            if i % 5 == 0:
-                FreeCAD.ActiveDocument.recompute()
-                time.sleep(0.2)
-        
-        # Create merged object
-        merged_plates = FreeCAD.ActiveDocument.addObject("Part::Feature", "MergedPlates")
-        merged_plates.Shape = merged_shape
-        merged_plates.Label = f"{boat_name}_MergedPlates_Assembly"
-        
-        FreeCAD.Console.PrintMessage(f"\n✅ Successfully merged {len(plates_to_merge)} plates\n")
-        FreeCAD.Console.PrintMessage(f"  Merged volume: {merged_shape.Volume:.2f} mm³\n")
-        
-        # Hide individual plates after merging
-        for plate in plates_to_merge:
-            if hasattr(plate, 'ViewObject') and plate.ViewObject:
-                plate.ViewObject.Visibility = False
-        
-        FreeCAD.ActiveDocument.recompute()
-        return merged_plates
-        
-    except Exception as e:
-        FreeCAD.Console.PrintError(f"FATAL: merge_all_plates failed: {str(e)}\n")
-        raise
-
-def export_merged_plates(merged_plates, boat_name):
-    """Export merged plates as STL and STEP files"""
-    try:
-        FreeCAD.Console.PrintMessage("\n=== Exporting Merged Plates ===\n")
-        FreeCADGui.updateGui()
-        
-        # Construct export paths
+        # Construct export path
         boat_folder = os.path.expanduser(f"~/Rudder_Code/boats/{boat_name}")
-        output_folder = f"{boat_folder}/output"
-        cut_foil_folder = f"{output_folder}/cut_foil"
+        output_folder = f"{boat_folder}/output/cut_foil"
+        print_ready_folder = f"{output_folder}/print_ready"
         
-        # Create filenames
-        stl_file = f"{cut_foil_folder}/merged_inner_plates.stl"
-        step_file = f"{cut_foil_folder}/merged_inner_plates.step"
+        # Clear or create print_ready folder
+        if os.path.exists(print_ready_folder):
+            FreeCAD.Console.PrintMessage(f"Clearing existing print_ready folder...\n")
+            shutil.rmtree(print_ready_folder)
+        os.makedirs(print_ready_folder)
         
-        # Export as STL
-        FreeCAD.Console.PrintMessage(f"  Exporting STL to: {stl_file}\n")
-        FreeCADGui.updateGui()
+        FreeCAD.Console.PrintMessage(f"Export folder: {print_ready_folder}\n")
         
-        try:
-            import Mesh
-            Mesh.export([merged_plates], stl_file)
-            FreeCAD.Console.PrintMessage(f"    ✅ STL export successful\n")
-        except Exception as e:
-            FreeCAD.Console.PrintError(f"    ❌ STL export failed: {str(e)}\n")
+        # Export each plate as STL
+        import Mesh
+        exported_count = 0
         
-        # Export as STEP
-        FreeCAD.Console.PrintMessage(f"  Exporting STEP to: {step_file}\n")
-        FreeCADGui.updateGui()
+        for plate in plates:
+            try:
+                filename = f"{print_ready_folder}/{plate.Label}.stl"
+                Mesh.export([plate], filename)
+                exported_count += 1
+                FreeCAD.Console.PrintMessage(f"  ✅ Exported: {plate.Label}.stl\n")
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"  ❌ Failed to export {plate.Label}: {str(e)}\n")
         
-        try:
-            Import.export([merged_plates], step_file)
-            FreeCAD.Console.PrintMessage(f"    ✅ STEP export successful\n")
-        except Exception as e:
-            FreeCAD.Console.PrintError(f"    ❌ STEP export failed: {str(e)}\n")
-        
-        FreeCAD.Console.PrintMessage(f"\nExports complete:\n")
-        FreeCAD.Console.PrintMessage(f"  - STL: merged_inner_plates.stl\n")
-        FreeCAD.Console.PrintMessage(f"  - STEP: merged_inner_plates.step\n")
+        FreeCAD.Console.PrintMessage(f"\n✅ Successfully exported {exported_count} STL files\n")
+        FreeCAD.Console.PrintMessage(f"📁 Files ready in: {print_ready_folder}\n")
+        FreeCAD.Console.PrintMessage("\nNext steps:\n")
+        FreeCAD.Console.PrintMessage("1. Add your foil shell STL to the print_ready folder\n")
+        FreeCAD.Console.PrintMessage("2. Import all files into Bambu Lab Studio\n")
+        FreeCAD.Console.PrintMessage("3. Slice and print as single object\n")
         
     except Exception as e:
-        FreeCAD.Console.PrintError(f"FATAL: export_merged_plates failed: {str(e)}\n")
+        FreeCAD.Console.PrintError(f"FATAL: export_plates_for_printing failed: {str(e)}\n")
         raise
 
 def run_plate_creation(boat_name="MackenSea", 
@@ -969,19 +911,11 @@ def run_plate_creation(boat_name="MackenSea",
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Failed to create X-cut plates: {str(e)}\n")
         
-        # Merge all plates into single assembly
+        # Export plates individually for 3D printing instead of merging
         if all_plates:
-            try:
-                merged = merge_all_plates(boat_name)
-                if merged:
-                    FreeCAD.Console.PrintMessage(f"✅ Created merged plate assembly\n")
-                    
-                    # Export merged plates
-                    export_merged_plates(merged, boat_name)
-                    
-            except Exception as e:
-                FreeCAD.Console.PrintError(f"❌ Failed to merge plates: {str(e)}\n")
+            export_plates_for_printing(all_plates, boat_name)
         
+
         FreeCAD.ActiveDocument.recompute()
         
         # Summary
