@@ -179,6 +179,127 @@ def create_shell(solid_shape, target_thickness):
     # No valid shell created at all
     raise Exception(f"Could not create valid shell after {max_iterations} iterations")
 
+def create_split_shell(shell_shape, doc, split_at_y=0.0):
+    """
+    Split the shell along the x-z plane at specified y position
+    Returns: (upper_half, lower_half) or (positive_half, negative_half)
+    """
+    print("\n📐 Creating split shell for visualization")
+    
+    # Get bounding box to determine plane size
+    bbox = shell_shape.BoundBox
+    print(f"   Shell bbox: X[{bbox.XMin:.1f}, {bbox.XMax:.1f}], "
+          f"Y[{bbox.YMin:.1f}, {bbox.YMax:.1f}], Z[{bbox.ZMin:.1f}, {bbox.ZMax:.1f}]")
+    print(f"   Splitting at Y = {split_at_y:.1f}")
+    
+    # Create cutting plane - make it larger than the shape
+    plane_margin = 50.0  # Extra margin for plane
+    plane_width = bbox.XLength + 2 * plane_margin
+    plane_height = bbox.ZLength + 2 * plane_margin
+    plane_thickness = 0.1  # Very thin box to act as plane
+    
+    # Create cutting box (thin in Y direction)
+    cutting_box_positive = Part.makeBox(
+        plane_width,
+        bbox.YMax - split_at_y + plane_margin,  # From split plane to beyond max Y
+        plane_height,
+        Vector(
+            bbox.XMin - plane_margin,
+            split_at_y,
+            bbox.ZMin - plane_margin
+        )
+    )
+    
+    cutting_box_negative = Part.makeBox(
+        plane_width,
+        split_at_y - bbox.YMin + plane_margin,  # From min Y to split plane
+        plane_height,
+        Vector(
+            bbox.XMin - plane_margin,
+            bbox.YMin - plane_margin,
+            bbox.ZMin - plane_margin
+        )
+    )
+    
+    # Split the shell
+    try:
+        # Create positive half (Y > split_at_y)
+        positive_half = shell_shape.common(cutting_box_positive)
+        
+        # Create negative half (Y < split_at_y)
+        negative_half = shell_shape.common(cutting_box_negative)
+        
+        # Validate results
+        if positive_half.isNull() or not positive_half.isValid():
+            print("⚠️  Positive half invalid, attempting to fix...")
+            positive_half = positive_half.fix(0.1, 0.1, 0.1)
+            
+        if negative_half.isNull() or not negative_half.isValid():
+            print("⚠️  Negative half invalid, attempting to fix...")
+            negative_half = negative_half.fix(0.1, 0.1, 0.1)
+        
+        # Calculate volumes for verification
+        original_volume = shell_shape.Volume
+        positive_volume = positive_half.Volume if not positive_half.isNull() else 0
+        negative_volume = negative_half.Volume if not negative_half.isNull() else 0
+        total_split_volume = positive_volume + negative_volume
+        
+        print(f"   Original volume: {original_volume/1000:.2f} cm³")
+        print(f"   Positive half: {positive_volume/1000:.2f} cm³")
+        print(f"   Negative half: {negative_volume/1000:.2f} cm³")
+        print(f"   Volume difference: {abs(original_volume - total_split_volume)/1000:.3f} cm³")
+        
+        return positive_half, negative_half
+        
+    except Exception as e:
+        print(f"❌ Split failed: {e}")
+        return None, None
+
+def add_split_shell_to_document(shell_shape, doc, export_path_base):
+    """
+    Add split shell parts to the document and export them
+    """
+    # Create split shells
+    positive_half, negative_half = create_split_shell(shell_shape, doc)
+    
+    if positive_half is None or negative_half is None:
+        print("❌ Could not create split shells")
+        return None
+    
+    # Add positive half to document
+    if not positive_half.isNull():
+        shell_positive = doc.addObject("Part::Feature", "Shell_Positive_Half")
+        shell_positive.Shape = positive_half
+        shell_positive.ViewObject.ShapeColor = (0.0, 0.7, 0.3)  # Green
+        shell_positive.ViewObject.Transparency = 20
+        
+        # Export positive half
+        positive_step_path = export_path_base.replace(".step", "_positive_half.step")
+        Part.export([shell_positive], positive_step_path)
+        print(f"✅ Exported positive half: {positive_step_path}")
+    
+    # Add negative half to document  
+    if not negative_half.isNull():
+        shell_negative = doc.addObject("Part::Feature", "Shell_Negative_Half")
+        shell_negative.Shape = negative_half
+        shell_negative.ViewObject.ShapeColor = (0.0, 0.3, 0.7)  # Blue
+        shell_negative.ViewObject.Transparency = 20
+        
+        # Export negative half
+        negative_step_path = export_path_base.replace(".step", "_negative_half.step")
+        Part.export([shell_negative], negative_step_path)
+        print(f"✅ Exported negative half: {negative_step_path}")
+    
+    # Also create a single display half (just show positive half for cleaner view)
+    display_half = doc.addObject("Part::Feature", "Shell_Display_Half")
+    display_half.Shape = positive_half
+    display_half.ViewObject.ShapeColor = (0.0, 0.5, 0.8)
+    display_half.ViewObject.Transparency = 0  # Opaque for better visibility
+    display_half.ViewObject.LineWidth = 2.0
+    
+    # Hide the original full shell for clarity
+    return display_half
+
 def create_mold(cut_foil_shape):
     """
     Create a mold (negative) of the cut foil
@@ -390,6 +511,14 @@ def run():
         shell_foil.ViewObject.Transparency = 30
         
         print(f"✅ Shell created: {actual_thickness:.2f}mm thickness")
+        
+        # Create split shell for better visualization
+        split_display = add_split_shell_to_document(shell_shape, doc, SHELL_STEP)
+        if split_display:
+            # Hide full shell when split is shown
+            shell_foil.ViewObject.Visibility = False
+            print("✅ Split shell created for visualization")
+            print("   Tip: Toggle visibility of Shell_Foil to see full shell")
         
         # Verify shell thickness (volume-based check)
         solid_volume = cut_shape.Volume
