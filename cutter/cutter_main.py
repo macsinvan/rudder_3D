@@ -14,6 +14,7 @@ VERSION = "2.3.1"
 # Shell parameters
 SHELL_THICKNESS = 3.0      # mm target wall thickness
 SHELL_TOLERANCE = 0.1      # mm tolerance for shell creation
+MIN_SHELL_THICKNESS = 1.0  # mm minimum allowed thickness
 
 # Mold parameters
 MOLD_CLEARANCE = 5.0       # mm clearance around foil in all directions
@@ -75,6 +76,8 @@ def create_shell(solid_shape, target_thickness):
     # Iterative approach to get correct thickness
     max_iterations = 3
     thickness_multiplier = 1.0
+    last_valid_shell = None
+    last_thickness = None
     
     for iteration in range(max_iterations):
         # Calculate scale factor with multiplier
@@ -94,21 +97,64 @@ def create_shell(solid_shape, target_thickness):
         # Scale the shape: translate to origin, scale, translate back
         scaled_shape = solid_shape.copy()
         scaled_shape.translate(-center)
-        scaled_shape = scaled_shape.transformGeometry(matrix)
+        
+        # Try transformGeometry first, fall back to transformShape for complex geometries
+        try:
+            scaled_shape = scaled_shape.transformGeometry(matrix)
+        except:
+            print("   Using transformShape for complex geometry")
+            scaled_shape = scaled_shape.transformShape(matrix)
+        
         scaled_shape.translate(center)
         
+        # Check and fix invalid shapes
         if scaled_shape.isNull() or not scaled_shape.isValid():
-            raise Exception("Scaled shape is invalid")
+            print("   Scaled shape invalid, attempting to fix...")
+            try:
+                # Try fixing the shape
+                fixed = scaled_shape.fix(SHELL_TOLERANCE, SHELL_TOLERANCE, SHELL_TOLERANCE)
+                # Handle that fix() might return boolean
+                if isinstance(fixed, bool):
+                    if not fixed:
+                        # Adjust for next iteration - try thinner
+                        thickness_multiplier *= 0.8
+                        continue
+                else:
+                    scaled_shape = fixed
+                    if scaled_shape.isNull() or not scaled_shape.isValid():
+                        # Adjust for next iteration - try thinner
+                        thickness_multiplier *= 0.8
+                        continue
+            except:
+                # Adjust for next iteration - try thinner
+                thickness_multiplier *= 0.8
+                continue
         
         # Create shell by boolean cut
-        shell_shape = solid_shape.cut(scaled_shape)
+        try:
+            shell_shape = solid_shape.cut(scaled_shape)
+        except:
+            # Try fuzzy boolean with tolerance
+            print("   Using fuzzy boolean cut")
+            try:
+                shell_shape = solid_shape.cut(scaled_shape, SHELL_TOLERANCE)
+            except:
+                print("   Boolean cut failed")
+                thickness_multiplier *= 0.8
+                continue
         
         if shell_shape.isNull() or not shell_shape.isValid():
-            raise Exception("Shell creation failed - boolean cut resulted in invalid shape")
+            print("   Shell invalid after boolean")
+            thickness_multiplier *= 0.8
+            continue
         
         # Verify thickness
         measured_thickness, passes = verify_shell_thickness(shell_shape, actual_thickness)
         print(f"   Measured thickness: {measured_thickness:.2f}mm (target: {actual_thickness:.2f}mm)")
+        
+        # Store this as a valid result
+        last_valid_shell = shell_shape
+        last_thickness = measured_thickness
         
         if passes:
             print(f"   ✅ Thickness within tolerance")
@@ -125,9 +171,13 @@ def create_shell(solid_shape, target_thickness):
         # Limit multiplier to reasonable range
         thickness_multiplier = max(0.1, min(20.0, thickness_multiplier))
     
-    # After max iterations, return best attempt
-    print(f"   ⚠️  Could not achieve exact thickness after {max_iterations} iterations")
-    return shell_shape, measured_thickness
+    # If we have any valid shell, return it even if not perfect thickness
+    if last_valid_shell is not None:
+        print(f"   ⚠️  Using best result: {last_thickness:.2f}mm after {max_iterations} iterations")
+        return last_valid_shell, last_thickness
+    
+    # No valid shell created at all
+    raise Exception(f"Could not create valid shell after {max_iterations} iterations")
 
 def create_mold(cut_foil_shape):
     """

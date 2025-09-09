@@ -1,5 +1,6 @@
 """
 Foil 3D Pipeline - Converts STEP outline profiles to 3D NACA foil via chord slicing and lofting.
+Version 1.4.0 - Adaptive slicing based on profile curvature
 Exports both STEP and STL files.
 """
 
@@ -11,10 +12,10 @@ import math
 
 # Configuration - Boat-Centric
 BOAT_NAME = "MackenSea"  # Single source of truth
-VERSION = "1.3.0"  # Simplified version
+VERSION = "1.4.0"  # Adaptive slicing version
 
 # COMPLEXITY CONTROL - Set to 1 for full quality, higher for faster processing
-COMPLEXITY_REDUCTION = 3  # Reduces point count and increases spacing
+COMPLEXITY_REDUCTION = 1  # Reduces point count and adjusts spacing
 
 # Paths
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
@@ -29,17 +30,150 @@ FOIL_STL_FILE = f"{BOAT_NAME}_Foil.stl"
 # Configuration with complexity reduction
 CONFIG = {
     'apex_at_top': 64.0,        # mm measured thickness at top
-    'naca_points': max(20, 80 // COMPLEXITY_REDUCTION),  # 26 points (was 80)
-    'slice_spacing': 3.0 * COMPLEXITY_REDUCTION,  # 9mm (was 3mm)
+    'naca_points': max(20, 80 // COMPLEXITY_REDUCTION),  # Points per section
+    'base_slice_spacing': 3.0 * COMPLEXITY_REDUCTION,  # Base spacing
+    'min_slice_spacing': 2.0,    # mm minimum spacing even in high curvature
+    'max_slice_spacing': 15.0,   # mm maximum spacing in straight sections
+    'curvature_samples': 50,     # Number of points to sample for curvature analysis
     'min_chord_length': 10.0,    # mm minimum chord to include
-    'stl_tolerance': min(0.2, 0.05 * COMPLEXITY_REDUCTION),  # 0.15mm (was 0.05)
+    'stl_tolerance': min(0.2, 0.05 * COMPLEXITY_REDUCTION),  # STL tolerance
     'plane_size': 1000,          # mm sectioning plane size
 }
 
 print(f"🔧 Complexity reduction: {COMPLEXITY_REDUCTION}x")
 print(f"   Points per section: {CONFIG['naca_points']} (was 80)")
-print(f"   Slice spacing: {CONFIG['slice_spacing']}mm (was 3.0mm)")
-print(f"   STL tolerance: {CONFIG['stl_tolerance']}mm (was 0.05mm)")
+print(f"   Base slice spacing: {CONFIG['base_slice_spacing']}mm")
+print(f"   Adaptive spacing: {CONFIG['min_slice_spacing']}-{CONFIG['max_slice_spacing']}mm")
+print(f"   STL tolerance: {CONFIG['stl_tolerance']}mm")
+
+
+def analyze_profile_curvature(wire, num_samples=50):
+    """
+    Analyze the curvature along the wire to identify regions needing more slices.
+    Returns: list of (z_position, curvature_value) tuples
+    """
+    # Get bounds
+    bb = wire.BoundBox
+    z_min, z_max = bb.ZMin, bb.ZMax
+    z_range = z_max - z_min
+    
+    curvatures = []
+    
+    # Sample points along the wire height
+    for i in range(num_samples):
+        z = z_min + (i / (num_samples - 1)) * z_range
+        
+        # Create cutting plane
+        plane = Part.makePlane(CONFIG['plane_size'], CONFIG['plane_size'], 
+                              Vector(0, 0, z), Vector(0, 0, 1))
+        section = wire.section(plane)
+        
+        if len(section.Vertexes) >= 2:
+            # Get chord endpoints
+            pts = sorted([v.Point for v in section.Vertexes], key=lambda p: p.x)
+            
+            # Calculate local "curvature" as change in chord length
+            if i > 0 and len(curvatures) > 0:
+                prev_chord = curvatures[-1][2] if len(curvatures[-1]) > 2 else 0
+                curr_chord = pts[-1].x - pts[0].x
+                
+                # Curvature metric: rate of chord change
+                curvature = abs(curr_chord - prev_chord) / (z_range / num_samples)
+                curvatures.append((z, curvature, curr_chord))
+            else:
+                # First point, no curvature yet
+                curr_chord = pts[-1].x - pts[0].x
+                curvatures.append((z, 0.0, curr_chord))
+    
+    # Normalize curvatures
+    if curvatures:
+        max_curv = max(c[1] for c in curvatures)
+        if max_curv > 0:
+            curvatures = [(z, c/max_curv, chord) for z, c, chord in curvatures]
+    
+    return curvatures
+
+
+def generate_adaptive_levels(wire, base_spacing, min_spacing, max_spacing):
+    """
+    Generate slice levels with adaptive spacing based on profile curvature.
+    More slices where profile changes rapidly, fewer in uniform regions.
+    """
+    bb = wire.BoundBox
+    z_min, z_max = bb.ZMin, bb.ZMax
+    z_range = z_max - z_min
+    
+    print(f"🔍 Analyzing profile curvature...")
+    
+    # Analyze curvature
+    curvatures = analyze_profile_curvature(wire, CONFIG['curvature_samples'])
+    
+    if not curvatures:
+        # Fallback to uniform spacing
+        print("   Using uniform spacing (curvature analysis failed)")
+        num_levels = int(z_range / base_spacing) + 1
+        return [z_min + i * base_spacing for i in range(num_levels)]
+    
+    # Generate adaptive levels
+    levels = [z_min]  # Start at bottom
+    current_z = z_min
+    
+    while current_z < z_max - min_spacing:
+        # Find curvature at current position
+        current_curvature = 0.0
+        for i in range(len(curvatures) - 1):
+            if curvatures[i][0] <= current_z <= curvatures[i+1][0]:
+                # Interpolate curvature
+                t = (current_z - curvatures[i][0]) / (curvatures[i+1][0] - curvatures[i][0])
+                current_curvature = curvatures[i][1] * (1-t) + curvatures[i+1][1] * t
+                break
+        
+        # Calculate spacing based on curvature
+        # High curvature (1.0) -> min_spacing
+        # Low curvature (0.0) -> max_spacing
+        spacing = min_spacing + (1.0 - current_curvature) * (max_spacing - min_spacing)
+        
+        # Apply complexity reduction influence
+        spacing = min(max_spacing, spacing * (1 + (COMPLEXITY_REDUCTION - 1) * 0.3))
+        
+        # Ensure we don't overshoot
+        next_z = min(current_z + spacing, z_max)
+        
+        # Add level if it's not too close to the end
+        if next_z < z_max - min_spacing * 0.5:
+            levels.append(next_z)
+            current_z = next_z
+        else:
+            break
+    
+    # Always include the top
+    if levels[-1] != z_max:
+        levels.append(z_max)
+    
+    # Report spacing distribution
+    spacings = [levels[i+1] - levels[i] for i in range(len(levels)-1)]
+    avg_spacing = sum(spacings) / len(spacings) if spacings else base_spacing
+    
+    print(f"✨ Adaptive slicing complete:")
+    print(f"   Levels: {len(levels)} (vs {int(z_range/base_spacing)+1} uniform)")
+    print(f"   Spacing: min={min(spacings):.1f}mm, avg={avg_spacing:.1f}mm, max={max(spacings):.1f}mm")
+    
+    # Identify regions
+    high_detail_zones = []
+    low_detail_zones = []
+    for i, spacing in enumerate(spacings):
+        z_mid = (levels[i] + levels[i+1]) / 2
+        if spacing <= base_spacing * 0.7:
+            high_detail_zones.append(f"{levels[i]:.0f}-{levels[i+1]:.0f}")
+        elif spacing >= base_spacing * 1.5:
+            low_detail_zones.append(f"{levels[i]:.0f}-{levels[i+1]:.0f}")
+    
+    if high_detail_zones:
+        print(f"   High detail zones (Z): {', '.join(high_detail_zones[:3])}{'...' if len(high_detail_zones) > 3 else ''}")
+    if low_detail_zones:
+        print(f"   Low detail zones (Z): {', '.join(low_detail_zones[:3])}{'...' if len(low_detail_zones) > 3 else ''}")
+    
+    return levels
 
 
 def naca_coordinates(chord_length, thickness_percent, num_pts=80):
@@ -131,6 +265,7 @@ def build_foil_from_step(doc):
     """Main pipeline: STEP → chords → NACA sections → loft → export."""
     
     print(f"\n🛥️ Foil Build v{VERSION} for {BOAT_NAME}")
+    print(f"   Using adaptive slicing for optimal geometry")
     
     # Get input file
     step_path = get_profiles_step_path()
@@ -157,14 +292,15 @@ def build_foil_from_step(doc):
         feat.ViewObject.ShapeColor = color
         feat.ViewObject.LineWidth = 2
     
-    # Generate slice levels
-    bb = shrunk_wire.BoundBox
-    z_min, z_max = bb.ZMin, bb.ZMax
-    num_levels = int((z_max - z_min) / CONFIG['slice_spacing']) + 1
-    levels = [z_min + i * CONFIG['slice_spacing'] for i in range(num_levels)]
-    if levels[-1] != z_max:
-        levels.append(z_max)
-    print(f"🔪 Slicing at {len(levels)} levels (every {CONFIG['slice_spacing']}mm)")
+    # Generate adaptive slice levels based on profile curvature
+    levels = generate_adaptive_levels(
+        shrunk_wire, 
+        CONFIG['base_slice_spacing'],
+        CONFIG['min_slice_spacing'],
+        CONFIG['max_slice_spacing']
+    )
+    
+    print(f"🔪 Slicing at {len(levels)} adaptive levels")
     
     # Slice into chords
     chords = []
@@ -214,8 +350,12 @@ def build_foil_from_step(doc):
         section_wires.append(wire)
     
     print(f"✅ Generated {len(section_wires)} NACA sections with {CONFIG['naca_points']} points each")
-    estimated_points = len(section_wires) * CONFIG['naca_points']
-    print(f"📊 Estimated total points: ~{estimated_points:,} (vs ~{200*80:,} at full quality)")
+    
+    # Estimate complexity reduction
+    uniform_levels = int((levels[-1] - levels[0]) / CONFIG['base_slice_spacing']) + 1
+    complexity_reduction = (1 - len(levels) / uniform_levels) * 100
+    print(f"📊 Complexity reduced by {complexity_reduction:.0f}% vs uniform slicing")
+    print(f"   Total points: ~{len(section_wires) * CONFIG['naca_points']:,} (vs ~{uniform_levels * CONFIG['naca_points']:,} uniform)")
     
     # Loft sections
     loft = Part.makeLoft(section_wires, solid=True, ruled=False)
@@ -232,7 +372,7 @@ def build_foil_from_step(doc):
     export_geometry(foil, BOAT_NAME + "_Foil")
     
     doc.recompute()
-    print(f"🛥️ {BOAT_NAME} foil complete with {COMPLEXITY_REDUCTION}x complexity reduction!\n")
+    print(f"🛥️ {BOAT_NAME} foil complete with adaptive slicing!\n")
 
 
 # Run the build

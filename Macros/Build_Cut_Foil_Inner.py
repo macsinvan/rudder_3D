@@ -16,7 +16,7 @@ FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.4.0 - STOCK CU
 
 # Stock positioning parameters
 POST_CENTRE_X = 323  # mm - X position for post centre
-POST_TOP_Z = -77     # mm - Z position for top of post
+POST_TOP_Z = -77     # mm - Z position for top of post (changed from -79)
 POST_DIAMETER = 44   # mm - diameter of the post
 POST_DIAMETER_DELTA = 4  # mm - difference in post diameter for cutout stock
 
@@ -972,7 +972,18 @@ def export_plates_for_printing(plates, boat_name, cut_shell=None):
         for plate in plates:
             try:
                 filename = f"{print_ready_folder}/{plate.Label}.stl"
-                Mesh.export([plate], filename)
+                # Convert Part to Mesh with better parameters - NO REPAIR
+                mesh_obj = FreeCAD.ActiveDocument.addObject("Mesh::Feature", "TempPlateMesh")
+                mesh_obj.Mesh = MeshPart.meshFromShape(
+                    Shape=plate.Shape,
+                    LinearDeflection=0.05,  # Finer mesh
+                    AngularDeflection=0.523599,  # 30 degrees
+                    Relative=False
+                )
+                
+                # Export directly without repair
+                Mesh.export([mesh_obj], filename)
+                FreeCAD.ActiveDocument.removeObject(mesh_obj.Name)  # Clean up temp object
                 exported_count += 1
                 FreeCAD.Console.PrintMessage(f"  ✅ Exported: {plate.Label}.stl\n")
             except Exception as e:
@@ -982,9 +993,16 @@ def export_plates_for_printing(plates, boat_name, cut_shell=None):
         if cut_shell:
             try:
                 filename = f"{print_ready_folder}/{cut_shell.Label}.stl"
-                # Convert Part shape to mesh before exporting
-                mesh_obj = FreeCAD.ActiveDocument.addObject("Mesh::Feature", "TempMesh")
-                mesh_obj.Mesh = MeshPart.meshFromShape(cut_shell.Shape, LinearDeflection=0.1)
+                # Convert Part shape to mesh with finer parameters - NO REPAIR
+                mesh_obj = FreeCAD.ActiveDocument.addObject("Mesh::Feature", "TempShellMesh")
+                mesh_obj.Mesh = MeshPart.meshFromShape(
+                    Shape=cut_shell.Shape,
+                    LinearDeflection=0.05,  # Finer mesh for better quality
+                    AngularDeflection=0.523599,  # 30 degrees
+                    Relative=False
+                )
+                
+                # Export directly without repair
                 Mesh.export([mesh_obj], filename)
                 FreeCAD.ActiveDocument.removeObject(mesh_obj.Name)  # Clean up temp object
                 exported_count += 1
@@ -996,7 +1014,8 @@ def export_plates_for_printing(plates, boat_name, cut_shell=None):
         FreeCAD.Console.PrintMessage(f"📁 Files ready in: {print_ready_folder}\n")
         FreeCAD.Console.PrintMessage("\nNext steps:\n")
         FreeCAD.Console.PrintMessage("1. Import all files into Bambu Lab Studio\n")
-        FreeCAD.Console.PrintMessage("2. Slice and print as single object\n")
+        FreeCAD.Console.PrintMessage("2. Use slicer's mesh repair if needed for non-manifold edges\n")
+        FreeCAD.Console.PrintMessage("3. Slice and print as single object\n")
         
     except Exception as e:
         FreeCAD.Console.PrintError(f"FATAL: export_plates_for_printing failed: {str(e)}\n")
@@ -1154,6 +1173,7 @@ def run_plate_creation(boat_name="MackenSea",
         
         if stock_cutout:
             FreeCAD.Console.PrintMessage(f"  Stock cutout: APPLIED to all plates and shell\n")
+            FreeCAD.Console.PrintMessage(f"  Stock position: POST_TOP_Z = {POST_TOP_Z}mm\n")
         
         if cutting_plan:
             z_cuts = cutting_plan['cutting_plan']['z_cuts']
