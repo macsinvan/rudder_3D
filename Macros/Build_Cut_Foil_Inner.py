@@ -16,7 +16,7 @@ FreeCAD.Console.PrintMessage("=== FREECAD MOLD IMPORTER VERSION 3.4.0 - STOCK CU
 
 # Stock positioning parameters
 POST_CENTRE_X = 323  # mm - X position for post centre
-POST_TOP_Z = -77     # mm - Z position for top of post (changed from -79)
+POST_TOP_Z = -73     # mm - Z position for top of post (changed from -79)
 POST_DIAMETER = 44   # mm - diameter of the post
 POST_DIAMETER_DELTA = 4  # mm - difference in post diameter for cutout stock
 
@@ -1198,7 +1198,7 @@ if __name__ == "__main__":
         bounding_margin=10.0,
         hex_radius=5.0,
         hex_wall_thickness=3.0,
-        pattern_type='solid',  # 'hex', 'circle', or 'solid'
+        pattern_type='circle',  # 'hex', 'circle', or 'solid'
         hole_diameter=10.0,
         hole_spacing=25.0
     )
