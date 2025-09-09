@@ -1,7 +1,6 @@
-# FreeCAD Macro for Test Cylinder - Foam Filling Tests
-# Version: 1.1 Compatible
-# Description: Creates a parametric solid cylinder for testing 3D printing 
-#              and marine foam filling techniques with automatic STL export
+# FreeCAD Macro for Simple Test Cylinder - Foam Filling Tests
+# Version: 2.0 - Simplified
+# Description: Creates a simple parametric cylinder for 3D printing and foam filling tests
 
 import FreeCAD
 import FreeCADGui
@@ -11,7 +10,7 @@ import os
 from FreeCAD import Base
 
 # Clear console for clean output
-FreeCAD.Console.PrintMessage("Creating Test Cylinder for Foam Filling...\n")
+FreeCAD.Console.PrintMessage("Creating Test Cylinder...\n")
 
 # ==============================================================================
 # PARAMETERS - Modify these values for different test cylinders
@@ -19,19 +18,14 @@ FreeCAD.Console.PrintMessage("Creating Test Cylinder for Foam Filling...\n")
 
 # Cylinder dimensions (in mm)
 cylinder_diameter = 50.0  # Diameter of the cylinder
-cylinder_height = 200.0   # Height of the cylinder
+cylinder_height = 50.0    # Height of the cylinder
 
-# Optional parameters for hollow version testing
+# Optional parameters for hollow version
 create_hollow = False     # Set to True to create a hollow cylinder
 wall_thickness = 3.0      # Wall thickness if hollow (in mm)
 
-# Optional foam injection hole parameters
-add_injection_hole = False  # Set to True to add a foam injection hole
-injection_hole_diameter = 5.0  # Diameter of injection hole (in mm)
-injection_hole_height = 50.0  # Height from bottom for injection hole (in mm)
-
 # STL Export settings
-auto_export_stl = True  # Automatically export to STL after creation
+auto_export_stl = True    # Automatically export to STL after creation
 stl_mesh_tolerance = 0.1  # Mesh tolerance in mm (lower = higher quality)
 
 # ==============================================================================
@@ -43,7 +37,7 @@ def create_test_cylinder():
     
     # Create a new document if none exists
     if not FreeCAD.ActiveDocument:
-        FreeCAD.newDocument("FoamTestCylinder")
+        FreeCAD.newDocument("TestCylinder")
     
     doc = FreeCAD.ActiveDocument
     
@@ -51,7 +45,7 @@ def create_test_cylinder():
     cylinder_radius = cylinder_diameter / 2.0
     
     # Create the main cylinder
-    FreeCAD.Console.PrintMessage(f"Creating cylinder: Diameter={cylinder_diameter}mm, Height={cylinder_height}mm\n")
+    FreeCAD.Console.PrintMessage(f"Creating cylinder: {cylinder_diameter}mm dia x {cylinder_height}mm height\n")
     
     if create_hollow:
         # Create hollow cylinder using two cylinders and boolean cut
@@ -87,33 +81,6 @@ def create_test_cylinder():
         )
         FreeCAD.Console.PrintMessage("Created solid cylinder\n")
     
-    # Add injection hole if requested
-    if add_injection_hole:
-        hole_radius = injection_hole_diameter / 2.0
-        
-        # Create horizontal hole for foam injection
-        hole_cylinder = Part.makeCylinder(
-            hole_radius,
-            cylinder_radius + 10,  # Make sure it goes through the wall
-            Base.Vector(-cylinder_radius - 5, 0, injection_hole_height),
-            Base.Vector(1, 0, 0)  # Horizontal direction
-        )
-        
-        # Cut the hole from the main shape
-        main_shape = main_shape.cut(hole_cylinder)
-        FreeCAD.Console.PrintMessage(f"Added injection hole: {injection_hole_diameter}mm diameter at {injection_hole_height}mm height\n")
-        
-        # Optional: Add air escape hole at top
-        if create_hollow:
-            escape_hole = Part.makeCylinder(
-                2.0,  # 2mm escape hole
-                wall_thickness + 5,
-                Base.Vector(0, 0, cylinder_height - wall_thickness - 2),
-                Base.Vector(0, 0, 1)
-            )
-            main_shape = main_shape.cut(escape_hole)
-            FreeCAD.Console.PrintMessage("Added 2mm air escape hole at top\n")
-    
     # Create the FreeCAD object
     cylinder_obj = doc.addObject("Part::Feature", "TestCylinder")
     cylinder_obj.Shape = main_shape
@@ -129,22 +96,25 @@ def create_test_cylinder():
         cylinder_obj.addProperty("App::PropertyLength", "WallThickness", "Dimensions", "Wall thickness for hollow cylinder")
         cylinder_obj.WallThickness = wall_thickness
     
-    if add_injection_hole:
-        cylinder_obj.addProperty("App::PropertyLength", "InjectionHoleDiameter", "Foam", "Diameter of foam injection hole")
-        cylinder_obj.InjectionHoleDiameter = injection_hole_diameter
-        
-        cylinder_obj.addProperty("App::PropertyLength", "InjectionHoleHeight", "Foam", "Height of injection hole from bottom")
-        cylinder_obj.InjectionHoleHeight = injection_hole_height
+    # Calculate volume
+    volume_cm3 = main_shape.Volume / 1000
     
     # Recompute and fit view
     doc.recompute()
-    FreeCADGui.ActiveDocument.ActiveView.fitAll()
+    
+    # Try to fit view if GUI is available
+    try:
+        FreeCADGui.ActiveDocument.ActiveView.fitAll()
+        FreeCADGui.ActiveDocument.ActiveView.viewIsometric()
+    except:
+        pass  # GUI commands not available in console mode
     
     # Print summary
     FreeCAD.Console.PrintMessage("\n" + "="*50 + "\n")
-    FreeCAD.Console.PrintMessage("Test Cylinder Created Successfully!\n")
+    FreeCAD.Console.PrintMessage("CYLINDER CREATED SUCCESSFULLY!\n")
     FreeCAD.Console.PrintMessage(f"Type: {'Hollow' if create_hollow else 'Solid'}\n")
     FreeCAD.Console.PrintMessage(f"Dimensions: {cylinder_diameter}mm dia x {cylinder_height}mm height\n")
+    FreeCAD.Console.PrintMessage(f"Volume: {volume_cm3:.1f} cm³\n")
     
     if create_hollow:
         internal_volume = 3.14159 * (cylinder_radius - wall_thickness)**2 * (cylinder_height - wall_thickness)
@@ -193,14 +163,24 @@ def export_to_stl(obj, filename=None):
         
         # Print slicer recommendations
         FreeCAD.Console.PrintMessage("\n" + "-"*50 + "\n")
-        FreeCAD.Console.PrintMessage("RECOMMENDED BAMBU STUDIO SETTINGS:\n")
-        FreeCAD.Console.PrintMessage("For Foam Filling:\n")
-        FreeCAD.Console.PrintMessage("  • Infill: 0-5% (Lightning or Lines)\n")
+        FreeCAD.Console.PrintMessage("RECOMMENDED BAMBU STUDIO SETTINGS:\n\n")
+        FreeCAD.Console.PrintMessage("For Foam Filling (drill hole after printing):\n")
+        FreeCAD.Console.PrintMessage("  • Infill Pattern: GYROID (best for foam flow)\n")
+        FreeCAD.Console.PrintMessage("  • Infill Density: 5-10%\n")
         FreeCAD.Console.PrintMessage("  • Wall Loops: 2-3\n")
-        FreeCAD.Console.PrintMessage("  • Top/Bottom Layers: 3\n")
+        FreeCAD.Console.PrintMessage("  • Top/Bottom Layers: 3-4\n")
         FreeCAD.Console.PrintMessage("  • Layer Height: 0.2-0.3mm\n")
-        FreeCAD.Console.PrintMessage("  • DISABLE 'Ensure vertical shell thickness'\n")
-        FreeCAD.Console.PrintMessage("  • Set 'Minimum sparse infill area' to 1000mm²\n")
+        FreeCAD.Console.PrintMessage("\nWhy Gyroid is Best:\n")
+        FreeCAD.Console.PrintMessage("  • Continuous 3D channels in all directions\n")
+        FreeCAD.Console.PrintMessage("  • No dead ends - foam flows everywhere\n")
+        FreeCAD.Console.PrintMessage("  • Strong isotropic structure\n")
+        FreeCAD.Console.PrintMessage("  • Perfect for liquid/foam distribution\n")
+        FreeCAD.Console.PrintMessage("\nPost-Processing:\n")
+        FreeCAD.Console.PrintMessage("  1. Drill 5mm hole at top center\n")
+        FreeCAD.Console.PrintMessage("  2. Drill depth: 35-40mm\n")
+        FreeCAD.Console.PrintMessage("  3. Inject marine foam - it will flow through gyroid channels\n")
+        FreeCAD.Console.PrintMessage("  4. Fill to ~75% capacity (foam expands)\n")
+        FreeCAD.Console.PrintMessage("  5. Allow 24 hours to cure\n")
         FreeCAD.Console.PrintMessage("="*50 + "\n")
         
         return full_path
@@ -223,31 +203,28 @@ if auto_export_stl:
     if stl_path:
         FreeCAD.Console.PrintMessage("\nReady for 3D printing!\n")
         FreeCAD.Console.PrintMessage("Import the STL file into Bambu Studio to begin slicing.\n")
-        FreeCAD.Console.PrintMessage("\nFor foam injection after printing:\n")
-        FreeCAD.Console.PrintMessage("  1. Drill 5mm hole at 50mm height if not included\n")
-        FreeCAD.Console.PrintMessage("  2. Fill to ~75% with marine expanding foam\n")
-        FreeCAD.Console.PrintMessage("  3. Allow foam to expand and cure\n")
 else:
     FreeCAD.Console.PrintMessage("\nManual STL export required:\n")
     FreeCAD.Console.PrintMessage("File → Export → Select STL format\n")
 
 # Optional: Create multiple test cylinders with different parameters
-# Uncomment the following to create a set of test pieces
+# Uncomment and modify the following to create a batch of test pieces
 
 """
-# Example: Create multiple test pieces with STL export
+# Example: Create multiple test pieces
 test_configs = [
-    {"dia": 30, "height": 100, "hollow": False, "name": "Small_Solid"},
+    {"dia": 30, "height": 30, "name": "Small"},
+    {"dia": 50, "height": 50, "name": "Medium"},
+    {"dia": 70, "height": 70, "name": "Large"},
 ]
 
 for i, config in enumerate(test_configs):
     cylinder_diameter = config["dia"]
     cylinder_height = config["height"]
-    create_hollow = config["Solid"]
     
     cylinder = create_test_cylinder()
-    cylinder.Placement.Base.x = i * 60  # Space them out
-    cylinder.Label = config["name"]
+    cylinder.Placement.Base.x = i * (config["dia"] + 10)  # Space them out
+    cylinder.Label = f"TestCylinder_{config['name']}"
     
     # Export each test piece
     export_to_stl(cylinder, f"TestCylinder_{config['name']}.stl")

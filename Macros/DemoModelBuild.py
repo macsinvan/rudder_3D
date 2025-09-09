@@ -11,13 +11,27 @@ import Part
 print("Imports the Cut Foil and Stock and prepares for demo print")
 # Configuration
 BOAT_NAME = "MackenSea"
-VERSION = "1.0.3"  # Updated version
+VERSION = "1.0.8"  # Updated version - now performs actual cutting!
 
 # Stock positioning parameters
 POST_CENTRE_X = 323  # mm - X position for post centre
 POST_TOP_Z = -79     # mm - Z position for top of post
 POST_DIAMETER = 44   # mm - diameter of the post
 POST_DIAMETER_DELTA = 4  # mm - difference in post diameter for cutout stock
+
+# Printer specifications (Bambu Labs HD2)
+HD2_BUILD_X = 325  # mm
+HD2_BUILD_Y = 320  # mm  
+HD2_BUILD_Z = 325  # mm
+PRINT_MAX_SIZE = 310  # mm - Using 310mm (320mm - 10mm allowance) for all dimensions
+
+# Alignment hole parameters - ENHANCED
+ALIGNMENT_HOLE_DIAMETER = 6  # mm
+ALIGNMENT_HOLE_DEPTH = 25  # mm - increased for better alignment
+EDGE_INSET = 20  # mm - distance from edges
+Y_SPLIT_HOLES = 12  # number of holes for port/starboard split
+Z_CUT_HOLES = 8  # number of holes for horizontal cuts
+X_CUT_HOLES = 6  # number of holes for vertical cuts
 
 # Paths
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
@@ -61,8 +75,375 @@ def import_step_file(step_path, doc, object_name):
        return None
 
 
+def create_alignment_holes_enhanced(shape, cut_plane, cut_position, z_bounds=None):
+   """Create enhanced alignment holes on a cut face.
+   
+   Args:
+       shape: The shape to add holes to
+       cut_plane: 'X', 'Y', or 'Z' - the plane of the cut
+       cut_position: The position of the cut plane
+       z_bounds: (z_min, z_max) for X cuts to constrain holes to specific slice
+   
+   Returns:
+       Modified shape with alignment holes
+   """
+   from FreeCAD import Vector, Base
+   import math
+   
+   bbox = shape.BoundBox
+   holes = []
+   holes_created = 0
+   
+   # Define hole positions based on cut plane
+   if cut_plane == 'Y':  # Port/Starboard split - most holes needed
+       # Get bounds at Y=0
+       x_min, x_max = bbox.XMin + EDGE_INSET, bbox.XMax - EDGE_INSET
+       z_min, z_max = bbox.ZMin + EDGE_INSET, bbox.ZMax - EDGE_INSET
+       
+       # Create grid of holes
+       x_count = 3  # 3 columns
+       z_count = 4  # 4 rows = 12 total holes
+       
+       for i in range(x_count):
+           for j in range(z_count):
+               x = x_min + (x_max - x_min) * (i / (x_count - 1))
+               z = z_min + (z_max - z_min) * (j / (z_count - 1))
+               
+               # Create holes from both sides
+               for direction in [-1, 1]:
+                   y_start = cut_position + (ALIGNMENT_HOLE_DEPTH/2 * direction)
+                   cylinder = Part.makeCylinder(
+                       ALIGNMENT_HOLE_DIAMETER / 2,
+                       ALIGNMENT_HOLE_DEPTH,
+                       Base.Vector(x, y_start, z),
+                       Base.Vector(0, -direction, 0)
+                   )
+                   holes.append(cylinder)
+       
+       holes_created = x_count * z_count * 2  # Both sides
+   
+   elif cut_plane == 'Z':  # Horizontal slices
+       # Get cross-section bounds at this Z position
+       test_box = Part.makeBox(
+           bbox.XLength + 100,
+           bbox.YLength + 100,
+           1,
+           Base.Vector(bbox.XMin - 50, bbox.YMin - 50, cut_position - 0.5)
+       )
+       try:
+           intersection = shape.common(test_box)
+           int_bbox = intersection.BoundBox
+           x_min, x_max = int_bbox.XMin + EDGE_INSET, int_bbox.XMax - EDGE_INSET
+           y_min, y_max = int_bbox.YMin + EDGE_INSET/2, int_bbox.YMax - EDGE_INSET/2
+       except:
+           x_min, x_max = bbox.XMin + EDGE_INSET, bbox.XMax - EDGE_INSET
+           y_min, y_max = bbox.YMin + EDGE_INSET/2, bbox.YMax - EDGE_INSET/2
+       
+       # Create 2x4 grid = 8 holes
+       x_positions = [x_min + (x_max - x_min) * i / 3 for i in range(4)]
+       y_positions = [y_min + (y_max - y_min) * i for i in [0.3, 0.7]]
+       
+       for x in x_positions:
+           for y in y_positions:
+               # Create holes from both sides
+               for direction in [-1, 1]:
+                   z_start = cut_position + (ALIGNMENT_HOLE_DEPTH/2 * direction)
+                   cylinder = Part.makeCylinder(
+                       ALIGNMENT_HOLE_DIAMETER / 2,
+                       ALIGNMENT_HOLE_DEPTH,
+                       Base.Vector(x, y, z_start),
+                       Base.Vector(0, 0, -direction)
+                   )
+                   holes.append(cylinder)
+       
+       holes_created = len(x_positions) * len(y_positions) * 2
+   
+   elif cut_plane == 'X':  # Vertical splits
+       # Use z_bounds if provided, otherwise use full bounds
+       if z_bounds:
+           z_min, z_max = z_bounds[0] + EDGE_INSET, z_bounds[1] - EDGE_INSET
+       else:
+           z_min, z_max = bbox.ZMin + EDGE_INSET, bbox.ZMax - EDGE_INSET
+       
+       y_min, y_max = bbox.YMin + EDGE_INSET/2, bbox.YMax - EDGE_INSET/2
+       
+       # Create 2x3 grid = 6 holes
+       y_positions = [y_min + (y_max - y_min) * i for i in [0.3, 0.7]]
+       z_positions = [z_min + (z_max - z_min) * i / 2 for i in range(3)]
+       
+       for y in y_positions:
+           for z in z_positions:
+               # Create holes from both sides
+               for direction in [-1, 1]:
+                   x_start = cut_position + (ALIGNMENT_HOLE_DEPTH/2 * direction)
+                   cylinder = Part.makeCylinder(
+                       ALIGNMENT_HOLE_DIAMETER / 2,
+                       ALIGNMENT_HOLE_DEPTH,
+                       Base.Vector(x_start, y, z),
+                       Base.Vector(-direction, 0, 0)
+                   )
+                   holes.append(cylinder)
+       
+       holes_created = len(y_positions) * len(z_positions) * 2
+   
+   # Subtract all holes from the shape
+   result_shape = shape
+   failed_holes = 0
+   
+   for i, hole in enumerate(holes):
+       try:
+           result_shape = result_shape.cut(hole)
+       except Exception as e:
+           failed_holes += 1
+           if failed_holes <= 3:  # Only print first few failures
+               print(f"      ⚠️ Failed to create hole {i+1} at {cut_plane}={cut_position:.0f}: {str(e)[:50]}")
+   
+   if failed_holes > 0:
+       print(f"      ⚠️ {failed_holes}/{len(holes)} holes failed to create")
+   else:
+       print(f"      ✅ Successfully created all {holes_created} holes")
+   
+   return result_shape
+
+
+def perform_cutting_operations(port_half, starboard_half, port_plan, starboard_plan, doc):
+   """Perform the actual cutting operations to create individual pieces.
+   
+   Args:
+       port_half: Port half shape with alignment holes
+       starboard_half: Starboard half shape with alignment holes
+       port_plan: Cutting plan for port half
+       starboard_plan: Cutting plan for starboard half
+       doc: FreeCAD document
+   
+   Returns:
+       List of (piece_name, piece_shape) tuples
+   """
+   from FreeCAD import Vector, Base
+   
+   print(f"\n✂️ PERFORMING CUTTING OPERATIONS...")
+   print(f"   Creating {port_plan['total_pieces'] + starboard_plan['total_pieces']} individual pieces")
+   
+   pieces = []
+   piece_objects = []
+   
+   # Process both halves
+   for half_name, half_shape, plan in [("P", port_half, port_plan), ("S", starboard_half, starboard_plan)]:
+       print(f"\n   Processing {'Port' if half_name == 'P' else 'Starboard'} half...")
+       
+       # First, cut into Z slices
+       z_slices = []
+       for i, slice_info in enumerate(plan['slice_plans']):
+           slice_num = i + 1
+           z_start = slice_info['z_start']
+           z_end = slice_info['z_end']
+           
+           print(f"      Creating slice {slice_num} (Z: {z_start:.0f} to {z_end:.0f}mm)")
+           
+           # Create cutting boxes for this slice
+           bbox = half_shape.BoundBox
+           
+           # Box to isolate this Z slice
+           slice_box = Part.makeBox(
+               bbox.XLength + 200,
+               bbox.YLength + 200,
+               z_end - z_start,
+               Base.Vector(bbox.XMin - 100, bbox.YMin - 100, z_start)
+           )
+           
+           # Extract the slice
+           try:
+               slice_shape = half_shape.common(slice_box)
+               
+               # Now check if X-split is needed
+               if slice_info['needs_x_split']:
+                   x_center = slice_info['x_center']
+                   print(f"         Splitting at X={x_center:.0f}mm")
+                   
+                   # Create boxes for left (A) and right (B) pieces
+                   left_box = Part.makeBox(
+                       x_center - bbox.XMin + 10,
+                       bbox.YLength + 200,
+                       z_end - z_start + 10,
+                       Base.Vector(bbox.XMin - 10, bbox.YMin - 100, z_start - 5)
+                   )
+                   
+                   right_box = Part.makeBox(
+                       bbox.XMax - x_center + 10,
+                       bbox.YLength + 200,
+                       z_end - z_start + 10,
+                       Base.Vector(x_center, bbox.YMin - 100, z_start - 5)
+                   )
+                   
+                   # Create A and B pieces
+                   piece_a = slice_shape.common(left_box)
+                   piece_b = slice_shape.common(right_box)
+                   
+                   # Name and store pieces
+                   name_a = f"{slice_num}{half_name}A"
+                   name_b = f"{slice_num}{half_name}B"
+                   
+                   pieces.append((name_a, piece_a))
+                   pieces.append((name_b, piece_b))
+                   
+                   print(f"         ✅ Created pieces {name_a} and {name_b}")
+                   
+                   # Create FreeCAD objects for visualization
+                   obj_a = doc.addObject("Part::Feature", f"{BOAT_NAME}_{name_a}")
+                   obj_a.Shape = piece_a
+                   obj_a.ViewObject.ShapeColor = (0.2 + i*0.15, 0.4, 0.6) if half_name == "P" else (0.4, 0.6, 0.2 + i*0.15)
+                   obj_a.ViewObject.Transparency = 20
+                   piece_objects.append(obj_a)
+                   
+                   obj_b = doc.addObject("Part::Feature", f"{BOAT_NAME}_{name_b}")
+                   obj_b.Shape = piece_b
+                   obj_b.ViewObject.ShapeColor = (0.25 + i*0.15, 0.4, 0.65) if half_name == "P" else (0.45, 0.65, 0.25 + i*0.15)
+                   obj_b.ViewObject.Transparency = 20
+                   piece_objects.append(obj_b)
+                   
+               else:
+                   # Single piece for this slice
+                   name = f"{slice_num}{half_name}A"
+                   pieces.append((name, slice_shape))
+                   
+                   print(f"         ✅ Created piece {name}")
+                   
+                   # Create FreeCAD object for visualization
+                   obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_{name}")
+                   obj.Shape = slice_shape
+                   obj.ViewObject.ShapeColor = (0.2 + i*0.15, 0.4, 0.6) if half_name == "P" else (0.4, 0.6, 0.2 + i*0.15)
+                   obj.ViewObject.Transparency = 20
+                   piece_objects.append(obj)
+                   
+           except Exception as e:
+               print(f"         ❌ Failed to create slice: {e}")
+   
+   # Arrange pieces in a grid for visualization
+   print(f"\n   📐 Arranging pieces for visualization...")
+   grid_spacing = 350  # mm between pieces
+   col = 0
+   row = 0
+   max_cols = 4
+   
+   for i, obj in enumerate(piece_objects):
+       x_offset = col * grid_spacing
+       y_offset = 0  # Keep Y=0 for all pieces
+       z_offset = row * grid_spacing
+       
+       obj.Placement.Base = Vector(x_offset, y_offset, z_offset)
+       
+       col += 1
+       if col >= max_cols:
+           col = 0
+           row += 1
+   
+   print(f"   ✅ Arranged {len(piece_objects)} pieces in grid")
+   
+   return pieces
+
+
+def create_cutting_plan(shape, half_name):
+   """Create a cutting plan for a half of the model, analyzing each slice individually."""
+   from FreeCAD import Vector, Base
+   bbox = shape.BoundBox
+   
+   print(f"\n📐 Creating cutting plan for {half_name}:")
+   print(f"   Original dimensions:")
+   print(f"      X: {bbox.XLength:.1f}mm")
+   print(f"      Y: {bbox.YLength:.1f}mm")
+   print(f"      Z: {bbox.ZLength:.1f}mm")
+   print(f"   Max printable size: {PRINT_MAX_SIZE}mm")
+   
+   # Calculate Z slices needed
+   z_slices_needed = 1
+   z_slice_height = bbox.ZLength
+   
+   if bbox.ZLength > PRINT_MAX_SIZE:
+       import math
+       z_slices_needed = math.ceil(bbox.ZLength / PRINT_MAX_SIZE)
+       z_slice_height = bbox.ZLength / z_slices_needed
+       print(f"   📊 Z-axis: Needs {z_slices_needed} slices of {z_slice_height:.1f}mm each")
+   else:
+       print(f"   ✅ Z-axis: Fits in one piece ({bbox.ZLength:.1f}mm < {PRINT_MAX_SIZE}mm)")
+   
+   # Y-axis check (already split at Y=0)
+   if bbox.YLength > PRINT_MAX_SIZE:
+       print(f"   ⚠️ Y-axis: {bbox.YLength:.1f}mm > {PRINT_MAX_SIZE}mm")
+       print(f"      This half may still be too large in Y!")
+   else:
+       print(f"   ✅ Y-axis: Fits in one piece ({bbox.YLength:.1f}mm < {PRINT_MAX_SIZE}mm)")
+   
+   # Analyze each Z slice for X-splitting needs
+   print(f"\n   🔍 Analyzing each slice for X-splitting needs:")
+   total_pieces = 0
+   slice_plans = []
+   
+   for i in range(z_slices_needed):
+       # Calculate the Z bounds for this slice
+       z_start = bbox.ZMin + (i * z_slice_height)
+       z_end = min(z_start + z_slice_height, bbox.ZMax)
+       z_mid = (z_start + z_end) / 2
+       
+       # Create a thin box at the middle of this slice to intersect with the shape
+       # This gives us an approximation of the slice's cross-section
+       test_box = Part.makeBox(
+           bbox.XLength + 100,  # Wide enough to cover entire shape
+           bbox.YLength + 100,  # Deep enough to cover entire shape
+           1,                    # Very thin slice
+           Base.Vector(bbox.XMin - 50, bbox.YMin - 50, z_mid - 0.5)
+       )
+       
+       # Intersect to get approximate slice bounds
+       try:
+           slice_intersection = shape.common(test_box)
+           slice_bbox = slice_intersection.BoundBox
+           slice_x_length = slice_bbox.XLength
+           slice_x_center = (slice_bbox.XMin + slice_bbox.XMax) / 2
+       except:
+           # If intersection fails, use conservative estimate
+           slice_x_length = bbox.XLength
+           slice_x_center = (bbox.XMin + bbox.XMax) / 2
+       
+       # Determine if this slice needs X-splitting
+       needs_x_split = slice_x_length > PRINT_MAX_SIZE
+       pieces_in_slice = 2 if needs_x_split else 1
+       total_pieces += pieces_in_slice
+       
+       slice_info = {
+           'index': i + 1,
+           'z_start': z_start,
+           'z_end': z_end,
+           'x_length': slice_x_length,
+           'x_center': slice_x_center,
+           'needs_x_split': needs_x_split,
+           'pieces': pieces_in_slice
+       }
+       slice_plans.append(slice_info)
+       
+       print(f"      Slice {i+1} (Z: {z_start:.0f} to {z_end:.0f}mm):")
+       print(f"         X width: {slice_x_length:.1f}mm")
+       if needs_x_split:
+           print(f"         ❌ Needs X-split (>{PRINT_MAX_SIZE}mm) → 2 pieces")
+       else:
+           print(f"         ✅ No X-split needed → 1 piece")
+   
+   print(f"\n   📦 Total pieces for {half_name}: {total_pieces}")
+   
+   # Create cutting plan structure
+   cutting_plan = {
+       'z_slices': z_slices_needed,
+       'z_slice_height': z_slice_height,
+       'slice_plans': slice_plans,
+       'total_pieces': total_pieces,
+       'bbox': bbox
+   }
+   
+   return cutting_plan
+
+
 def run():
    print(f"\n🎭 Demo Model Generator v{VERSION} (Bare Bones)")
+   print(f"✨ VERSION {VERSION} - Now performs actual cutting into pieces!")
    print(f"🚤 Boat: {BOAT_NAME}")
    
    # New document
@@ -302,6 +683,12 @@ def run():
        print(f"   ❌ Boolean cut failed: {e}")
        return
    
+   # Add alignment holes for Y=0 split (port/starboard)
+   print(f"\n🔩 Adding alignment holes for port/starboard split (Y=0)...")
+   print(f"   Creating {Y_SPLIT_HOLES} holes in 3x4 grid pattern...")
+   hollowed_with_y_holes = create_alignment_holes_enhanced(hollowed_shape, 'Y', 0)
+   hollowed_foil_obj.Shape = hollowed_with_y_holes
+   
    # Split the hollowed foil into two halves - FIXED METHOD
    print(f"\n✂️ Splitting hollowed foil into two halves for 3D printing...")
    
@@ -360,51 +747,80 @@ def run():
            print(f"   Trying alternative split method...")
            starboard_half = hollowed_foil_obj.Shape.cut(box_negative_y)
        
-       # Create objects for both halves
-       port_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Port_Half")
-       port_obj.Shape = port_half
-       port_obj.ViewObject.ShapeColor = (0.2, 0.4, 0.6)  # Blue-ish
-       port_obj.ViewObject.Transparency = 30
-       
-       starboard_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Starboard_Half")
-       starboard_obj.Shape = starboard_half
-       starboard_obj.ViewObject.ShapeColor = (0.4, 0.6, 0.2)  # Green-ish
-       starboard_obj.ViewObject.Transparency = 30
-       
-       # Optionally separate the halves slightly for visualization
-       separation_distance = 10  # mm
-       starboard_obj.Placement.Base.y += separation_distance
-       port_obj.Placement.Base.y -= separation_distance
-       
-       # Hide the original hollowed foil
+       # Hide these intermediate objects
        hollowed_foil_obj.ViewObject.Visibility = False
        
        print(f"   ✅ Split complete!")
        print(f"   Port half faces: {len(port_half.Faces)}")
        print(f"   Starboard half faces: {len(starboard_half.Faces)}")
-       print(f"   Halves separated by {separation_distance*2}mm for visualization")
        
-       # Create folder for 3D print files if it doesn't exist
-       os.makedirs(PRINT_FOLDER, exist_ok=True)
+       # Create cutting plans for both halves
+       print(f"\n🗺️ Creating cutting plans for 3D printing...")
+       print(f"🖨️ Printer: Bambu Labs HD2 (Build volume: {HD2_BUILD_X}x{HD2_BUILD_Y}x{HD2_BUILD_Z}mm)")
+       port_plan = create_cutting_plan(port_half, "Port Half")
+       starboard_plan = create_cutting_plan(starboard_half, "Starboard Half")
        
-       # Export the halves as STEP files for 3D printing
-       port_path = f"{PRINT_FOLDER}/{BOAT_NAME}_Port_Half.step"
-       starboard_path = f"{PRINT_FOLDER}/{BOAT_NAME}_Starboard_Half.step"
+       # Add alignment holes for Z cuts
+       print(f"\n🔩 Adding alignment holes for Z-cuts...")
+       print(f"   Each cut will have {Z_CUT_HOLES} holes in 2x4 grid pattern")
+       if port_plan['z_slices'] > 1:
+           for i in range(1, port_plan['z_slices']):
+               z_cut_position = port_plan['bbox'].ZMin + (i * port_plan['z_slice_height'])
+               print(f"   Adding holes at Z={z_cut_position:.0f}mm:")
+               port_half = create_alignment_holes_enhanced(port_half, 'Z', z_cut_position)
+               starboard_half = create_alignment_holes_enhanced(starboard_half, 'Z', z_cut_position)
        
-       if len(port_half.Faces) > 0:
-           port_half.exportStep(port_path)
-           print(f"   Port half exported: {port_path}")
-       else:
-           print(f"   ⚠️ Port half not exported (empty shape)")
+       # Add alignment holes for X cuts (where needed, constrained to slice bounds)
+       print(f"\n🔩 Adding alignment holes for X-cuts...")
+       print(f"   Each cut will have {X_CUT_HOLES} holes in 2x3 grid pattern")
+       for slice_info in port_plan['slice_plans']:
+           if slice_info['needs_x_split']:
+               z_bounds = (slice_info['z_start'], slice_info['z_end'])
+               x_center = slice_info['x_center']
+               print(f"   Adding holes at X={x_center:.0f}mm for slice {slice_info['index']} (Z: {z_bounds[0]:.0f} to {z_bounds[1]:.0f}):")
+               port_half = create_alignment_holes_enhanced(port_half, 'X', x_center, z_bounds)
+               starboard_half = create_alignment_holes_enhanced(starboard_half, 'X', x_center, z_bounds)
        
-       if len(starboard_half.Faces) > 0:
-           starboard_half.exportStep(starboard_path)
-           print(f"   Starboard half exported: {starboard_path}")
-       else:
-           print(f"   ⚠️ Starboard half not exported (empty shape)")
+       # Perform the actual cutting operations
+       pieces = perform_cutting_operations(port_half, starboard_half, port_plan, starboard_plan, doc)
+       
+       # Hide stock for cleaner view of pieces
+       stock_obj.ViewObject.Visibility = False
+       
+       # Export individual pieces
+       print(f"\n💾 Exporting individual pieces...")
+       pieces_folder = f"{PRINT_FOLDER}/pieces"
+       os.makedirs(pieces_folder, exist_ok=True)
+       
+       exported_count = 0
+       for piece_name, piece_shape in pieces:
+           try:
+               piece_path = f"{pieces_folder}/{BOAT_NAME}_{piece_name}.step"
+               piece_shape.exportStep(piece_path)
+               print(f"   ✅ Exported: {piece_name} → {piece_path}")
+               exported_count += 1
+           except Exception as e:
+               print(f"   ❌ Failed to export {piece_name}: {e}")
+       
+       print(f"\n   📦 Successfully exported {exported_count}/{len(pieces)} pieces")
+       
+       # Summary
+       print(f"\n📋 FINAL SUMMARY:")
+       print(f"   Alignment holes:")
+       print(f"      • Diameter: {ALIGNMENT_HOLE_DIAMETER}mm")
+       print(f"      • Depth: {ALIGNMENT_HOLE_DEPTH}mm")
+       print(f"      • Y-split: {Y_SPLIT_HOLES} holes")
+       print(f"      • Z-cuts: {Z_CUT_HOLES} holes each")
+       print(f"      • X-cuts: {X_CUT_HOLES} holes each")
+       print(f"   Pieces created:")
+       piece_list = [name for name, _ in pieces]
+       piece_list.sort()  # Sort for logical order
+       for piece_name in piece_list:
+           print(f"      • {piece_name}")
+       print(f"   📦 TOTAL PIECES: {len(pieces)}")
        
    except Exception as e:
-       print(f"   ❌ Splitting failed: {e}")
+       print(f"   ❌ Processing failed: {e}")
        import traceback
        traceback.print_exc()
    
@@ -413,11 +829,8 @@ def run():
    Gui.SendMsgToActiveView("ViewFit")
    Gui.activeDocument().activeView().viewIsometric()
    
-   print(f"\n✅ Import, cavity creation, and splitting complete!")
-   print(f"   • Port Half: ready for 3D printing")
-   print(f"   • Starboard Half: ready for 3D printing")
-   print(f"   • Stock: positioned for reference")
-   print(f"\n📁 Files saved to: {PRINT_FOLDER}")
+   print(f"\n✅ Complete! All pieces created and exported.")
+   print(f"📁 Files saved to: {pieces_folder}")
 
 
 # Run the script
