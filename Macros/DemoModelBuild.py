@@ -4,20 +4,20 @@ Imports the Cut Foil and Stock and prepares for demo print
 Now includes splitting into two halves for 3D printing
 """
 import os
+import sys
 import FreeCAD as App
 import FreeCADGui as Gui
 import Part
-import sys
 
 # Add parent directory to path to find printer module
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from printer.cutting_operations import create_cutting_plan, perform_cutting_operations
-
+from printer.stock_positioning import position_all_stock_components
 
 print("Imports the Cut Foil and Stock and prepares for demo print")
 # Configuration
 BOAT_NAME = "MackenSea"
-VERSION = "2.0.0"  # Major version - refactored structure
+VERSION = "2.0.1"  # Updated - stock positioning refactored
 
 # Stock positioning parameters
 POST_CENTRE_X = 323  # mm - X position for post centre
@@ -217,7 +217,7 @@ def create_alignment_holes_enhanced(shape, cut_plane, cut_position, z_bounds=Non
 
 def run():
    print(f"\n🎭 Demo Model Generator v{VERSION} (Refactored)")
-   print(f"✨ VERSION {VERSION} - Modular structure with explosion_factor={EXPLOSION_FACTOR}")
+   print(f"✨ VERSION {VERSION} - Stock positioning modularized")
    print(f"🚤 Boat: {BOAT_NAME}")
    
    # New document
@@ -250,103 +250,15 @@ def run():
        print("❌ Cannot proceed without stock cutout.")
        return
 
-   # Rotate stock 180° around Z-axis to orient tangs toward trailing edge
-   print(f"\n🔄 Rotating stock 180° to orient tangs correctly...")
-   stock_matrix = App.Matrix()
-   stock_matrix.rotateZ(3.14159)  # 180° in radians
-   rotated_shape = stock_obj.Shape.transformGeometry(stock_matrix)
-   stock_obj.Shape = rotated_shape
-   print(f"   ✅ Stock rotated - tangs now point toward trailing edge")
-   
-   # Rotate stock cutout 180° around Z-axis to orient tangs toward trailing edge
-   print(f"\n🔄 Rotating stock cutout 180° to orient tangs correctly...")
-   stock_cutout_matrix = App.Matrix()
-   stock_cutout_matrix.rotateZ(3.14159)  # 180° in radians
-   rotated_cutout_shape = stock_cutout_obj.Shape.transformGeometry(stock_cutout_matrix)
-   stock_cutout_obj.Shape = rotated_cutout_shape
-   print(f"   ✅ Stock cutout rotated - tangs now point toward trailing edge")
-   
-   # Position the stock based on post location
-   print(f"\n📍 Positioning stock based on post location...")
-   print(f"   Post centre target: X={POST_CENTRE_X}mm")
-   print(f"   Post top target: Z={POST_TOP_Z}mm")
-   print(f"   Post diameter: {POST_DIAMETER}mm")
-   
-   from FreeCAD import Vector, Base
-   
-   # Get current bounding box of stock
-   current_bbox = stock_obj.Shape.BoundBox
-   
-   # Calculate post centre X position
-   # Post is at the top of the box (max Z), post_diameter/2 in from the right edge (max X)
-   current_post_centre_x = current_bbox.XMax - (POST_DIAMETER / 2)
-   current_post_top_z = current_bbox.ZMax
-   
-   print(f"   Current post centre X: {current_post_centre_x:.1f}mm")
-   print(f"   Current post top Z: {current_post_top_z:.1f}mm")
-   
-   # Calculate offset needed to move post to target position
-   offset = Vector(
-       POST_CENTRE_X - current_post_centre_x,  # Move post centre to specified X
-       0,                                       # Keep Y unchanged
-       POST_TOP_Z - current_post_top_z          # Move post top to specified Z
+   # Position all stock components using refactored module
+   final_positions = position_all_stock_components(
+       stock_obj, 
+       stock_cutout_obj,
+       POST_CENTRE_X, 
+       POST_TOP_Z, 
+       POST_DIAMETER, 
+       POST_DIAMETER_DELTA
    )
-   
-   # Apply translation
-   translation_matrix = App.Matrix()
-   translation_matrix.move(offset)
-   positioned_shape = stock_obj.Shape.transformGeometry(translation_matrix)
-   stock_obj.Shape = positioned_shape
-   
-   # Report final position
-   final_bbox = stock_obj.Shape.BoundBox
-   final_post_centre_x = final_bbox.XMax - (POST_DIAMETER / 2)
-   final_post_top_z = final_bbox.ZMax
-   
-   print(f"   ✅ Stock positioned:")
-   print(f"      Post centre X: {final_post_centre_x:.1f}mm (target: {POST_CENTRE_X}mm)")
-   print(f"      Post top Z: {final_post_top_z:.1f}mm (target: {POST_TOP_Z}mm)")
-   
-   # Position the stock cutout based on post location (with larger diameter)
-   print(f"\n📍 Positioning stock cutout based on post location...")
-   cutout_post_diameter = POST_DIAMETER + POST_DIAMETER_DELTA
-   # Adjust target X to account for larger post radius
-   cutout_target_x = POST_CENTRE_X - (POST_DIAMETER_DELTA / 2) + (POST_DIAMETER_DELTA/2)
-   print(f"   Post centre target: X={cutout_target_x}mm (adjusted for larger post)")
-   print(f"   Post top target: Z={POST_TOP_Z}mm")
-   print(f"   Post diameter for cutout: {cutout_post_diameter}mm")
-   
-   # Get current bounding box of stock cutout
-   current_cutout_bbox = stock_cutout_obj.Shape.BoundBox
-   
-   # Calculate post centre X position for cutout
-   current_cutout_post_centre_x = current_cutout_bbox.XMax - (cutout_post_diameter / 2)
-   current_cutout_post_top_z = current_cutout_bbox.ZMax
-   
-   print(f"   Current cutout post centre X: {current_cutout_post_centre_x:.1f}mm")
-   print(f"   Current cutout post top Z: {current_cutout_post_top_z:.1f}mm")
-   
-   # Calculate offset needed to move cutout post to adjusted target position
-   cutout_offset = Vector(
-       cutout_target_x - current_cutout_post_centre_x,  # Move post centre to adjusted X
-       0,                                                # Keep Y unchanged
-       POST_TOP_Z - current_cutout_post_top_z           # Move post top to specified Z
-   )
-   
-   # Apply translation to cutout
-   cutout_translation_matrix = App.Matrix()
-   cutout_translation_matrix.move(cutout_offset)
-   positioned_cutout_shape = stock_cutout_obj.Shape.transformGeometry(cutout_translation_matrix)
-   stock_cutout_obj.Shape = positioned_cutout_shape
-   
-   # Report final cutout position
-   final_cutout_bbox = stock_cutout_obj.Shape.BoundBox
-   final_cutout_post_centre_x = final_cutout_bbox.XMax - (cutout_post_diameter / 2)
-   final_cutout_post_top_z = final_cutout_bbox.ZMax
-   
-   print(f"   ✅ Stock cutout positioned:")
-   print(f"      Post centre X: {final_cutout_post_centre_x:.1f}mm (target: {cutout_target_x}mm)")
-   print(f"      Post top Z: {final_cutout_post_top_z:.1f}mm (target: {POST_TOP_Z}mm)")
    
    # Make objects visible
    cut_foil_obj.ViewObject.Visibility = True
@@ -469,6 +381,7 @@ def run():
    
    try:
        # Get bounding box for reference
+       from FreeCAD import Vector, Base
        bbox = hollowed_foil_obj.Shape.BoundBox
        print(f"   Hollowed foil bounds:")
        print(f"      X: {bbox.XMin:.1f} to {bbox.XMax:.1f}")
