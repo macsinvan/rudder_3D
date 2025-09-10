@@ -109,7 +109,7 @@ def add_z_cut_alignment_pins(shape, z_cut_position,
     
     # Step 2: Calculate pin positions (20%, 40%, 60%, 80% along chord)
     pin_positions = []
-    for fraction in [0.2, 0.4, 0.6, 0.8]:
+    for fraction in [0.1, 0.4, 0.6, 0.9]:
         x_pos = x_min + (chord_width * fraction)
         pin_positions.append(Vector(x_pos, 0, z_cut_position))
     
