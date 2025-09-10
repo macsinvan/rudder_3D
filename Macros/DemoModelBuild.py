@@ -7,11 +7,17 @@ import os
 import FreeCAD as App
 import FreeCADGui as Gui
 import Part
+import sys
+
+# Add parent directory to path to find printer module
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from printer.cutting_operations import create_cutting_plan, perform_cutting_operations
+
 
 print("Imports the Cut Foil and Stock and prepares for demo print")
 # Configuration
 BOAT_NAME = "MackenSea"
-VERSION = "1.0.10"  # Updated version - pieces stay in original positions
+VERSION = "2.0.0"  # Major version - refactored structure
 
 # Stock positioning parameters
 POST_CENTRE_X = 323  # mm - X position for post centre
@@ -32,6 +38,9 @@ EDGE_INSET = 20  # mm - distance from edges
 Y_SPLIT_HOLES = 12  # number of holes for port/starboard split
 Z_CUT_HOLES = 8  # number of holes for horizontal cuts
 X_CUT_HOLES = 6  # number of holes for vertical cuts
+
+# Visualization
+EXPLOSION_FACTOR = 0  # mm - set to 0 for exact positions, >0 for separated view
 
 # Paths
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
@@ -206,245 +215,9 @@ def create_alignment_holes_enhanced(shape, cut_plane, cut_position, z_bounds=Non
    return result_shape
 
 
-def perform_cutting_operations(port_half, port_plan, doc):
-   """Perform the actual cutting operations to create individual pieces for ONE half only.
-   Pieces remain in their original positions.
-   
-   Args:
-       port_half: Port half shape with alignment holes (will be mirrored in slicer)
-       port_plan: Cutting plan for port half
-       doc: FreeCAD document
-   
-   Returns:
-       List of (piece_name, piece_shape) tuples
-   """
-   from FreeCAD import Vector, Base
-   
-   print(f"\n✂️ PERFORMING CUTTING OPERATIONS...")
-   print(f"   Creating {port_plan['total_pieces']} pieces (port half only - will be mirrored in slicer)")
-   print(f"   Pieces will remain in original positions")
-   
-   pieces = []
-   piece_objects = []
-   
-   print(f"\n   Processing Port half (for mirroring)...")
-   
-   # Optional: Small explosion offset to separate pieces slightly for visualization
-   EXPLOSION_FACTOR = 0  # mm - small gap between pieces for clarity (set to 0 for exact positions)
-   
-   # Cut into Z slices
-   for i, slice_info in enumerate(port_plan['slice_plans']):
-       slice_num = i + 1
-       z_start = slice_info['z_start']
-       z_end = slice_info['z_end']
-       z_mid = (z_start + z_end) / 2
-       
-       print(f"      Creating slice {slice_num} (Z: {z_start:.0f} to {z_end:.0f}mm)")
-       
-       # Create cutting boxes for this slice
-       bbox = port_half.BoundBox
-       
-       # Box to isolate this Z slice
-       slice_box = Part.makeBox(
-           bbox.XLength + 200,
-           bbox.YLength + 200,
-           z_end - z_start,
-           Base.Vector(bbox.XMin - 100, bbox.YMin - 100, z_start)
-       )
-       
-       # Extract the slice
-       try:
-           slice_shape = port_half.common(slice_box)
-           
-           # Now check if X-split is needed
-           if slice_info['needs_x_split']:
-               x_center = slice_info['x_center']
-               print(f"         Splitting at X={x_center:.0f}mm")
-               
-               # Create boxes for left (A) and right (B) pieces
-               left_box = Part.makeBox(
-                   x_center - bbox.XMin + 10,
-                   bbox.YLength + 200,
-                   z_end - z_start + 10,
-                   Base.Vector(bbox.XMin - 10, bbox.YMin - 100, z_start - 5)
-               )
-               
-               right_box = Part.makeBox(
-                   bbox.XMax - x_center + 10,
-                   bbox.YLength + 200,
-                   z_end - z_start + 10,
-                   Base.Vector(x_center, bbox.YMin - 100, z_start - 5)
-               )
-               
-               # Create A and B pieces
-               piece_a = slice_shape.common(left_box)
-               piece_b = slice_shape.common(right_box)
-               
-               # Name pieces without P/S designation
-               name_a = f"{slice_num}A"
-               name_b = f"{slice_num}B"
-               
-               pieces.append((name_a, piece_a))
-               pieces.append((name_b, piece_b))
-               
-               print(f"         ✅ Created pieces {name_a} and {name_b}")
-               
-               # Create FreeCAD objects - keeping original positions
-               obj_a = doc.addObject("Part::Feature", f"{BOAT_NAME}_{name_a}")
-               obj_a.Shape = piece_a
-               obj_a.ViewObject.ShapeColor = (0.2 + i*0.15, 0.4, 0.6)
-               obj_a.ViewObject.Transparency = 20
-               
-               # Optional: Add small explosion offset
-               if EXPLOSION_FACTOR > 0:
-                   obj_a.Placement.Base.x -= EXPLOSION_FACTOR  # Move A piece left slightly
-                   obj_a.Placement.Base.z += i * EXPLOSION_FACTOR  # Separate Z slices
-               
-               piece_objects.append(obj_a)
-               
-               obj_b = doc.addObject("Part::Feature", f"{BOAT_NAME}_{name_b}")
-               obj_b.Shape = piece_b
-               obj_b.ViewObject.ShapeColor = (0.25 + i*0.15, 0.4, 0.65)
-               obj_b.ViewObject.Transparency = 20
-               
-               # Optional: Add small explosion offset
-               if EXPLOSION_FACTOR > 0:
-                   obj_b.Placement.Base.x += EXPLOSION_FACTOR  # Move B piece right slightly
-                   obj_b.Placement.Base.z += i * EXPLOSION_FACTOR  # Separate Z slices
-               
-               piece_objects.append(obj_b)
-               
-           else:
-               # Single piece for this slice
-               name = f"{slice_num}A"
-               pieces.append((name, slice_shape))
-               
-               print(f"         ✅ Created piece {name}")
-               
-               # Create FreeCAD object - keeping original position
-               obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_{name}")
-               obj.Shape = slice_shape
-               obj.ViewObject.ShapeColor = (0.2 + i*0.15, 0.4, 0.6)
-               obj.ViewObject.Transparency = 20
-               
-               # Optional: Add small explosion offset for Z separation
-               if EXPLOSION_FACTOR > 0:
-                   obj.Placement.Base.z += i * EXPLOSION_FACTOR
-               
-               piece_objects.append(obj)
-               
-       except Exception as e:
-           print(f"         ❌ Failed to create slice: {e}")
-   
-   print(f"   ✅ Created {len(piece_objects)} pieces in original positions")
-   if EXPLOSION_FACTOR > 0:
-       print(f"   ℹ️ Added {EXPLOSION_FACTOR}mm explosion offset for visualization")
-   
-   return pieces
-
-
-def create_cutting_plan(shape, half_name):
-   """Create a cutting plan for a half of the model, analyzing each slice individually."""
-   from FreeCAD import Vector, Base
-   bbox = shape.BoundBox
-   
-   print(f"\n📐 Creating cutting plan for {half_name}:")
-   print(f"   Original dimensions:")
-   print(f"      X: {bbox.XLength:.1f}mm")
-   print(f"      Y: {bbox.YLength:.1f}mm")
-   print(f"      Z: {bbox.ZLength:.1f}mm")
-   print(f"   Max printable size: {PRINT_MAX_SIZE}mm")
-   
-   # Calculate Z slices needed
-   z_slices_needed = 1
-   z_slice_height = bbox.ZLength
-   
-   if bbox.ZLength > PRINT_MAX_SIZE:
-       import math
-       z_slices_needed = math.ceil(bbox.ZLength / PRINT_MAX_SIZE)
-       z_slice_height = bbox.ZLength / z_slices_needed
-       print(f"   📊 Z-axis: Needs {z_slices_needed} slices of {z_slice_height:.1f}mm each")
-   else:
-       print(f"   ✅ Z-axis: Fits in one piece ({bbox.ZLength:.1f}mm < {PRINT_MAX_SIZE}mm)")
-   
-   # Y-axis check (already split at Y=0)
-   if bbox.YLength > PRINT_MAX_SIZE:
-       print(f"   ⚠️ Y-axis: {bbox.YLength:.1f}mm > {PRINT_MAX_SIZE}mm")
-       print(f"      This half may still be too large in Y!")
-   else:
-       print(f"   ✅ Y-axis: Fits in one piece ({bbox.YLength:.1f}mm < {PRINT_MAX_SIZE}mm)")
-   
-   # Analyze each Z slice for X-splitting needs
-   print(f"\n   🔍 Analyzing each slice for X-splitting needs:")
-   total_pieces = 0
-   slice_plans = []
-   
-   for i in range(z_slices_needed):
-       # Calculate the Z bounds for this slice
-       z_start = bbox.ZMin + (i * z_slice_height)
-       z_end = min(z_start + z_slice_height, bbox.ZMax)
-       z_mid = (z_start + z_end) / 2
-       
-       # Create a thin box at the middle of this slice to intersect with the shape
-       # This gives us an approximation of the slice's cross-section
-       test_box = Part.makeBox(
-           bbox.XLength + 100,  # Wide enough to cover entire shape
-           bbox.YLength + 100,  # Deep enough to cover entire shape
-           1,                    # Very thin slice
-           Base.Vector(bbox.XMin - 50, bbox.YMin - 50, z_mid - 0.5)
-       )
-       
-       # Intersect to get approximate slice bounds
-       try:
-           slice_intersection = shape.common(test_box)
-           slice_bbox = slice_intersection.BoundBox
-           slice_x_length = slice_bbox.XLength
-           slice_x_center = (slice_bbox.XMin + slice_bbox.XMax) / 2
-       except:
-           # If intersection fails, use conservative estimate
-           slice_x_length = bbox.XLength
-           slice_x_center = (bbox.XMin + bbox.XMax) / 2
-       
-       # Determine if this slice needs X-splitting
-       needs_x_split = slice_x_length > PRINT_MAX_SIZE
-       pieces_in_slice = 2 if needs_x_split else 1
-       total_pieces += pieces_in_slice
-       
-       slice_info = {
-           'index': i + 1,
-           'z_start': z_start,
-           'z_end': z_end,
-           'x_length': slice_x_length,
-           'x_center': slice_x_center,
-           'needs_x_split': needs_x_split,
-           'pieces': pieces_in_slice
-       }
-       slice_plans.append(slice_info)
-       
-       print(f"      Slice {i+1} (Z: {z_start:.0f} to {z_end:.0f}mm):")
-       print(f"         X width: {slice_x_length:.1f}mm")
-       if needs_x_split:
-           print(f"         ❌ Needs X-split (>{PRINT_MAX_SIZE}mm) → 2 pieces")
-       else:
-           print(f"         ✅ No X-split needed → 1 piece")
-   
-   print(f"\n   📦 Total pieces for {half_name}: {total_pieces}")
-   
-   # Create cutting plan structure
-   cutting_plan = {
-       'z_slices': z_slices_needed,
-       'z_slice_height': z_slice_height,
-       'slice_plans': slice_plans,
-       'total_pieces': total_pieces,
-       'bbox': bbox
-   }
-   
-   return cutting_plan
-
-
 def run():
-   print(f"\n🎭 Demo Model Generator v{VERSION} (Bare Bones)")
-   print(f"✨ VERSION {VERSION} - Pieces stay in original positions!")
+   print(f"\n🎭 Demo Model Generator v{VERSION} (Refactored)")
+   print(f"✨ VERSION {VERSION} - Modular structure with explosion_factor={EXPLOSION_FACTOR}")
    print(f"🚤 Boat: {BOAT_NAME}")
    
    # New document
@@ -732,10 +505,10 @@ def run():
        print(f"   ✅ Port half created with {len(port_half.Faces)} faces")
        print(f"   ℹ️ This half will be mirrored in slicer to create starboard half")
        
-       # Create cutting plan for port half
+       # Create cutting plan for port half using refactored function
        print(f"\n🗺️ Creating cutting plan for 3D printing...")
        print(f"🖨️ Printer: Bambu Labs HD2 (Build volume: {HD2_BUILD_X}x{HD2_BUILD_Y}x{HD2_BUILD_Z}mm)")
-       port_plan = create_cutting_plan(port_half, "Port Half")
+       port_plan = create_cutting_plan(port_half, "Port Half", PRINT_MAX_SIZE)
        
        # Add alignment holes for Z cuts
        print(f"\n🔩 Adding alignment holes for Z-cuts...")
@@ -756,8 +529,14 @@ def run():
                print(f"   Adding holes at X={x_center:.0f}mm for slice {slice_info['index']} (Z: {z_bounds[0]:.0f} to {z_bounds[1]:.0f}):")
                port_half = create_alignment_holes_enhanced(port_half, 'X', x_center, z_bounds)
        
-       # Perform the actual cutting operations (port half only)
-       pieces = perform_cutting_operations(port_half, port_plan, doc)
+       # Perform the actual cutting operations using refactored function
+       pieces = perform_cutting_operations(
+           port_half, 
+           port_plan, 
+           doc, 
+           BOAT_NAME, 
+           explosion_factor=EXPLOSION_FACTOR
+       )
        
        # Hide stock for cleaner view of pieces
        stock_obj.ViewObject.Visibility = False
