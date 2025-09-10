@@ -65,22 +65,22 @@ def add_z_cut_alignment_pins(shape, z_cut_position,
                              hole_diameter=6, support_diameter=10, 
                              hole_depth=25):
     """
-    Add alignment pins at a Z-cut position.
-    Pins are placed at 20%, 40%, 60%, 80% of chord width.
+    Add alignment holes at a Z-cut position.
+    Holes are placed at 20%, 40%, 60%, 80% of chord width.
     
     Args:
-        shape: The shape to add pins to
+        shape: The shape to add holes to
         z_cut_position: Z coordinate of the cut
         hole_diameter: Dowel hole diameter (6mm)
-        support_diameter: Outer support diameter (10mm)
-        hole_depth: Pin length (25mm)
+        support_diameter: Not used for straight holes (kept for compatibility)
+        hole_depth: Hole depth (25mm)
     
     Returns:
-        Modified shape with alignment pins
+        Modified shape with alignment holes
     """
     from FreeCAD import Vector, Base
     
-    print(f"      Adding alignment pins at Z={z_cut_position:.1f}")
+    print(f"      Adding alignment holes at Z={z_cut_position:.1f}")
     
     # Step 1: Find chord bounds at this Z
     # Create thin horizontal slice
@@ -100,6 +100,7 @@ def add_z_cut_alignment_pins(shape, z_cut_position,
         x_min = chord_bbox.XMin
         x_max = chord_bbox.XMax
         chord_width = x_max - x_min
+        y_pos = 0 - 3 - hole_diameter/2
         
         print(f"         Chord: X from {x_min:.1f} to {x_max:.1f} (width={chord_width:.1f})")
         
@@ -107,55 +108,33 @@ def add_z_cut_alignment_pins(shape, z_cut_position,
         print(f"         ❌ Failed to find chord at Z={z_cut_position:.1f}")
         return shape
     
-    # Step 2: Calculate pin positions (20%, 40%, 60%, 80% along chord)
-    pin_positions = []
-    for fraction in [0.1, 0.4, 0.6, 0.9]:
+    # Step 2: Calculate hole positions (20%, 40%, 60%, 90% along chord)
+    hole_positions = []
+    for fraction in [0.2, 0.4, 0.6, 0.9]:
         x_pos = x_min + (chord_width * fraction)
-        pin_positions.append(Vector(x_pos, 0, z_cut_position))
+        hole_positions.append(Vector(x_pos, y_pos, z_cut_position))
     
-    # Step 3: Create hollow alignment cylinders
-    wall_thickness = 1.2
+    # Step 3: Create straight alignment holes
     result_shape = shape
-    successful_pins = 0
+    successful_holes = 0
     
-    for i, pos in enumerate(pin_positions):
-        # Create hollow support structure
-        # Outer cylinder
-        outer_cyl = Part.makeCylinder(
-            support_diameter / 2,
+    for i, pos in enumerate(hole_positions):
+        # Create simple cylinder hole
+        hole_cylinder = Part.makeCylinder(
+            hole_diameter / 2,
             hole_depth,
             pos - Vector(0, 0, hole_depth/2),  # Center on cut plane
             Vector(0, 0, 1)  # Z direction
         )
         
-        # Hollow out the middle
-        middle_hollow = Part.makeCylinder(
-            (support_diameter / 2) - wall_thickness,
-            hole_depth + 2,
-            pos - Vector(0, 0, hole_depth/2 + 1),
-            Vector(0, 0, 1)
-        )
-        
-        # Dowel hole
-        dowel_hole = Part.makeCylinder(
-            hole_diameter / 2,
-            hole_depth + 2,
-            pos - Vector(0, 0, hole_depth/2 + 1),
-            Vector(0, 0, 1)
-        )
-        
-        # Create hollow cylinder
-        hollow_pin = outer_cyl.cut(middle_hollow)
-        hollow_pin = hollow_pin.cut(dowel_hole)
-        
-        # Add to shape
+        # Subtract hole from shape
         try:
-            result_shape = result_shape.fuse(hollow_pin)
-            successful_pins += 1
+            result_shape = result_shape.cut(hole_cylinder)
+            successful_holes += 1
         except:
-            print(f"         ⚠️ Failed to add pin {i+1}")
+            print(f"         ⚠️ Failed to add hole {i+1}")
     
-    print(f"         ✅ Added {successful_pins}/4 pins")
+    print(f"         ✅ Added {successful_holes}/4 holes")
     return result_shape
 
 
@@ -383,9 +362,9 @@ def run():
        port_plan = create_cutting_plan(port_half, "Port Half", PRINT_MAX_SIZE)
        
        # Add Z-cut alignment pins BEFORE cutting
-       print(f"\n🔩 Adding Z-cut alignment pins before slicing...")
-       print(f"   Adding 4 pins at each Z-cut position")
-       print(f"   Pins at 20%, 40%, 60%, 80% of chord width")
+       print(f"\n🔩 Adding Z-cut alignment holes before slicing...")
+       print(f"   Adding 4 holes at each Z-cut position")
+       print(f"   Holes at 20%, 40%, 60%, 80% of chord width")
        
        if port_plan['z_slices'] > 1:
            for i in range(1, port_plan['z_slices']):
@@ -396,7 +375,7 @@ def run():
                )
        
        print(f"\n📐 Cutting pieces...")
-       print(f"   Z-alignment pins will be split automatically by cuts")
+       print(f"   Z-alignment holes will be split automatically by cuts")
        
        # Modified cutting operations
        pieces = []
@@ -549,11 +528,10 @@ def run():
        print(f"      3. Mirror and print again (creates starboard half)")
        print(f"      4. Join using 6mm dowels through alignment holes")
        print(f"   Alignment features:")
-       print(f"      • Z-cuts: 4 pins at 20%, 40%, 60%, 80% of chord")
+       print(f"      • Z-cuts: 4 holes at 20%, 40%, 60%, 80% of chord")
        print(f"      • Hole diameter: {HOLE_DIAMETER}mm (for dowels)")
-       print(f"      • Support diameter: {SUPPORT_DIAMETER}mm")
        print(f"      • Hole depth: {HOLE_DEPTH}mm")
-       print(f"      • Hollow structure with {1.2}mm walls")
+       print(f"      • Simple straight holes")
        print(f"   Pieces created (to be mirrored):")
        piece_list = [name for name, _ in pieces]
        piece_list.sort()  # Sort for logical order
