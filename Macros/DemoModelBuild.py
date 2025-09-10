@@ -21,7 +21,7 @@ from helpers.step_save_load import load_step, save_step, validate_step_file, Ste
 print("Imports the Cut Foil and Stock and prepares for demo print")
 # Configuration
 BOAT_NAME = "MackenSea"
-VERSION = "2.3.0"  # Fixed alignment logic for X-cuts
+VERSION = "2.4.0"  # Added Z-cut alignment pins
 
 # Stock positioning parameters
 POST_CENTRE_X = 323  # mm - X position for post centre
@@ -61,9 +61,107 @@ STOCK_CUTOUT_STEP = f"{BOAT_NAME}_Stock_Cutout.step"
 MACRO_NAME = f"Demo_Model_{BOAT_NAME}"
 
 
+def add_z_cut_alignment_pins(shape, z_cut_position, 
+                             hole_diameter=6, support_diameter=10, 
+                             hole_depth=25):
+    """
+    Add alignment pins at a Z-cut position.
+    Pins are placed at 20%, 40%, 60%, 80% of chord width.
+    
+    Args:
+        shape: The shape to add pins to
+        z_cut_position: Z coordinate of the cut
+        hole_diameter: Dowel hole diameter (6mm)
+        support_diameter: Outer support diameter (10mm)
+        hole_depth: Pin length (25mm)
+    
+    Returns:
+        Modified shape with alignment pins
+    """
+    from FreeCAD import Vector, Base
+    
+    print(f"      Adding alignment pins at Z={z_cut_position:.1f}")
+    
+    # Step 1: Find chord bounds at this Z
+    # Create thin horizontal slice
+    slice_thickness = 1.0
+    sample_slice = Part.makeBox(
+        1000,  # Large X
+        1000,  # Large Y  
+        slice_thickness,
+        Vector(-500, -500, z_cut_position - slice_thickness/2)
+    )
+    
+    # Get intersection
+    try:
+        cross_section = shape.common(sample_slice)
+        chord_bbox = cross_section.BoundBox
+        
+        x_min = chord_bbox.XMin
+        x_max = chord_bbox.XMax
+        chord_width = x_max - x_min
+        
+        print(f"         Chord: X from {x_min:.1f} to {x_max:.1f} (width={chord_width:.1f})")
+        
+    except:
+        print(f"         ❌ Failed to find chord at Z={z_cut_position:.1f}")
+        return shape
+    
+    # Step 2: Calculate pin positions (20%, 40%, 60%, 80% along chord)
+    pin_positions = []
+    for fraction in [0.2, 0.4, 0.6, 0.8]:
+        x_pos = x_min + (chord_width * fraction)
+        pin_positions.append(Vector(x_pos, 0, z_cut_position))
+    
+    # Step 3: Create hollow alignment cylinders
+    wall_thickness = 1.2
+    result_shape = shape
+    successful_pins = 0
+    
+    for i, pos in enumerate(pin_positions):
+        # Create hollow support structure
+        # Outer cylinder
+        outer_cyl = Part.makeCylinder(
+            support_diameter / 2,
+            hole_depth,
+            pos - Vector(0, 0, hole_depth/2),  # Center on cut plane
+            Vector(0, 0, 1)  # Z direction
+        )
+        
+        # Hollow out the middle
+        middle_hollow = Part.makeCylinder(
+            (support_diameter / 2) - wall_thickness,
+            hole_depth + 2,
+            pos - Vector(0, 0, hole_depth/2 + 1),
+            Vector(0, 0, 1)
+        )
+        
+        # Dowel hole
+        dowel_hole = Part.makeCylinder(
+            hole_diameter / 2,
+            hole_depth + 2,
+            pos - Vector(0, 0, hole_depth/2 + 1),
+            Vector(0, 0, 1)
+        )
+        
+        # Create hollow cylinder
+        hollow_pin = outer_cyl.cut(middle_hollow)
+        hollow_pin = hollow_pin.cut(dowel_hole)
+        
+        # Add to shape
+        try:
+            result_shape = result_shape.fuse(hollow_pin)
+            successful_pins += 1
+        except:
+            print(f"         ⚠️ Failed to add pin {i+1}")
+    
+    print(f"         ✅ Added {successful_pins}/4 pins")
+    return result_shape
+
+
 def run():
    print(f"\n🎭 Demo Model Generator v{VERSION} (Refactored)")
-   print(f"✨ VERSION {VERSION} - Fixed alignment logic for X-cuts")
+   print(f"✨ VERSION {VERSION} - Z-cut alignment pins added")
    print(f"🚤 Boat: {BOAT_NAME}")
    
    # New document
@@ -284,14 +382,23 @@ def run():
        print(f"🖨️ Printer: Bambu Labs HD2 (Build volume: {HD2_BUILD_X}x{HD2_BUILD_Y}x{HD2_BUILD_Z}mm)")
        port_plan = create_cutting_plan(port_half, "Port Half", PRINT_MAX_SIZE)
        
-       print(f"\n📐 Cutting pieces and adding alignment features...")
-       print(f"   X-splits will get 6 supported dowel holes at cut faces")
-       print(f"   Hole diameter: {HOLE_DIAMETER}mm")
-       print(f"   Support diameter: {SUPPORT_DIAMETER}mm")
-       print(f"   Hole depth: {HOLE_DEPTH}mm")
-       print(f"   Edge distance: {EDGE_DISTANCE}mm")
+       # Add Z-cut alignment pins BEFORE cutting
+       print(f"\n🔩 Adding Z-cut alignment pins before slicing...")
+       print(f"   Adding 4 pins at each Z-cut position")
+       print(f"   Pins at 20%, 40%, 60%, 80% of chord width")
        
-       # Modified cutting operations to include alignment features
+       if port_plan['z_slices'] > 1:
+           for i in range(1, port_plan['z_slices']):
+               z_cut_position = port_plan['bbox'].ZMin + (i * port_plan['z_slice_height'])
+               port_half = add_z_cut_alignment_pins(
+                   port_half, z_cut_position,
+                   HOLE_DIAMETER, SUPPORT_DIAMETER, HOLE_DEPTH
+               )
+       
+       print(f"\n📐 Cutting pieces...")
+       print(f"   Z-alignment pins will be split automatically by cuts")
+       
+       # Modified cutting operations
        pieces = []
        piece_objects = []
        
@@ -318,9 +425,6 @@ def run():
            try:
                slice_shape = port_half.common(slice_box)
                
-               # Note: Z-alignment features not yet implemented
-               # Focus on getting X-alignment working first
-               
                # Now check if X-split is needed
                if slice_info['needs_x_split']:
                    x_center = slice_info['x_center']
@@ -345,17 +449,7 @@ def run():
                    piece_a = slice_shape.common(left_box)
                    piece_b = slice_shape.common(right_box)
                    
-                   # Add X-alignment features using corrected logic
-                   print(f"      Adding X-alignment features to pieces")
-                   piece_a = create_supported_alignment_holes(
-                       piece_a, 'X', x_center,
-                       HOLE_DIAMETER, SUPPORT_DIAMETER, HOLE_DEPTH, EDGE_DISTANCE
-                   )
-                   
-                   piece_b = create_supported_alignment_holes(
-                       piece_b, 'X', x_center,
-                       HOLE_DIAMETER, SUPPORT_DIAMETER, HOLE_DEPTH, EDGE_DISTANCE
-                   )
+                   # Note: X-alignment would go here if needed
                    
                    # Name pieces
                    name_a = f"{slice_num}A"
@@ -364,7 +458,7 @@ def run():
                    pieces.append((name_a, piece_a))
                    pieces.append((name_b, piece_b))
                    
-                   print(f"      ✅ Created pieces {name_a} and {name_b} with alignment features")
+                   print(f"      ✅ Created pieces {name_a} and {name_b}")
                    
                    # Create FreeCAD objects
                    obj_a = doc.addObject("Part::Feature", f"{BOAT_NAME}_{name_a}")
@@ -388,15 +482,6 @@ def run():
                        obj_b.Placement.Base.z += i * EXPLOSION_FACTOR
                    
                    piece_objects.append(obj_b)
-                   
-                   # Optionally visualize alignment features
-                   if VISUALIZE_ALIGNMENT:
-                       visualize_alignment_features(doc, piece_a, 'X', x_center,
-                                                   HOLE_DIAMETER, SUPPORT_DIAMETER, 
-                                                   HOLE_DEPTH, EDGE_DISTANCE)
-                       visualize_alignment_features(doc, piece_b, 'X', x_center,
-                                                   HOLE_DIAMETER, SUPPORT_DIAMETER, 
-                                                   HOLE_DEPTH, EDGE_DISTANCE)
                    
                else:
                    # Single piece for this slice (no X-split needed)
@@ -463,12 +548,12 @@ def run():
        print(f"      2. Print one set as-is (port half)")
        print(f"      3. Mirror and print again (creates starboard half)")
        print(f"      4. Join using 6mm dowels through alignment holes")
-       print(f"   Alignment features (X-cuts only for now):")
+       print(f"   Alignment features:")
+       print(f"      • Z-cuts: 4 pins at 20%, 40%, 60%, 80% of chord")
        print(f"      • Hole diameter: {HOLE_DIAMETER}mm (for dowels)")
        print(f"      • Support diameter: {SUPPORT_DIAMETER}mm")
        print(f"      • Hole depth: {HOLE_DEPTH}mm")
-       print(f"      • Edge distance: {EDGE_DISTANCE}mm")
-       print(f"      • 6 holes per X-cut face in 2x3 grid pattern")
+       print(f"      • Hollow structure with {1.2}mm walls")
        print(f"   Pieces created (to be mirrored):")
        piece_list = [name for name, _ in pieces]
        piece_list.sort()  # Sort for logical order
