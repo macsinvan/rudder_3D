@@ -178,7 +178,7 @@ def add_x_cut_alignment_pins(shape, x_cut_position, z_start, z_end,
     
     # Get shape bounding box for Y position
     bbox = shape.BoundBox
-    y_pos = bbox.YMin + 3 + hole_diameter/2  # Fixed Y position off the edge
+    y_pos = 0 - 3 - hole_diameter/2  # Fixed Y position off the edge
     
     print(f"         Slice from Z={z_start:.1f} to {z_end:.1f} (height={slice_height:.1f})")
     print(f"         Y position for holes: {y_pos:.1f}")
@@ -796,7 +796,7 @@ def run():
     # STEP 9: Add X-cut alignment pins
     if not step_9_add_x_cut_alignment_pins():
         return
-    
+    """
     # STEP 10: Cut pieces according to plan
     if not step_10_cut_pieces():
         return
@@ -807,7 +807,7 @@ def run():
     
     # STEP 12: Final view update and summary
     step_12_final_view_and_summary()
-
+    """
 
 # Run the script
 run()
