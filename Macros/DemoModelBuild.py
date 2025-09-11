@@ -24,7 +24,7 @@ from helpers.step_save_load import load_step, save_step, validate_step_file, Ste
 
 # Boat Configuration
 BOAT_NAME = "MackenSea"
-VERSION = "2.5.0"  # Added proper error handling
+VERSION = "2.5.1"  # Z-holes now use foam configuration
 
 # Stock Positioning (mm)
 STOCK_CONFIG = {
@@ -42,16 +42,23 @@ PRINTER_CONFIG = {
     'max_print_size': 310,  # Build size minus 10mm safety margin
 }
 
-# Alignment Hole Configuration (mm)
+# Alignment Hole Configuration (mm) - Used for X and Y holes
 HOLE_CONFIG = {
     'diameter': 6,          # Dowel diameter
     'depth': 25,            # Hole depth
     'y_offset': 3,          # Distance from Y=0 plane to hole center
 }
 
+# Foam Hole Configuration (mm) - Used for Z holes
+FOAM_HOLE_CONFIG = {
+    'diameter': 12,         # Foam injection hole diameter
+    'depth': 25,            # Hole depth
+    'y_offset': 3,          # Distance from Y=0 plane to hole center
+}
+
 # Hole Position Arrays (as fractions of dimension)
 HOLE_POSITIONS = {
-    'z_cut': [0.2, 0.4, 0.55, 0.65],      # Along chord width
+    'z_cut': [0.35, 0.45, 0.60],          # Along chord width
     'x_cut': [0.1, 0.4, 0.6, 0.8],        # Along slice height
     'y_join_rows': [0.25, 0.75],          # Row positions in section height
     'y_join_cols': [0.1, 0.4, 0.6, 0.9],  # Along chord width
@@ -62,7 +69,7 @@ GEOMETRY_CONFIG = {
     'slice_sample_thickness': 1.0,
     'boolean_box_extra': 200,      # Extra size for boolean operation boxes
     'boolean_box_offset': 100,     # Offset for boolean operation boxes
-    'y_split_overlap': 0.5,        # Overlap at Y=0 split
+    'y_split_overlap': 0.01,       # Minimal overlap at Y=0 split for reliable boolean ops
     'cutting_box_extra': 10,       # Extra size for piece cutting boxes
     'cutting_box_offset': 5,       # Offset for piece cutting
 }
@@ -109,8 +116,8 @@ MACRO_NAME = f"Demo_Model_{BOAT_NAME}"
 # ============================================================================
 
 def add_z_cut_alignment_pins(shape, z_cut_position):
-    """Add alignment holes at a Z-cut position."""
-    print(f"      Adding alignment holes at Z={z_cut_position:.1f}")
+    """Add alignment holes at a Z-cut position using FOAM_HOLE_CONFIG."""
+    print(f"      Adding foam holes at Z={z_cut_position:.1f}")
     
     # Find chord bounds at this Z
     sample_slice = Part.makeBox(
@@ -125,7 +132,7 @@ def add_z_cut_alignment_pins(shape, z_cut_position):
         x_min = chord_bbox.XMin
         x_max = chord_bbox.XMax
         chord_width = x_max - x_min
-        y_pos = 0 - HOLE_CONFIG['y_offset'] - HOLE_CONFIG['diameter']/2
+        y_pos = 0 - FOAM_HOLE_CONFIG['y_offset'] - FOAM_HOLE_CONFIG['diameter']/2
         
         print(f"         Chord: X from {x_min:.1f} to {x_max:.1f} (width={chord_width:.1f})")
         
@@ -143,9 +150,9 @@ def add_z_cut_alignment_pins(shape, z_cut_position):
         pos = Vector(x_pos, y_pos, z_cut_position)
         
         hole_cylinder = Part.makeCylinder(
-            HOLE_CONFIG['diameter'] / 2, 
-            HOLE_CONFIG['depth'],
-            pos - Vector(0, 0, HOLE_CONFIG['depth']/2),
+            FOAM_HOLE_CONFIG['diameter'] / 2, 
+            FOAM_HOLE_CONFIG['depth'],
+            pos - Vector(0, 0, FOAM_HOLE_CONFIG['depth']/2),
             Vector(0, 0, 1)
         )
         
@@ -153,19 +160,19 @@ def add_z_cut_alignment_pins(shape, z_cut_position):
             result_shape = result_shape.cut(hole_cylinder)
             successful_holes += 1
         except Exception as e:
-            print(f"         ❌ FAILED to add hole {i+1}/{total_holes} at {fraction*100:.0f}%: {e}")
+            print(f"         ❌ FAILED to add foam hole {i+1}/{total_holes} at {fraction*100:.0f}%: {e}")
             return None
     
     if successful_holes != total_holes:
-        print(f"         ❌ Only added {successful_holes}/{total_holes} holes - ABORTING")
+        print(f"         ❌ Only added {successful_holes}/{total_holes} foam holes - ABORTING")
         return None
         
-    print(f"         ✅ Added {successful_holes}/{total_holes} holes")
+    print(f"         ✅ Added {successful_holes}/{total_holes} foam holes ({FOAM_HOLE_CONFIG['diameter']}mm dia)")
     return result_shape
 
 
 def add_x_cut_alignment_pins(shape, x_cut_position, z_start, z_end):
-    """Add alignment holes at an X-cut position."""
+    """Add alignment holes at an X-cut position using HOLE_CONFIG."""
     print(f"      Adding X-cut alignment holes at X={x_cut_position:.1f}")
     
     slice_height = z_end - z_start
@@ -200,12 +207,12 @@ def add_x_cut_alignment_pins(shape, x_cut_position, z_start, z_end):
         print(f"         ❌ Only added {successful_holes}/{total_holes} X-cut holes - ABORTING")
         return None
         
-    print(f"         ✅ Added {successful_holes}/{total_holes} X-cut holes")
+    print(f"         ✅ Added {successful_holes}/{total_holes} X-cut holes ({HOLE_CONFIG['diameter']}mm dia)")
     return result_shape
 
 
 def add_y_half_joining_holes(shape, z_start, z_end, section_name):
-    """Add horizontal holes in Y-direction for joining port and starboard halves."""
+    """Add horizontal holes in Y-direction for joining port and starboard halves using HOLE_CONFIG."""
     section_height = z_end - z_start
     print(f"      Adding Y-direction joining holes to {section_name}")
     print(f"         Section Z: {z_start:.1f} to {z_end:.1f} (height={section_height:.1f})")
@@ -258,7 +265,7 @@ def add_y_half_joining_holes(shape, z_start, z_end, section_name):
         print(f"         ❌ Only added {total_holes}/{expected_holes} joining holes - ABORTING")
         return None
         
-    print(f"         ✅ Added {total_holes}/{expected_holes} joining holes")
+    print(f"         ✅ Added {total_holes}/{expected_holes} joining holes ({HOLE_CONFIG['diameter']}mm dia)")
     return result_shape
 
 
@@ -483,12 +490,12 @@ def create_port_cutting_plan():
 
 
 def add_z_alignment_to_port():
-    """Add Z-cut alignment pins to solid port half"""
+    """Add Z-cut foam holes to solid port half"""
     global port_half
     
     positions_str = ', '.join([f"{p*100:.0f}%" for p in HOLE_POSITIONS['z_cut']])
-    print(f"\n🔩 Adding Z-cut alignment holes to solid port half...")
-    print(f"   Adding {len(HOLE_POSITIONS['z_cut'])} holes at each Z-cut position")
+    print(f"\n🔩 Adding Z-cut foam holes to solid port half...")
+    print(f"   Adding {len(HOLE_POSITIONS['z_cut'])} foam holes ({FOAM_HOLE_CONFIG['diameter']}mm) at each Z-cut position")
     print(f"   Holes at {positions_str} of chord width")
     
     if port_plan['z_slices'] > 1:
@@ -496,7 +503,7 @@ def add_z_alignment_to_port():
             z_cut_position = port_plan['bbox'].ZMin + (i * port_plan['z_slice_height'])
             modified_shape = add_z_cut_alignment_pins(port_half, z_cut_position)
             if modified_shape is None:
-                print(f"   ❌ FAILED to add Z-cut alignment pins")
+                print(f"   ❌ FAILED to add Z-cut foam holes")
                 return False
             port_half = modified_shape
     
@@ -504,7 +511,7 @@ def add_z_alignment_to_port():
     port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_Z_holes"
     
     update_view()
-    print(f"   🔄 View updated to show Z-cut alignment holes in solid")
+    print(f"   🔄 View updated to show Z-cut foam holes in solid")
     
     return True
 
@@ -515,7 +522,7 @@ def add_x_alignment_to_port():
     
     positions_str = ', '.join([f"{p*100:.0f}%" for p in HOLE_POSITIONS['x_cut']])
     print(f"\n🔧 Adding X-cut alignment holes to solid port half...")
-    print(f"   Adding {len(HOLE_POSITIONS['x_cut'])} holes at each X-cut position")
+    print(f"   Adding {len(HOLE_POSITIONS['x_cut'])} alignment holes ({HOLE_CONFIG['diameter']}mm) at each X-cut position")
     print(f"   Holes at {positions_str} of slice height")
     
     for slice_info in port_plan['slice_plans']:
@@ -551,7 +558,7 @@ def add_y_joining_to_port():
     
     print(f"\n🔩 Adding Y-direction holes for joining port and starboard halves...")
     print(f"   Adding {rows} rows per section at {row_str} of height")
-    print(f"   Adding {cols} holes per row at {col_str} of chord")
+    print(f"   Adding {cols} holes ({HOLE_CONFIG['diameter']}mm) per row at {col_str} of chord")
     print(f"   Holes oriented horizontally (Y-axis) for joining halves")
     
     for i, slice_info in enumerate(port_plan['slice_plans']):
@@ -854,13 +861,15 @@ def final_view_and_summary():
     print(f"      1. Import pieces into Bambu Studio")
     print(f"      2. Print one set as-is (port half)")
     print(f"      3. Mirror and print again (creates starboard half)")
-    print(f"      4. Join using {HOLE_CONFIG['diameter']}mm dowels through alignment holes")
+    print(f"      4. Join pieces using {HOLE_CONFIG['diameter']}mm dowels (X and Y holes)")
     print(f"      5. Join port and starboard halves using Y-direction joining holes")
     print(f"   Alignment features:")
     print(f"      • Z-cuts: {len(HOLE_POSITIONS['z_cut'])} holes at {z_pos_str} of chord")
+    print(f"        - {FOAM_HOLE_CONFIG['diameter']}mm diameter foam injection holes")
+    print(f"        - {FOAM_HOLE_CONFIG['depth']}mm depth")
     print(f"      • X-cuts: {len(HOLE_POSITIONS['x_cut'])} holes at {x_pos_str} of slice height")
-    print(f"      • Hole diameter: {HOLE_CONFIG['diameter']}mm (for dowels)")
-    print(f"      • Hole depth: {HOLE_CONFIG['depth']}mm")
+    print(f"        - {HOLE_CONFIG['diameter']}mm diameter alignment holes")
+    print(f"        - {HOLE_CONFIG['depth']}mm depth")
     print(f"      • Z-holes: vertical (perpendicular to Z-cut plane)")
     print(f"      • X-holes: horizontal (perpendicular to X-cut plane)")
     print(f"   Half-joining features:")
@@ -868,6 +877,7 @@ def final_view_and_summary():
     print(f"      • Y-direction holes: {total_y_holes} holes per section ({len(HOLE_POSITIONS['y_join_rows'])} rows × {len(HOLE_POSITIONS['y_join_cols'])} holes)")
     print(f"      • Rows at {y_row_str} of section height")
     print(f"      • Holes at {y_col_str} of chord width")
+    print(f"      • {HOLE_CONFIG['diameter']}mm diameter, {HOLE_CONFIG['depth']}mm depth")
     print(f"      • Horizontal holes for joining port and starboard halves")
     print(f"   Processing approach:")
     print(f"      • Split solid foil first (more reliable)")
@@ -899,7 +909,7 @@ def run():
         ("Positioning stock components", position_stock_components),
         ("Splitting solid foil at Y=0", split_solid_foil_at_y_zero),
         ("Creating cutting plan", create_port_cutting_plan),
-        ("Adding Z-cut alignment pins", add_z_alignment_to_port),
+        ("Adding Z-cut foam holes", add_z_alignment_to_port),
         ("Adding X-cut alignment pins", add_x_alignment_to_port),
         ("Adding Y-joining holes", add_y_joining_to_port),
         ("Performing pre-Boolean checks", pre_boolean_checks),
