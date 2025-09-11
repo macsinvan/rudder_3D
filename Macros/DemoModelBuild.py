@@ -1,48 +1,226 @@
 """
-Demo Model Generator - REFACTORED FOR DEBUGGING
+Demo Model Generator - REFACTORED
 Imports the Cut Foil and Stock and prepares for demo print
-Now includes splitting into two halves for 3D printing
-Refactored to allow easy step skipping during debugging
+Creates port half with alignment holes for 3D printing
 """
 import os
 import sys
 import FreeCAD as App
 import FreeCADGui as Gui
 import Part
+from FreeCAD import Vector, Base
 
 # Add paths to find our modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))  # For printer module
 sys.path.insert(0, os.path.expanduser("~/Rudder_Code"))  # For helpers module
 
-from printer.cutting_operations import create_cutting_plan, perform_cutting_operations
+from printer.cutting_operations import create_cutting_plan
 from printer.stock_positioning import position_all_stock_components
-from printer.alignment_features import create_supported_alignment_holes, visualize_alignment_features
 from helpers.step_save_load import load_step, save_step, validate_step_file, StepFileError
 
-# Import hole operations
-try:
-    from printer.hole_operations import add_z_cut_alignment_pins, add_x_cut_alignment_pins, add_y_half_joining_holes
-    print("✅ Hole operations imported successfully")
-except ImportError as e:
-    print(f"❌ Failed to import hole operations: {e}")
-    print("Using inline functions as fallback...")
+# ============================================================================
+# CONFIGURATION SECTION - All adjustable parameters in one place
+# ============================================================================
+
+# Boat Configuration
+BOAT_NAME = "MackenSea"
+VERSION = "2.5.0"  # Added proper error handling
+
+# Stock Positioning (mm)
+STOCK_CONFIG = {
+    'post_center_x': 323,
+    'post_top_z': -75,
+    'post_diameter': 44,
+    'post_diameter_delta': 4,  # Difference for cutout
+}
+
+# 3D Printer Specifications - Bambu Labs HD2 (mm)
+PRINTER_CONFIG = {
+    'build_x': 325,
+    'build_y': 320,
+    'build_z': 325,
+    'max_print_size': 310,  # Build size minus 10mm safety margin
+}
+
+# Alignment Hole Configuration (mm)
+HOLE_CONFIG = {
+    'diameter': 6,          # Dowel diameter
+    'depth': 25,            # Hole depth
+    'y_offset': 3,          # Distance from Y=0 plane to hole center
+}
+
+# Hole Position Arrays (as fractions of dimension)
+HOLE_POSITIONS = {
+    'z_cut': [0.2, 0.4, 0.55, 0.65],      # Along chord width
+    'x_cut': [0.1, 0.4, 0.6, 0.8],        # Along slice height
+    'y_join_rows': [0.25, 0.75],          # Row positions in section height
+    'y_join_cols': [0.1, 0.4, 0.6, 0.9],  # Along chord width
+}
+
+# Geometry Construction Parameters (mm)
+GEOMETRY_CONFIG = {
+    'slice_sample_thickness': 1.0,
+    'boolean_box_extra': 200,      # Extra size for boolean operation boxes
+    'boolean_box_offset': 100,     # Offset for boolean operation boxes
+    'y_split_overlap': 0.5,        # Overlap at Y=0 split
+    'cutting_box_extra': 10,       # Extra size for piece cutting boxes
+    'cutting_box_offset': 5,       # Offset for piece cutting
+}
+
+# Visualization
+VISUALIZATION_CONFIG = {
+    'explosion_factor': 0,     # mm between pieces (0 = assembled view)
+    'transparency': {
+        'solid': 30,
+        'hollowed': 70,
+        'pieces': 20,
+    },
+    'colors': {
+        'port_solid': (0.2, 0.5, 0.8),      # Blue
+        'port_z_holes': (0.2, 0.5, 0.8),    # Blue
+        'port_aligned': (0.1, 0.6, 0.3),    # Green
+        'port_joined': (0.8, 0.3, 0.1),     # Orange
+        'port_hollowed': (0.3, 0.3, 0.4),   # Dark grey
+        'stock': (0.8, 0.8, 0.9),           # Light steel
+    }
+}
+
+# File Paths - FIXED to properly expand all paths
+PATHS = {
+    'boat_folder': os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}"),
+}
+PATHS['output_folder'] = f"{PATHS['boat_folder']}/output"
+PATHS['cut_foil_folder'] = f"{PATHS['output_folder']}/cut_foil"
+PATHS['stock_folder'] = f"{PATHS['output_folder']}/stock"
+PATHS['cutout_folder'] = f"{PATHS['output_folder']}/cutout"
+PATHS['print_folder'] = f"{PATHS['output_folder']}/demo"
+
+# Input Files
+INPUT_FILES = {
+    'cut_foil': f"{BOAT_NAME}_Cut_Foil.step",
+    'stock': f"{BOAT_NAME}_Stock.step",
+    'stock_cutout': f"{BOAT_NAME}_Stock_Cutout.step",
+}
+
+MACRO_NAME = f"Demo_Model_{BOAT_NAME}"
+
+# ============================================================================
+# HOLE OPERATION FUNCTIONS
+# ============================================================================
+
+def add_z_cut_alignment_pins(shape, z_cut_position):
+    """Add alignment holes at a Z-cut position."""
+    print(f"      Adding alignment holes at Z={z_cut_position:.1f}")
     
-    def add_z_cut_alignment_pins(shape, z_cut_position, 
-                                 hole_diameter=15, support_diameter=15, 
-                                 hole_depth=25):
-        """
-        Add alignment holes at a Z-cut position.
-        Holes are placed at 20%, 40%, 55%, 65% of chord width.
-        """
-        from FreeCAD import Vector, Base
+    # Find chord bounds at this Z
+    sample_slice = Part.makeBox(
+        1000, 1000, GEOMETRY_CONFIG['slice_sample_thickness'],
+        Vector(-500, -500, z_cut_position - GEOMETRY_CONFIG['slice_sample_thickness']/2)
+    )
+    
+    try:
+        cross_section = shape.common(sample_slice)
+        chord_bbox = cross_section.BoundBox
         
-        print(f"      Adding alignment holes at Z={z_cut_position:.1f}")
+        x_min = chord_bbox.XMin
+        x_max = chord_bbox.XMax
+        chord_width = x_max - x_min
+        y_pos = 0 - HOLE_CONFIG['y_offset'] - HOLE_CONFIG['diameter']/2
         
-        # Find chord bounds at this Z
-        slice_thickness = 1.0
+        print(f"         Chord: X from {x_min:.1f} to {x_max:.1f} (width={chord_width:.1f})")
+        
+    except Exception as e:
+        print(f"         ❌ FAILED to find chord at Z={z_cut_position:.1f}: {e}")
+        return None
+    
+    # Calculate hole positions using configuration
+    result_shape = shape
+    successful_holes = 0
+    total_holes = len(HOLE_POSITIONS['z_cut'])
+    
+    for i, fraction in enumerate(HOLE_POSITIONS['z_cut']):
+        x_pos = x_min + (chord_width * fraction)
+        pos = Vector(x_pos, y_pos, z_cut_position)
+        
+        hole_cylinder = Part.makeCylinder(
+            HOLE_CONFIG['diameter'] / 2, 
+            HOLE_CONFIG['depth'],
+            pos - Vector(0, 0, HOLE_CONFIG['depth']/2),
+            Vector(0, 0, 1)
+        )
+        
+        try:
+            result_shape = result_shape.cut(hole_cylinder)
+            successful_holes += 1
+        except Exception as e:
+            print(f"         ❌ FAILED to add hole {i+1}/{total_holes} at {fraction*100:.0f}%: {e}")
+            return None
+    
+    if successful_holes != total_holes:
+        print(f"         ❌ Only added {successful_holes}/{total_holes} holes - ABORTING")
+        return None
+        
+    print(f"         ✅ Added {successful_holes}/{total_holes} holes")
+    return result_shape
+
+
+def add_x_cut_alignment_pins(shape, x_cut_position, z_start, z_end):
+    """Add alignment holes at an X-cut position."""
+    print(f"      Adding X-cut alignment holes at X={x_cut_position:.1f}")
+    
+    slice_height = z_end - z_start
+    y_pos = 0 - HOLE_CONFIG['y_offset'] - HOLE_CONFIG['diameter']/2
+    
+    print(f"         Slice from Z={z_start:.1f} to {z_end:.1f} (height={slice_height:.1f})")
+    print(f"         Y position for holes: {y_pos:.1f}")
+    
+    result_shape = shape
+    successful_holes = 0
+    total_holes = len(HOLE_POSITIONS['x_cut'])
+    
+    for i, fraction in enumerate(HOLE_POSITIONS['x_cut']):
+        z_pos = z_start + (slice_height * fraction)
+        pos = Vector(x_cut_position, y_pos, z_pos)
+        
+        hole_cylinder = Part.makeCylinder(
+            HOLE_CONFIG['diameter'] / 2, 
+            HOLE_CONFIG['depth'],
+            pos - Vector(HOLE_CONFIG['depth']/2, 0, 0),
+            Vector(1, 0, 0)
+        )
+        
+        try:
+            result_shape = result_shape.cut(hole_cylinder)
+            successful_holes += 1
+        except Exception as e:
+            print(f"         ❌ FAILED to add X-cut hole {i+1}/{total_holes} at {fraction*100:.0f}%: {e}")
+            return None
+    
+    if successful_holes != total_holes:
+        print(f"         ❌ Only added {successful_holes}/{total_holes} X-cut holes - ABORTING")
+        return None
+        
+    print(f"         ✅ Added {successful_holes}/{total_holes} X-cut holes")
+    return result_shape
+
+
+def add_y_half_joining_holes(shape, z_start, z_end, section_name):
+    """Add horizontal holes in Y-direction for joining port and starboard halves."""
+    section_height = z_end - z_start
+    print(f"      Adding Y-direction joining holes to {section_name}")
+    print(f"         Section Z: {z_start:.1f} to {z_end:.1f} (height={section_height:.1f})")
+    
+    result_shape = shape
+    total_holes = 0
+    expected_holes = len(HOLE_POSITIONS['y_join_rows']) * len(HOLE_POSITIONS['y_join_cols'])
+    
+    for row_frac in HOLE_POSITIONS['y_join_rows']:
+        z_position = z_start + (section_height * row_frac)
+        print(f"         Row at Z={z_position:.1f} ({row_frac*100:.0f}% of section height)")
+        
         sample_slice = Part.makeBox(
-            1000, 1000, slice_thickness,
-            Vector(-500, -500, z_cut_position - slice_thickness/2)
+            1000, 1000, GEOMETRY_CONFIG['slice_sample_thickness'],
+            Vector(-500, -500, z_position - GEOMETRY_CONFIG['slice_sample_thickness']/2)
         )
         
         try:
@@ -52,221 +230,81 @@ except ImportError as e:
             x_min = chord_bbox.XMin
             x_max = chord_bbox.XMax
             chord_width = x_max - x_min
-            y_pos = 0 - 3 - hole_diameter/2
             
-            print(f"         Chord: X from {x_min:.1f} to {x_max:.1f} (width={chord_width:.1f})")
+            print(f"            Chord: X from {x_min:.1f} to {x_max:.1f} (width={chord_width:.1f})")
             
-        except:
-            print(f"         ❌ Failed to find chord at Z={z_cut_position:.1f}")
-            return shape
+        except Exception as e:
+            print(f"            ❌ FAILED to find chord at Z={z_position:.1f}: {e}")
+            return None
         
-        # Calculate hole positions
-        hole_positions = []
-        for fraction in [0.2, 0.4, 0.55, 0.65]:
-            x_pos = x_min + (chord_width * fraction)
-            hole_positions.append(Vector(x_pos, y_pos, z_cut_position))
-        
-        # Create alignment holes
-        result_shape = shape
-        successful_holes = 0
-        
-        for i, pos in enumerate(hole_positions):
+        for x_frac in HOLE_POSITIONS['y_join_cols']:
+            x_pos = x_min + (chord_width * x_frac)
+            
             hole_cylinder = Part.makeCylinder(
-                hole_diameter / 2, hole_depth,
-                pos - Vector(0, 0, hole_depth/2),
-                Vector(0, 0, 1)
+                HOLE_CONFIG['diameter'] / 2, 
+                HOLE_CONFIG['depth'],
+                Vector(x_pos, -HOLE_CONFIG['depth']/2, z_position),
+                Vector(0, -1, 0)
             )
             
             try:
                 result_shape = result_shape.cut(hole_cylinder)
-                successful_holes += 1
-            except: 
-                print(f"         ⚠️ Failed to add hole {i+1}")
+                total_holes += 1
+            except Exception as e:
+                print(f"            ❌ FAILED to add hole at X={x_pos:.1f}: {e}")
+                return None
+    
+    if total_holes != expected_holes:
+        print(f"         ❌ Only added {total_holes}/{expected_holes} joining holes - ABORTING")
+        return None
         
-        print(f"         ✅ Added {successful_holes}/4 holes")
-        return result_shape
-
-    def add_x_cut_alignment_pins(shape, x_cut_position, z_start, z_end,
-                                 hole_diameter=6, hole_depth=25):
-        """
-        Add alignment holes at an X-cut position.
-        Holes are placed at 10%, 40%, 60%, 80% of slice height.
-        """
-        from FreeCAD import Vector, Base
-        
-        print(f"      Adding X-cut alignment holes at X={x_cut_position:.1f}")
-        
-        slice_height = z_end - z_start
-        y_pos = 0 - 3 - hole_diameter/2
-        
-        print(f"         Slice from Z={z_start:.1f} to {z_end:.1f} (height={slice_height:.1f})")
-        print(f"         Y position for holes: {y_pos:.1f}")
-        
-        # Calculate hole positions
-        hole_positions = []
-        for fraction in [0.1, 0.4, 0.6, 0.8]:
-            z_pos = z_start + (slice_height * fraction)
-            hole_positions.append(Vector(x_cut_position, y_pos, z_pos))
-        
-        result_shape = shape
-        successful_holes = 0
-        
-        for i, pos in enumerate(hole_positions):
-            hole_cylinder = Part.makeCylinder(
-                hole_diameter / 2, hole_depth,
-                pos - Vector(hole_depth/2, 0, 0),
-                Vector(1, 0, 0)
-            )
-            
-            try:
-                result_shape = result_shape.cut(hole_cylinder)
-                successful_holes += 1
-            except:
-                print(f"         ⚠️ Failed to add X-cut hole {i+1}")
-        
-        print(f"         ✅ Added {successful_holes}/4 X-cut holes")
-        return result_shape
-
-    def add_y_half_joining_holes(shape, z_start, z_end, section_name,
-                                 hole_diameter=6, row_positions=[0.25, 0.75], 
-                                 x_positions=[0.1, 0.4, 0.6, 0.9], hole_depth=25):
-        """
-        Add horizontal holes in Y-direction for joining port and starboard halves.
-        """
-        from FreeCAD import Vector, Base
-        
-        section_height = z_end - z_start
-        print(f"      Adding Y-direction joining holes to {section_name}")
-        print(f"         Section Z: {z_start:.1f} to {z_end:.1f} (height={section_height:.1f})")
-        
-        result_shape = shape
-        total_holes = 0
-        
-        for row_frac in row_positions:
-            z_position = z_start + (section_height * row_frac)
-            print(f"         Row at Z={z_position:.1f} ({row_frac*100:.0f}% of section height)")
-            
-            slice_thickness = 1.0
-            sample_slice = Part.makeBox(
-                1000, 1000, slice_thickness,
-                Vector(-500, -500, z_position - slice_thickness/2)
-            )
-            
-            try:
-                cross_section = shape.common(sample_slice)
-                chord_bbox = cross_section.BoundBox
-                
-                x_min = chord_bbox.XMin
-                x_max = chord_bbox.XMax
-                chord_width = x_max - x_min
-                
-                print(f"            Chord: X from {x_min:.1f} to {x_max:.1f} (width={chord_width:.1f})")
-                
-                for x_frac in x_positions:
-                    x_pos = x_min + (chord_width * x_frac)
-                    
-                    hole_cylinder = Part.makeCylinder(
-                        hole_diameter / 2, hole_depth,
-                        Vector(x_pos, -hole_depth/2, z_position),
-                        Vector(0, -1, 0)
-                    )
-                    
-                    try:
-                        result_shape = result_shape.cut(hole_cylinder)
-                        total_holes += 1
-                    except:
-                        print(f"            ⚠️ Failed to add hole at X={x_pos:.1f}")
-                
-            except:
-                print(f"            ❌ Failed to find chord at Z={z_position:.1f}")
-        
-        expected_holes = len(row_positions) * len(x_positions)
-        print(f"         ✅ Added {total_holes}/{expected_holes} joining holes")
-        return result_shape
+    print(f"         ✅ Added {total_holes}/{expected_holes} joining holes")
+    return result_shape
 
 
 def ensure_solid(shape, operation_name="operations"):
-    """
-    Ensure a shape is a solid, converting from compound if necessary.
-    
-    Args:
-        shape: The shape to check/convert
-        operation_name: Name of the operation for logging
-    
-    Returns:
-        The shape as a solid (or best attempt)
-    """
+    """Ensure a shape is a solid, converting from compound if necessary."""
     print(f"\n🔧 Converting shape back to solid after {operation_name}...")
-    try:
-        if shape.ShapeType == "Compound":
-            print(f"   Shape is compound, attempting to fuse into solid...")
-            # Try to fuse the compound into a single solid
-            shape = shape.fuse([])  # Fuse with empty list to consolidate
-            if shape.ShapeType == "Solid":
-                print(f"   ✅ Successfully converted to solid")
-            else:
-                print(f"   ⚠️ Still {shape.ShapeType}, but continuing...")
-        else:
-            print(f"   ✅ Shape is already {shape.ShapeType}")
-    except Exception as e:
-        print(f"   ⚠️ Fuse operation failed: {e}, continuing anyway...")
     
-    return shape
+    if shape.ShapeType == "Solid":
+        print(f"   ✅ Shape is already a solid")
+        return shape
+    
+    if shape.ShapeType == "Compound":
+        print(f"   Shape is compound, attempting to fuse into solid...")
+        try:
+            # Try to fuse the compound into a single solid
+            fused_shape = shape.fuse([])  # Fuse with empty list to consolidate
+            if fused_shape.ShapeType == "Solid":
+                print(f"   ✅ Successfully converted to solid")
+                return fused_shape
+            else:
+                print(f"   ❌ FAILED: Still {fused_shape.ShapeType} after fuse attempt")
+                return None
+        except Exception as e:
+            print(f"   ❌ FAILED: Fuse operation failed: {e}")
+            return None
+    
+    print(f"   ❌ FAILED: Shape is {shape.ShapeType}, cannot convert to solid")
+    return None
 
+# ============================================================================
+# GLOBAL STATE
+# ============================================================================
 
-print("Imports the Cut Foil and Stock and prepares for demo print")
-# Configuration
-BOAT_NAME = "MackenSea"
-VERSION = "2.4.0"  # Added Z-cut alignment pins
-
-# Stock positioning parameters
-POST_CENTRE_X = 323  # mm - X position for post centre
-POST_TOP_Z = -75     # mm - Z position for top of post
-POST_DIAMETER = 44   # mm - diameter of the post
-POST_DIAMETER_DELTA = 4  # mm - difference in post diameter for cutout stock
-
-# Printer specifications (Bambu Labs HD2)
-HD2_BUILD_X = 325  # mm
-HD2_BUILD_Y = 320  # mm  
-HD2_BUILD_Z = 325  # mm
-PRINT_MAX_SIZE = 310  # mm - Using 310mm (320mm - 10mm allowance) for all dimensions
-
-# Alignment hole parameters - UPDATED FOR SUPPORTED HOLES
-HOLE_DIAMETER = 6  # mm - dowel diameter
-SUPPORT_DIAMETER = 10  # mm - support cylinder diameter
-HOLE_DEPTH = 25  # mm - depth of holes
-EDGE_DISTANCE = 20  # mm - distance from edges for hole placement
-
-# Visualization
-EXPLOSION_FACTOR = 0  # mm - set to 0 for exact positions, >0 for separated view
-VISUALIZE_ALIGNMENT = False  # Set True to see alignment features as separate objects
-
-# Paths
-BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
-OUTPUT_FOLDER = f"{BOAT_FOLDER}/output"
-CUT_FOIL_FOLDER = f"{OUTPUT_FOLDER}/cut_foil"
-STOCK_FOLDER = f"{OUTPUT_FOLDER}/stock"
-CUTOUT_FOLDER = f"{OUTPUT_FOLDER}/cutout"
-PRINT_FOLDER = f"{OUTPUT_FOLDER}/demo" #3D print files
-
-# Input files
-CUT_FOIL_STEP = f"{BOAT_NAME}_Cut_Foil.step"
-STOCK_STEP = f"{BOAT_NAME}_Stock.step"
-STOCK_CUTOUT_STEP = f"{BOAT_NAME}_Stock_Cutout.step"
-
-MACRO_NAME = f"Demo_Model_{BOAT_NAME}"
-
-# Global variables to share data between steps
 doc = None
 cut_foil_obj = None
 stock_obj = None
 stock_cutout_obj = None
 port_half = None
-port_half_obj = None  # FreeCAD object for visualization
+port_half_obj = None
 port_plan = None
 pieces = []
 piece_objects = []
 
+# ============================================================================
+# MAIN WORKFLOW FUNCTIONS
+# ============================================================================
 
 def update_view():
     """Update document and view to show current state"""
@@ -279,8 +317,7 @@ def initialize_and_setup():
     """Initialize document and validate STEP files"""
     global doc
     
-    print(f"\n🎭 Demo Model Generator v{VERSION} (Refactored)")
-    print(f"✨ VERSION {VERSION} - Z-cut alignment pins added")
+    print(f"\n🎭 Demo Model Generator v{VERSION}")
     print(f"🚤 Boat: {BOAT_NAME}")
     
     # New document
@@ -291,13 +328,14 @@ def initialize_and_setup():
 
     # Validate STEP files before import
     print(f"\n🔍 Validating STEP files...")
-    cut_foil_path = f"{CUT_FOIL_FOLDER}/{CUT_FOIL_STEP}"
-    stock_path = f"{STOCK_FOLDER}/{STOCK_STEP}"
-    stock_cutout_path = f"{CUTOUT_FOLDER}/{STOCK_CUTOUT_STEP}"
     
-    for filepath, name in [(cut_foil_path, "Cut Foil"), 
-                           (stock_path, "Stock"), 
-                           (stock_cutout_path, "Stock Cutout")]:
+    files_to_validate = [
+        (f"{PATHS['cut_foil_folder']}/{INPUT_FILES['cut_foil']}", "Cut Foil"),
+        (f"{PATHS['stock_folder']}/{INPUT_FILES['stock']}", "Stock"),
+        (f"{PATHS['cutout_folder']}/{INPUT_FILES['stock_cutout']}", "Stock Cutout"),
+    ]
+    
+    for filepath, name in files_to_validate:
         validation = validate_step_file(filepath, verbose=False)
         if not validation['valid']:
             print(f"❌ Invalid {name} STEP file: {filepath}")
@@ -314,10 +352,10 @@ def import_step_files():
     global cut_foil_obj, stock_obj, stock_cutout_obj
     
     try:
-        print(f"\n📥 Importing STEP files using enhanced loader...")
+        print(f"\n📥 Importing STEP files...")
         
         # Import cut foil
-        cut_foil_path = f"{CUT_FOIL_FOLDER}/{CUT_FOIL_STEP}"
+        cut_foil_path = f"{PATHS['cut_foil_folder']}/{INPUT_FILES['cut_foil']}"
         _, cut_foil_objects = load_step(cut_foil_path, MACRO_NAME, verbose=True)
         if not cut_foil_objects:
             raise StepFileError("No objects imported from cut foil file")
@@ -325,7 +363,7 @@ def import_step_files():
         cut_foil_obj.Label = f"{BOAT_NAME}_Cut_Foil"
         
         # Import stock
-        stock_path = f"{STOCK_FOLDER}/{STOCK_STEP}"
+        stock_path = f"{PATHS['stock_folder']}/{INPUT_FILES['stock']}"
         _, stock_objects = load_step(stock_path, MACRO_NAME, verbose=True)
         if not stock_objects:
             raise StepFileError("No objects imported from stock file")
@@ -333,16 +371,14 @@ def import_step_files():
         stock_obj.Label = f"{BOAT_NAME}_Stock"
         
         # Import stock cutout
-        stock_cutout_path = f"{CUTOUT_FOLDER}/{STOCK_CUTOUT_STEP}"
+        stock_cutout_path = f"{PATHS['cutout_folder']}/{INPUT_FILES['stock_cutout']}"
         _, stock_cutout_objects = load_step(stock_cutout_path, MACRO_NAME, verbose=True)
         if not stock_cutout_objects:
             raise StepFileError("No objects imported from stock cutout file")
         stock_cutout_obj = stock_cutout_objects[0]
         stock_cutout_obj.Label = f"{BOAT_NAME}_Stock_Cutout"
         
-        # Update view
         update_view()
-        
         return True
         
     except StepFileError as e:
@@ -352,14 +388,13 @@ def import_step_files():
 
 def position_stock_components():
     """Position all stock components"""
-    # Position all stock components using refactored module
     final_positions = position_all_stock_components(
         stock_obj, 
         stock_cutout_obj,
-        POST_CENTRE_X, 
-        POST_TOP_Z, 
-        POST_DIAMETER, 
-        POST_DIAMETER_DELTA
+        STOCK_CONFIG['post_center_x'], 
+        STOCK_CONFIG['post_top_z'], 
+        STOCK_CONFIG['post_diameter'], 
+        STOCK_CONFIG['post_diameter_delta']
     )
     
     # Make objects visible
@@ -367,7 +402,6 @@ def position_stock_components():
     stock_obj.ViewObject.Visibility = True
     stock_cutout_obj.ViewObject.Visibility = True
     
-    # Recompute to ensure positioning is complete
     print(f"\n🔄 Recomputing to ensure positioning is complete...")
     update_view()
     print(f"   ✅ Recompute done, ready for split operation")
@@ -382,21 +416,22 @@ def split_solid_foil_at_y_zero():
     print(f"\n✂️ Splitting solid foil at Y=0...")
     
     try:
-        # Get bounding box for reference
-        from FreeCAD import Vector, Base
         bbox = cut_foil_obj.Shape.BoundBox
         print(f"   Solid foil bounds:")
         print(f"      X: {bbox.XMin:.1f} to {bbox.XMax:.1f}")
         print(f"      Y: {bbox.YMin:.1f} to {bbox.YMax:.1f}")
         print(f"      Z: {bbox.ZMin:.1f} to {bbox.ZMax:.1f}")
         
-        # Create box for negative Y side (port) - we'll only use this half
-        overlap = 0.5  # Small overlap to ensure proper intersection
+        # Create box for negative Y side (port)
+        extra = GEOMETRY_CONFIG['boolean_box_extra']
+        offset = GEOMETRY_CONFIG['boolean_box_offset']
+        overlap = GEOMETRY_CONFIG['y_split_overlap']
+        
         box_negative_y = Part.makeBox(
-            bbox.XLength + 200,                    # Width in X - make it bigger
-            abs(bbox.YMin) + 100 + overlap,        # From well before YMin to slightly past Y=0
-            bbox.ZLength + 200,                    # Height in Z - make it bigger
-            Base.Vector(bbox.XMin - 100, bbox.YMin - 100, bbox.ZMin - 100)  # Starting well before YMin
+            bbox.XLength + extra,
+            abs(bbox.YMin) + offset + overlap,
+            bbox.ZLength + extra,
+            Vector(bbox.XMin - offset, bbox.YMin - offset, bbox.ZMin - offset)
         )
         
         # Extract port half only from SOLID foil
@@ -405,21 +440,15 @@ def split_solid_foil_at_y_zero():
         
         # Verify the split worked
         if port_half.isNull() or len(port_half.Faces) == 0:
-            print(f"   ❌ Port half is empty! Trying alternative method...")
-            box_positive_y = Part.makeBox(
-                bbox.XLength + 200,
-                bbox.YMax + 100 + overlap,
-                bbox.ZLength + 200,
-                Base.Vector(bbox.XMin - 100, -overlap, bbox.ZMin - 100)
-            )
-            port_half = cut_foil_obj.Shape.cut(box_positive_y)
+            print(f"   ❌ FAILED: Port half is empty!")
+            return False
         
         # Create FreeCAD object for port half visualization
         port_half_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Port_Half_Solid")
         port_half_obj.Shape = port_half
         port_half_obj.ViewObject.Visibility = True
-        port_half_obj.ViewObject.ShapeColor = (0.2, 0.5, 0.8)  # Blue
-        port_half_obj.ViewObject.Transparency = 30
+        port_half_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['port_solid']
+        port_half_obj.ViewObject.Transparency = VISUALIZATION_CONFIG['transparency']['solid']
         port_half_obj.Label = f"{BOAT_NAME}_Port_Half_Solid"
         
         # Hide the original foil and stock for cleaner view
@@ -430,13 +459,11 @@ def split_solid_foil_at_y_zero():
         print(f"   ✅ Solid port half created with {len(port_half.Faces)} faces")
         print(f"   ℹ️ This solid half will have holes added, then be hollowed")
         
-        # Update view to focus on port half
         update_view()
-        
         return True
         
     except Exception as e:
-        print(f"   ❌ Processing failed: {e}")
+        print(f"   ❌ FAILED: Processing failed: {e}")
         return False
 
 
@@ -445,33 +472,37 @@ def create_port_cutting_plan():
     global port_plan
     
     print(f"\n🗺️ Creating cutting plan for 3D printing...")
-    print(f"🖨️ Printer: Bambu Labs HD2 (Build volume: {HD2_BUILD_X}x{HD2_BUILD_Y}x{HD2_BUILD_Z}mm)")
-    port_plan = create_cutting_plan(port_half, "Port Half", PRINT_MAX_SIZE)
+    print(f"🖨️ Printer: Bambu Labs HD2 (Build volume: {PRINTER_CONFIG['build_x']}x{PRINTER_CONFIG['build_y']}x{PRINTER_CONFIG['build_z']}mm)")
     
-    return True
+    try:
+        port_plan = create_cutting_plan(port_half, "Port Half", PRINTER_CONFIG['max_print_size'])
+        return True
+    except Exception as e:
+        print(f"   ❌ FAILED to create cutting plan: {e}")
+        return False
 
 
 def add_z_alignment_to_port():
     """Add Z-cut alignment pins to solid port half"""
     global port_half
     
+    positions_str = ', '.join([f"{p*100:.0f}%" for p in HOLE_POSITIONS['z_cut']])
     print(f"\n🔩 Adding Z-cut alignment holes to solid port half...")
-    print(f"   Adding 4 holes at each Z-cut position")
-    print(f"   Holes at 20%, 40%, 55%, 65% of chord width")
+    print(f"   Adding {len(HOLE_POSITIONS['z_cut'])} holes at each Z-cut position")
+    print(f"   Holes at {positions_str} of chord width")
     
     if port_plan['z_slices'] > 1:
         for i in range(1, port_plan['z_slices']):
             z_cut_position = port_plan['bbox'].ZMin + (i * port_plan['z_slice_height'])
-            port_half = add_z_cut_alignment_pins(
-                port_half, z_cut_position,
-                HOLE_DIAMETER, SUPPORT_DIAMETER, HOLE_DEPTH
-            )
+            modified_shape = add_z_cut_alignment_pins(port_half, z_cut_position)
+            if modified_shape is None:
+                print(f"   ❌ FAILED to add Z-cut alignment pins")
+                return False
+            port_half = modified_shape
     
-    # Update the visualization object with new holes
     port_half_obj.Shape = port_half
     port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_Z_holes"
     
-    # Update view
     update_view()
     print(f"   🔄 View updated to show Z-cut alignment holes in solid")
     
@@ -482,26 +513,26 @@ def add_x_alignment_to_port():
     """Add X-cut alignment pins to solid port half"""
     global port_half
     
+    positions_str = ', '.join([f"{p*100:.0f}%" for p in HOLE_POSITIONS['x_cut']])
     print(f"\n🔧 Adding X-cut alignment holes to solid port half...")
-    print(f"   Adding 4 holes at each X-cut position")
-    print(f"   Holes at 10%, 40%, 60%, 80% of slice height")
+    print(f"   Adding {len(HOLE_POSITIONS['x_cut'])} holes at each X-cut position")
+    print(f"   Holes at {positions_str} of slice height")
     
     for slice_info in port_plan['slice_plans']:
         if slice_info['needs_x_split']:
             x_center = slice_info['x_center']
             z_start = slice_info['z_start']
             z_end = slice_info['z_end']
-            port_half = add_x_cut_alignment_pins(
-                port_half, x_center, z_start, z_end,
-                HOLE_DIAMETER, HOLE_DEPTH
-            )
+            modified_shape = add_x_cut_alignment_pins(port_half, x_center, z_start, z_end)
+            if modified_shape is None:
+                print(f"   ❌ FAILED to add X-cut alignment pins")
+                return False
+            port_half = modified_shape
     
-    # Update the visualization object with all alignment holes
     port_half_obj.Shape = port_half
     port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_Alignment_Holes"
-    port_half_obj.ViewObject.ShapeColor = (0.1, 0.6, 0.3)  # Green to show completion
+    port_half_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['port_aligned']
     
-    # Update view
     update_view()
     print(f"   🔄 View updated to show all alignment holes in solid")
     print(f"   ✅ Solid port half ready with all alignment features")
@@ -513,12 +544,16 @@ def add_y_joining_to_port():
     """Add Y-direction holes for joining port and starboard halves"""
     global port_half
     
+    rows = len(HOLE_POSITIONS['y_join_rows'])
+    cols = len(HOLE_POSITIONS['y_join_cols'])
+    row_str = ', '.join([f"{p*100:.0f}%" for p in HOLE_POSITIONS['y_join_rows']])
+    col_str = ', '.join([f"{p*100:.0f}%" for p in HOLE_POSITIONS['y_join_cols']])
+    
     print(f"\n🔩 Adding Y-direction holes for joining port and starboard halves...")
-    print(f"   Adding 2 rows per section at 25% and 75% of height")
-    print(f"   Adding 4 holes per row at 10%, 40%, 60%, 90% of chord")
+    print(f"   Adding {rows} rows per section at {row_str} of height")
+    print(f"   Adding {cols} holes per row at {col_str} of chord")
     print(f"   Holes oriented horizontally (Y-axis) for joining halves")
     
-    # Add joining holes to each planned section
     for i, slice_info in enumerate(port_plan['slice_plans']):
         section_num = i + 1
         z_start = slice_info['z_start']
@@ -527,20 +562,23 @@ def add_y_joining_to_port():
         
         print(f"\n   Processing {section_name} (Z: {z_start:.0f} to {z_end:.0f}mm)")
         
-        port_half = add_y_half_joining_holes(
-            port_half, z_start, z_end, section_name,
-            HOLE_DIAMETER, [0.25, 0.75], [0.1, 0.4, 0.6, 0.9], HOLE_DEPTH
-        )
+        modified_shape = add_y_half_joining_holes(port_half, z_start, z_end, section_name)
+        if modified_shape is None:
+            print(f"   ❌ FAILED to add Y-joining holes")
+            return False
+        port_half = modified_shape
     
-    # Use the ensure_solid function
-    port_half = ensure_solid(port_half, "hole operations")
+    # Ensure solid after all hole operations
+    solid_shape = ensure_solid(port_half, "hole operations")
+    if solid_shape is None:
+        print(f"   ❌ FAILED to ensure solid shape")
+        return False
+    port_half = solid_shape
     
-    # Update the visualization object with joining holes
     port_half_obj.Shape = port_half
     port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_Joining_Holes"
-    port_half_obj.ViewObject.ShapeColor = (0.8, 0.3, 0.1)  # Orange to show joining holes added
+    port_half_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['port_joined']
     
-    # Update view
     update_view()
     print(f"   🔄 View updated to show joining holes in solid")
     print(f"   ✅ Solid port half complete with alignment and joining features")
@@ -556,14 +594,10 @@ def pre_boolean_checks():
     # Check 1: Validate shapes
     if not port_half.isValid():
         print(f"❌ Port half shape is not valid!")
-        print(f"   The geometry has errors that prevent boolean operations.")
-        print(f"   Check hole cutting operations for issues.")
         return False
     
     if not stock_cutout_obj.Shape.isValid():
         print(f"❌ Stock cutout shape is not valid!")
-        print(f"   The geometry has errors that prevent boolean operations.")
-        print(f"   Please check the source STEP file for issues.")
         return False
     
     print(f"   ✅ Both shapes are valid")
@@ -571,25 +605,23 @@ def pre_boolean_checks():
     # Check 2: Ensure shapes are solids
     if not port_half.ShapeType == "Solid":
         print(f"❌ Port half is not a solid! (Type: {port_half.ShapeType})")
-        print(f"   Boolean cut operations require solid objects.")
-        print(f"   The shape may have been corrupted during hole cutting.")
         return False
     
     if not stock_cutout_obj.Shape.ShapeType == "Solid":
         print(f"❌ Stock cutout is not a solid! (Type: {stock_cutout_obj.Shape.ShapeType})")
-        print(f"   Boolean cut operations require solid objects.")
-        print(f"   The imported shape may be a shell or open surface.")
         return False
     
     print(f"   ✅ Both shapes are solids")
     
     # Check 3: Check for intersection
-    common_volume = port_half.common(stock_cutout_obj.Shape)
-    if common_volume.Volume < 0.001:  # Less than 0.001 mm³
-        print(f"❌ No meaningful intersection between shapes!")
-        print(f"   Common volume: {common_volume.Volume:.6f} mm³")
-        print(f"   The stock cutout and port half do not overlap sufficiently for a boolean cut.")
-        print(f"   Check positioning or shape dimensions.")
+    try:
+        common_volume = port_half.common(stock_cutout_obj.Shape)
+        if common_volume.Volume < 0.001:
+            print(f"❌ No meaningful intersection between shapes!")
+            print(f"   Common volume: {common_volume.Volume:.6f} mm³")
+            return False
+    except Exception as e:
+        print(f"❌ Failed to compute intersection: {e}")
         return False
     
     print(f"   ✅ Shapes intersect properly (common volume: {common_volume.Volume:.2f} mm³)")
@@ -600,12 +632,6 @@ def pre_boolean_checks():
     
     if not (port_bbox.intersect(cutout_bbox)):
         print(f"❌ Bounding boxes do not intersect!")
-        print(f"   Port half bounds: X({port_bbox.XMin:.1f}, {port_bbox.XMax:.1f})")
-        print(f"                     Y({port_bbox.YMin:.1f}, {port_bbox.YMax:.1f})")
-        print(f"                     Z({port_bbox.ZMin:.1f}, {port_bbox.ZMax:.1f})")
-        print(f"   Cutout bounds: X({cutout_bbox.XMin:.1f}, {cutout_bbox.XMax:.1f})")
-        print(f"                  Y({cutout_bbox.YMin:.1f}, {cutout_bbox.YMax:.1f})")
-        print(f"                  Z({cutout_bbox.ZMin:.1f}, {cutout_bbox.ZMax:.1f})")
         return False
     
     print(f"   ✅ Bounding boxes overlap correctly")
@@ -629,34 +655,33 @@ def boolean_cut_operation():
     print(f"\n🔧 Creating cavity with boolean cut on port half...")
     print(f"   ⏳ This may take a moment for complex geometry...")
     try:
-        # Perform the cut operation on the port half with holes
         original_faces = len(port_half.Faces)
         hollowed_port_half = port_half.cut(stock_cutout_obj.Shape)
         
-        # Update the port half with the hollowed version
+        # Verify the cut worked
+        if hollowed_port_half.isNull() or len(hollowed_port_half.Faces) <= original_faces:
+            print(f"   ❌ FAILED: Boolean cut produced invalid result")
+            return False
+        
         port_half = hollowed_port_half
         
-        # Update visualization object
         port_half_obj.Shape = port_half
         port_half_obj.Label = f"{BOAT_NAME}_Port_Half_Hollowed"
-        port_half_obj.ViewObject.ShapeColor = (0.3, 0.3, 0.4)  # Dark grey
-        port_half_obj.ViewObject.Transparency = 70  # Make transparent to see cavity
+        port_half_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['port_hollowed']
+        port_half_obj.ViewObject.Transparency = VISUALIZATION_CONFIG['transparency']['hollowed']
         
-        # Show stock for reference
         stock_obj.ViewObject.Visibility = True
-        stock_obj.ViewObject.ShapeColor = (0.8, 0.8, 0.9)  # Light steel
+        stock_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['stock']
         
         print(f"   ✅ Cavity created successfully in port half")
         print(f"   Original port half faces: {original_faces}")
         print(f"   Hollowed port half faces: {len(port_half.Faces)}")
         
-        # Update view
         update_view()
-        
         return True
         
     except Exception as e:
-        print(f"   ❌ Boolean cut failed: {e}")
+        print(f"   ❌ FAILED: Boolean cut failed: {e}")
         return False
 
 
@@ -664,18 +689,19 @@ def cut_pieces():
     """Cut hollowed port half into pieces according to plan"""
     global pieces, piece_objects
     
-    from FreeCAD import Vector, Base
-    
     print(f"\n📐 Cutting pieces...")
     print(f"   Alignment and joining holes will be split automatically by cuts")
     
-    # Hide the working port half object
     port_half_obj.ViewObject.Visibility = False
     stock_obj.ViewObject.Visibility = False
     
-    # Modified cutting operations
     pieces = []
     piece_objects = []
+    
+    extra = GEOMETRY_CONFIG['boolean_box_extra']
+    offset = GEOMETRY_CONFIG['boolean_box_offset']
+    cut_extra = GEOMETRY_CONFIG['cutting_box_extra']
+    cut_offset = GEOMETRY_CONFIG['cutting_box_offset']
     
     # Cut into Z slices
     for i, slice_info in enumerate(port_plan['slice_plans']):
@@ -685,46 +711,49 @@ def cut_pieces():
         
         print(f"\n   Processing slice {slice_num} (Z: {z_start:.0f} to {z_end:.0f}mm)")
         
-        # Create cutting boxes for this slice
         slice_bbox = port_half.BoundBox
         
         # Box to isolate this Z slice
         slice_box = Part.makeBox(
-            slice_bbox.XLength + 200,
-            slice_bbox.YLength + 200,
+            slice_bbox.XLength + extra,
+            slice_bbox.YLength + extra,
             z_end - z_start,
-            Base.Vector(slice_bbox.XMin - 100, slice_bbox.YMin - 100, z_start)
+            Vector(slice_bbox.XMin - offset, slice_bbox.YMin - offset, z_start)
         )
         
-        # Extract the slice
         try:
             slice_shape = port_half.common(slice_box)
             
-            # Now check if X-split is needed
+            if slice_shape.isNull() or len(slice_shape.Faces) == 0:
+                print(f"      ❌ FAILED: Slice {slice_num} is empty")
+                return False
+            
             if slice_info['needs_x_split']:
                 x_center = slice_info['x_center']
                 print(f"      Splitting at X={x_center:.0f}mm")
                 
                 # Create boxes for left (A) and right (B) pieces
                 left_box = Part.makeBox(
-                    x_center - slice_bbox.XMin + 10,
-                    slice_bbox.YLength + 200,
-                    z_end - z_start + 10,
-                    Base.Vector(slice_bbox.XMin - 10, slice_bbox.YMin - 100, z_start - 5)
+                    x_center - slice_bbox.XMin + cut_extra,
+                    slice_bbox.YLength + extra,
+                    z_end - z_start + cut_extra,
+                    Vector(slice_bbox.XMin - cut_extra, slice_bbox.YMin - offset, z_start - cut_offset)
                 )
                 
                 right_box = Part.makeBox(
-                    slice_bbox.XMax - x_center + 10,
-                    slice_bbox.YLength + 200,
-                    z_end - z_start + 10,
-                    Base.Vector(x_center, slice_bbox.YMin - 100, z_start - 5)
+                    slice_bbox.XMax - x_center + cut_extra,
+                    slice_bbox.YLength + extra,
+                    z_end - z_start + cut_extra,
+                    Vector(x_center, slice_bbox.YMin - offset, z_start - cut_offset)
                 )
                 
-                # Create A and B pieces
                 piece_a = slice_shape.common(left_box)
                 piece_b = slice_shape.common(right_box)
                 
-                # Name pieces
+                if piece_a.isNull() or piece_b.isNull():
+                    print(f"      ❌ FAILED: X-split produced invalid pieces")
+                    return False
+                
                 name_a = f"{slice_num}A"
                 name_b = f"{slice_num}B"
                 
@@ -734,117 +763,111 @@ def cut_pieces():
                 print(f"      ✅ Created pieces {name_a} and {name_b}")
                 
                 # Create FreeCAD objects
-                obj_a = doc.addObject("Part::Feature", f"{BOAT_NAME}_{name_a}")
-                obj_a.Shape = piece_a
-                obj_a.ViewObject.ShapeColor = (0.2 + i*0.15, 0.4, 0.6)
-                obj_a.ViewObject.Transparency = 20
-                
-                if EXPLOSION_FACTOR > 0:
-                    obj_a.Placement.Base.x -= EXPLOSION_FACTOR
-                    obj_a.Placement.Base.z += i * EXPLOSION_FACTOR
-                
-                piece_objects.append(obj_a)
-                
-                obj_b = doc.addObject("Part::Feature", f"{BOAT_NAME}_{name_b}")
-                obj_b.Shape = piece_b
-                obj_b.ViewObject.ShapeColor = (0.25 + i*0.15, 0.4, 0.65)
-                obj_b.ViewObject.Transparency = 20
-                
-                if EXPLOSION_FACTOR > 0:
-                    obj_b.Placement.Base.x += EXPLOSION_FACTOR
-                    obj_b.Placement.Base.z += i * EXPLOSION_FACTOR
-                
-                piece_objects.append(obj_b)
+                for name, piece, x_offset in [(name_a, piece_a, -1), (name_b, piece_b, 1)]:
+                    obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_{name}")
+                    obj.Shape = piece
+                    obj.ViewObject.ShapeColor = (0.2 + i*0.15, 0.4, 0.6)
+                    obj.ViewObject.Transparency = VISUALIZATION_CONFIG['transparency']['pieces']
+                    
+                    if VISUALIZATION_CONFIG['explosion_factor'] > 0:
+                        obj.Placement.Base.x += x_offset * VISUALIZATION_CONFIG['explosion_factor']
+                        obj.Placement.Base.z += i * VISUALIZATION_CONFIG['explosion_factor']
+                    
+                    piece_objects.append(obj)
                 
             else:
-                # Single piece for this slice (no X-split needed)
                 name = f"{slice_num}A"
                 pieces.append((name, slice_shape))
                 
                 print(f"      ✅ Created piece {name} (no X-split needed)")
                 
-                # Create FreeCAD object
                 obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_{name}")
                 obj.Shape = slice_shape
                 obj.ViewObject.ShapeColor = (0.2 + i*0.15, 0.4, 0.6)
-                obj.ViewObject.Transparency = 20
+                obj.ViewObject.Transparency = VISUALIZATION_CONFIG['transparency']['pieces']
                 
-                if EXPLOSION_FACTOR > 0:
-                    obj.Placement.Base.z += i * EXPLOSION_FACTOR
+                if VISUALIZATION_CONFIG['explosion_factor'] > 0:
+                    obj.Placement.Base.z += i * VISUALIZATION_CONFIG['explosion_factor']
                 
                 piece_objects.append(obj)
                 
         except Exception as e:
-            print(f"      ❌ Failed to create slice: {e}")
+            print(f"      ❌ FAILED to create slice: {e}")
+            return False
     
-    # Update view to show pieces
+    if len(pieces) == 0:
+        print(f"   ❌ FAILED: No pieces were created")
+        return False
+    
     update_view()
-    
     return True
 
 
 def export_pieces():
     """Export individual pieces to STEP files"""
     print(f"\n💾 Exporting individual pieces with alignment and joining features...")
-    pieces_folder = f"{PRINT_FOLDER}/pieces_for_mirroring"
+    pieces_folder = f"{PATHS['print_folder']}/pieces_for_mirroring"
     os.makedirs(pieces_folder, exist_ok=True)
     
     exported_count = 0
-    failed_exports = []
     
     for piece_name, piece_shape in pieces:
         try:
-            # Create a temporary object for export
             temp_obj = doc.addObject("Part::Feature", f"temp_{piece_name}")
             temp_obj.Shape = piece_shape
             
             piece_path = f"{pieces_folder}/{BOAT_NAME}_{piece_name}.step"
             save_step(temp_obj, piece_path, verbose=False)
             
-            # Remove temporary object
             doc.removeObject(temp_obj.Name)
             
             print(f"   ✅ Exported: {piece_name}")
             exported_count += 1
             
-        except StepFileError as e:
-            print(f"   ❌ Failed to export {piece_name}: {e}")
-            failed_exports.append(piece_name)
+        except Exception as e:
+            print(f"   ❌ FAILED to export {piece_name}: {e}")
             # Clean up temp object if it exists
             if f"temp_{piece_name}" in [obj.Name for obj in doc.Objects]:
                 doc.removeObject(f"temp_{piece_name}")
+            return False
+    
+    if exported_count != len(pieces):
+        print(f"   ❌ FAILED: Only exported {exported_count}/{len(pieces)} pieces")
+        return False
     
     print(f"\n   📦 Successfully exported {exported_count}/{len(pieces)} pieces")
-    if failed_exports:
-        print(f"   ❌ Failed exports: {', '.join(failed_exports)}")
-    
     return True
 
 
 def final_view_and_summary():
     """Update view and print final summary"""
-    # Update view
     update_view()
     
-    # Summary
+    # Format position arrays for display
+    z_pos_str = ', '.join([f"{p*100:.0f}%" for p in HOLE_POSITIONS['z_cut']])
+    x_pos_str = ', '.join([f"{p*100:.0f}%" for p in HOLE_POSITIONS['x_cut']])
+    y_row_str = ', '.join([f"{p*100:.0f}%" for p in HOLE_POSITIONS['y_join_rows']])
+    y_col_str = ', '.join([f"{p*100:.0f}%" for p in HOLE_POSITIONS['y_join_cols']])
+    
     print(f"\n📋 FINAL SUMMARY:")
     print(f"   🔄 MIRRORING WORKFLOW:")
     print(f"      1. Import pieces into Bambu Studio")
     print(f"      2. Print one set as-is (port half)")
     print(f"      3. Mirror and print again (creates starboard half)")
-    print(f"      4. Join using 6mm dowels through alignment holes")
+    print(f"      4. Join using {HOLE_CONFIG['diameter']}mm dowels through alignment holes")
     print(f"      5. Join port and starboard halves using Y-direction joining holes")
     print(f"   Alignment features:")
-    print(f"      • Z-cuts: 4 holes at 20%, 40%, 55%, 65% of chord")
-    print(f"      • X-cuts: 4 holes at 10%, 40%, 60%, 80% of slice height")
-    print(f"      • Hole diameter: {HOLE_DIAMETER}mm (for dowels)")
-    print(f"      • Hole depth: {HOLE_DEPTH}mm")
+    print(f"      • Z-cuts: {len(HOLE_POSITIONS['z_cut'])} holes at {z_pos_str} of chord")
+    print(f"      • X-cuts: {len(HOLE_POSITIONS['x_cut'])} holes at {x_pos_str} of slice height")
+    print(f"      • Hole diameter: {HOLE_CONFIG['diameter']}mm (for dowels)")
+    print(f"      • Hole depth: {HOLE_CONFIG['depth']}mm")
     print(f"      • Z-holes: vertical (perpendicular to Z-cut plane)")
     print(f"      • X-holes: horizontal (perpendicular to X-cut plane)")
     print(f"   Half-joining features:")
-    print(f"      • Y-direction holes: 8 holes per section (2 rows × 4 holes)")
-    print(f"      • Rows at 25% and 75% of section height")
-    print(f"      • Holes at 10%, 40%, 60%, 90% of chord width")
+    total_y_holes = len(HOLE_POSITIONS['y_join_rows']) * len(HOLE_POSITIONS['y_join_cols'])
+    print(f"      • Y-direction holes: {total_y_holes} holes per section ({len(HOLE_POSITIONS['y_join_rows'])} rows × {len(HOLE_POSITIONS['y_join_cols'])} holes)")
+    print(f"      • Rows at {y_row_str} of section height")
+    print(f"      • Holes at {y_col_str} of chord width")
     print(f"      • Horizontal holes for joining port and starboard halves")
     print(f"   Processing approach:")
     print(f"      • Split solid foil first (more reliable)")
@@ -852,13 +875,13 @@ def final_view_and_summary():
     print(f"      • Boolean cut last (on port half only)")
     print(f"   Pieces created (to be mirrored):")
     piece_list = [name for name, _ in pieces]
-    piece_list.sort()  # Sort for logical order
+    piece_list.sort()
     for piece_name in piece_list:
         print(f"      • {piece_name}")
     print(f"   📦 UNIQUE PIECES: {len(pieces)}")
     print(f"   📦 TOTAL AFTER MIRRORING: {len(pieces) * 2}")
     
-    pieces_folder = f"{PRINT_FOLDER}/pieces_for_mirroring"
+    pieces_folder = f"{PATHS['print_folder']}/pieces_for_mirroring"
     print(f"\n✅ Complete! Pieces ready for mirroring in slicer.")
     print(f"📁 Files saved to: {pieces_folder}")
     
@@ -866,59 +889,38 @@ def final_view_and_summary():
 
 
 def run():
-    """MASTER FUNCTION: Execute all steps in sequence - comment out steps to skip during debugging"""
+    """Execute all operations in sequence - fail fast on any error"""
     
-    # Initialize and validate
-    if not initialize_and_setup():
-        return
+    print("Imports the Cut Foil and Stock and prepares for demo print")
     
-    # Import STEP files
-    if not import_step_files():
-        return
+    operations = [
+        ("Initializing and validating", initialize_and_setup),
+        ("Importing STEP files", import_step_files),
+        ("Positioning stock components", position_stock_components),
+        ("Splitting solid foil at Y=0", split_solid_foil_at_y_zero),
+        ("Creating cutting plan", create_port_cutting_plan),
+        ("Adding Z-cut alignment pins", add_z_alignment_to_port),
+        ("Adding X-cut alignment pins", add_x_alignment_to_port),
+        ("Adding Y-joining holes", add_y_joining_to_port),
+        ("Performing pre-Boolean checks", pre_boolean_checks),
+        ("Performing Boolean cut", boolean_cut_operation),
+        ("Cutting pieces", cut_pieces),
+        ("Exporting pieces", export_pieces),
+    ]
     
-    # Position stock components
-    if not position_stock_components():
-        return
+    for step_name, operation in operations:
+        if not operation():
+            print(f"\n💥 CRITICAL FAILURE: {step_name} failed")
+            print(f"   Aborting demo model generation")
+            return False
     
-    # Split solid foil at Y=0 (BEFORE boolean cut)
-    if not split_solid_foil_at_y_zero():
-        return
-    
-    # Create cutting plan for 3D printing
-    if not create_port_cutting_plan():
-        return
-    
-    # Add Z-cut alignment pins to solid port half
-    if not add_z_alignment_to_port():
-        return
-    
-    # Add X-cut alignment pins to solid port half
-    if not add_x_alignment_to_port():
-        return
-    
-    # Add Y-direction holes for joining halves to solid port half
-    if not add_y_joining_to_port():
-        return
-    
-    # Pre-Boolean checks
-    if not pre_boolean_checks():
-        return
-    
-    # Boolean cut operation (port half only, AFTER holes)
-    if not boolean_cut_operation():
-        return
-    
-    # Cut pieces according to plan
-    if not cut_pieces():
-        return
-    
-    # Export pieces to STEP files
-    if not export_pieces():
-        return
-    
-    # Final view update and summary
     final_view_and_summary()
+    return True
 
 
 # Run the script
-run()
+if __name__ == "__main__":
+    success = run()
+    if not success:
+        print("\n❌ Demo model generation FAILED")
+        sys.exit(1)
