@@ -12,6 +12,7 @@ if venv_path.exists():
     sys.path.insert(0, str(venv_path))
 
 import FreeCAD as App
+import Part
 from PySide2 import QtWidgets
 
 # Add project root
@@ -90,6 +91,130 @@ class StockBuilderCore:
         else:
             raise ValueError("No CSV file selected")
     
+    def add_perforation_cylinders(self, cutout_obj, doc, dimensions):
+        """
+        Add perforation cylinders to the rudder post section of the cutout
+        
+        Args:
+            cutout_obj: The cutout object to modify
+            doc: FreeCAD document
+            dimensions: Dictionary containing stock dimensions
+        
+        Returns:
+            Modified cutout object with perforation cylinders
+        """
+        self.log("🔧 Adding perforation cylinders to cutout...")
+        
+        try:
+            # Get the shape of the cutout
+            if hasattr(cutout_obj, 'Shape'):
+                cutout_shape = cutout_obj.Shape
+            else:
+                self.log("⚠️ Cutout object has no Shape attribute")
+                return cutout_obj
+            
+            # Parameters for perforation cylinders
+            cylinder_diameter = 5.0  # mm
+            cylinder_radius = cylinder_diameter / 2.0
+            cylinder_length = 100.0  # mm
+            vertical_spacing = 15.0  # mm between centers
+            
+            # Get post dimensions from the dimensions dict
+            # From CSV: post goes from 0 to 604mm (in Z going negative)
+            post_end_z = dimensions.get('post_end_mm', 604.0)  # End of post from CSV
+            
+            # Starting position: 30mm down from top (top is at Z=0, so start at Z=-30)
+            start_z = -30.0  # Start 30mm below top
+            
+            # Calculate number of cylinders that fit along the post
+            # Leave some margin at the bottom
+            end_z = -post_end_z + 30.0  # Stop 30mm before bottom
+            usable_length = abs(start_z - end_z)
+            num_cylinders = int(usable_length / vertical_spacing) + 1
+            
+            # Create list to hold all cylinder shapes
+            cylinder_shapes = []
+            
+            self.log(f"   Post length: {post_end_z}mm")
+            self.log(f"   Starting perforations at Z={start_z}mm")
+            self.log(f"   Creating {num_cylinders} perforation levels")
+            
+            # Create cylinders at each vertical position
+            for i in range(num_cylinders):
+                z_position = start_z - (i * vertical_spacing)  # Going down (more negative)
+                
+                # Skip if we're getting too close to the bottom
+                if z_position < end_z:
+                    break
+                
+                # Create cylinders starting from center (0,0) going outward
+                # X direction (negative only)
+                cyl_x = Part.makeCylinder(
+                    cylinder_radius,
+                    cylinder_length,
+                    App.Vector(0, 0, z_position),  # Start at center
+                    App.Vector(-1, 0, 0)  # Direction: negative X
+                )
+                cylinder_shapes.append(cyl_x)
+                
+                # Y direction (positive)
+                cyl_y_pos = Part.makeCylinder(
+                    cylinder_radius,
+                    cylinder_length,
+                    App.Vector(0, 0, z_position),  # Start at center
+                    App.Vector(0, 1, 0)  # Direction: positive Y
+                )
+                cylinder_shapes.append(cyl_y_pos)
+                
+                # Y direction (negative)
+                cyl_y_neg = Part.makeCylinder(
+                    cylinder_radius,
+                    cylinder_length,
+                    App.Vector(0, 0, z_position),  # Start at center
+                    App.Vector(0, -1, 0)  # Direction: negative Y
+                )
+                cylinder_shapes.append(cyl_y_neg)
+            
+            self.log(f"   Created {len(cylinder_shapes)} perforation cylinders")
+            
+            # Combine all cylinders into one compound
+            if cylinder_shapes:
+                cylinders_compound = Part.makeCompound(cylinder_shapes)
+                
+                # Fuse the cylinders with the cutout shape
+                self.log("   Fusing cylinders with cutout...")
+                modified_shape = cutout_shape.fuse(cylinders_compound)
+                
+                # Create a new object with the modified shape
+                modified_obj = doc.addObject("Part::Feature", "ModifiedCutout")
+                modified_obj.Shape = modified_shape
+                modified_obj.Label = cutout_obj.Label if hasattr(cutout_obj, 'Label') else "Modified_Cutout"
+                
+                # Copy properties from original to modified
+                if hasattr(cutout_obj, 'IntendedName'):
+                    try:
+                        modified_obj.addProperty("App::PropertyString", "IntendedName", 
+                                               "Base", "Intended object name")
+                        modified_obj.IntendedName = cutout_obj.IntendedName
+                    except:
+                        pass
+                
+                # Remove original cutout object
+                try:
+                    doc.removeObject(cutout_obj.Name)
+                except:
+                    pass
+                
+                self.log("✅ Successfully added perforation cylinders")
+                return modified_obj
+            else:
+                self.log("⚠️ No cylinders created")
+                return cutout_obj
+                
+        except Exception as e:
+            self.log(f"⚠️ Error adding perforation cylinders: {e}")
+            return cutout_obj
+    
     def build(self, doc=None, csv_path=None, cutout_tolerance_mm=None, **kwargs):
         """
         Main build method - builds stock and optionally cutout based on style
@@ -161,7 +286,34 @@ class StockBuilderCore:
             cutout_dimensions = create_wedge_cutout_dimensions(dimensions, cutout_tolerance_mm)
             cutout_name = f"{results['boat_name']}_Stock_Cutout"
             
-            cutout_obj = self._build_single_object(doc, cutout_dimensions, cutout_name, **kwargs)
+            # Build the basic cutout
+            cutout_obj = self._build_single_object(doc, cutout_dimensions, cutout_name, 
+                                                  skip_export=True, skip_report=True, **kwargs)
+            
+            # Add perforation cylinders to the cutout
+            cutout_obj = self.add_perforation_cylinders(cutout_obj, doc, cutout_dimensions)
+            
+            # Now export and generate report for the modified cutout
+            self.export_stock_step(cutout_obj, object_name=cutout_name)
+            
+            # Generate approval report for modified cutout
+            boat_name = self._extract_boat_name(cutout_name)
+            customer_info = {
+                'customer': boat_name,
+                'part_number': f"{boat_name}-RS-001",
+                'revision': 'A'
+            }
+            
+            try:
+                image_path = self.report_generator.generate_approval_pdf(
+                    cutout_obj, doc, customer_info, 
+                    output_filename=f"{cutout_name}_Approval.png"
+                )
+                if image_path:
+                    self.log(f"📸 Generated approval image for modified cutout")
+            except Exception as e:
+                self.log(f"⚠️ Image generation skipped: {e}")
+            
             results['cutout'] = cutout_obj
         else:
             self.log(f"\n⏭️ Skipping cutout - stock style is '{results['style']}', not 'wedge'")
@@ -174,6 +326,7 @@ class StockBuilderCore:
         if results['cutout']:
             cutout_name = f"{results['boat_name']}_Stock_Cutout"
             self.log(f"✅ Cutout: {cutout_name} (tolerance: {cutout_tolerance_mm}mm)")
+            self.log(f"   - With perforation cylinders")
         else:
             self.log("⏭️ Cutout: Not built")
         
@@ -188,7 +341,7 @@ class StockBuilderCore:
         
         return results
     
-    def _build_single_object(self, doc, dimensions, object_name, **kwargs):
+    def _build_single_object(self, doc, dimensions, object_name, skip_export=False, skip_report=False, **kwargs):
         """
         Internal method to build a single stock object from dimensions
         """
@@ -216,26 +369,28 @@ class StockBuilderCore:
             except Exception as e:
                 self.log(f"⚠️ Could not set object name: {e}")
             
-            # Export to STEP
-            self.export_stock_step(stock_obj, object_name=object_name)
+            # Export to STEP (unless skipped for later modification)
+            if not skip_export:
+                self.export_stock_step(stock_obj, object_name=object_name)
             
-            # Generate approval report
-            boat_name = self._extract_boat_name(object_name)
-            customer_info = {
-                'customer': boat_name,
-                'part_number': f"{boat_name}-RS-001",
-                'revision': 'A'
-            }
-            
-            try:
-                image_path = self.report_generator.generate_approval_pdf(
-                    stock_obj, doc, customer_info, 
-                    output_filename=f"{object_name}_Approval.png"
-                )
-                if image_path:
-                    self.log(f"📸 Generated approval image")
-            except Exception as e:
-                self.log(f"⚠️ Image generation skipped: {e}")
+            # Generate approval report (unless skipped for later modification)
+            if not skip_report:
+                boat_name = self._extract_boat_name(object_name)
+                customer_info = {
+                    'customer': boat_name,
+                    'part_number': f"{boat_name}-RS-001",
+                    'revision': 'A'
+                }
+                
+                try:
+                    image_path = self.report_generator.generate_approval_pdf(
+                        stock_obj, doc, customer_info, 
+                        output_filename=f"{object_name}_Approval.png"
+                    )
+                    if image_path:
+                        self.log(f"📸 Generated approval image")
+                except Exception as e:
+                    self.log(f"⚠️ Image generation skipped: {e}")
             
             self.log(f"✅ Created: {object_name} ({time.time() - start:.2f}s)")
             return stock_obj

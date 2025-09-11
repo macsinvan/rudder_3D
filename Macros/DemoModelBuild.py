@@ -76,7 +76,7 @@ GEOMETRY_CONFIG = {
 
 # Visualization
 VISUALIZATION_CONFIG = {
-    'explosion_factor': 0,     # mm between pieces (0 = assembled view)
+    'explosion_factor': 3,     # mm between pieces (0 = assembled view)
     'transparency': {
         'solid': 30,
         'hollowed': 70,
