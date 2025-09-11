@@ -190,7 +190,7 @@ VERSION = "2.4.0"  # Added Z-cut alignment pins
 
 # Stock positioning parameters
 POST_CENTRE_X = 323  # mm - X position for post centre
-POST_TOP_Z = -79     # mm - Z position for top of post
+POST_TOP_Z = -75     # mm - Z position for top of post
 POST_DIAMETER = 44   # mm - diameter of the post
 POST_DIAMETER_DELTA = 4  # mm - difference in post diameter for cutout stock
 
@@ -230,7 +230,6 @@ doc = None
 cut_foil_obj = None
 stock_obj = None
 stock_cutout_obj = None
-hollowed_foil_obj = None
 port_half = None
 port_half_obj = None  # FreeCAD object for visualization
 port_plan = None
@@ -340,133 +339,22 @@ def step_3_position_stock_components():
     # Recompute to ensure positioning is complete
     print(f"\n🔄 Recomputing to ensure positioning is complete...")
     update_view()
-    print(f"   ✅ Recompute done, ready for boolean operation")
+    print(f"   ✅ Recompute done, ready for split operation")
     
     return True
 
 
-def step_4_pre_boolean_checks():
-    """STEP 4: Perform pre-Boolean operation validation checks"""
-    print(f"\n🔍 Performing pre-Boolean operation checks...")
-    
-    # Check 1: Validate shapes
-    if not cut_foil_obj.Shape.isValid():
-        print(f"❌ Cut foil shape is not valid!")
-        print(f"   The geometry has errors that prevent boolean operations.")
-        print(f"   Please check the source STEP file for issues.")
-        return False
-    
-    if not stock_cutout_obj.Shape.isValid():
-        print(f"❌ Stock cutout shape is not valid!")
-        print(f"   The geometry has errors that prevent boolean operations.")
-        print(f"   Please check the source STEP file for issues.")
-        return False
-    
-    print(f"   ✅ Both shapes are valid")
-    
-    # Check 2: Ensure shapes are solids
-    if not cut_foil_obj.Shape.ShapeType == "Solid":
-        print(f"❌ Cut foil is not a solid! (Type: {cut_foil_obj.Shape.ShapeType})")
-        print(f"   Boolean cut operations require solid objects.")
-        print(f"   The imported shape may be a shell or open surface.")
-        return False
-    
-    if not stock_cutout_obj.Shape.ShapeType == "Solid":
-        print(f"❌ Stock cutout is not a solid! (Type: {stock_cutout_obj.Shape.ShapeType})")
-        print(f"   Boolean cut operations require solid objects.")
-        print(f"   The imported shape may be a shell or open surface.")
-        return False
-    
-    print(f"   ✅ Both shapes are solids")
-    
-    # Check 3: Check for intersection
-    common_volume = cut_foil_obj.Shape.common(stock_cutout_obj.Shape)
-    if common_volume.Volume < 0.001:  # Less than 0.001 mm³
-        print(f"❌ No meaningful intersection between shapes!")
-        print(f"   Common volume: {common_volume.Volume:.6f} mm³")
-        print(f"   The stock cutout and foil do not overlap sufficiently for a boolean cut.")
-        print(f"   Check positioning or shape dimensions.")
-        return False
-    
-    print(f"   ✅ Shapes intersect properly (common volume: {common_volume.Volume:.2f} mm³)")
-    
-    # Check 4: Check bounding box overlap
-    foil_bbox = cut_foil_obj.Shape.BoundBox
-    cutout_bbox = stock_cutout_obj.Shape.BoundBox
-    
-    if not (foil_bbox.intersect(cutout_bbox)):
-        print(f"❌ Bounding boxes do not intersect!")
-        print(f"   Foil bounds: X({foil_bbox.XMin:.1f}, {foil_bbox.XMax:.1f})")
-        print(f"               Y({foil_bbox.YMin:.1f}, {foil_bbox.YMax:.1f})")
-        print(f"               Z({foil_bbox.ZMin:.1f}, {foil_bbox.ZMax:.1f})")
-        print(f"   Cutout bounds: X({cutout_bbox.XMin:.1f}, {cutout_bbox.XMax:.1f})")
-        print(f"                  Y({cutout_bbox.YMin:.1f}, {cutout_bbox.YMax:.1f})")
-        print(f"                  Z({cutout_bbox.ZMin:.1f}, {cutout_bbox.ZMax:.1f})")
-        return False
-    
-    print(f"   ✅ Bounding boxes overlap correctly")
-    
-    # Check 5: Check shape complexity
-    print(f"   ℹ️ Shape complexity:")
-    print(f"      Cut foil: {len(cut_foil_obj.Shape.Faces)} faces, {len(cut_foil_obj.Shape.Edges)} edges")
-    print(f"      Stock cutout: {len(stock_cutout_obj.Shape.Faces)} faces, {len(stock_cutout_obj.Shape.Edges)} edges")
-    
-    if len(cut_foil_obj.Shape.Faces) > 10000 or len(stock_cutout_obj.Shape.Faces) > 10000:
-        print(f"   ⚠️ Warning: High face count detected. Boolean operation may be slow.")
-    
-    print(f"\n✅ All pre-Boolean checks passed successfully!")
-    return True
-
-
-def step_5_boolean_cut_operation():
-    """STEP 5: Perform boolean cut to create hollowed foil"""
-    global hollowed_foil_obj
-    
-    print(f"\n🔧 Creating cavity with boolean cut...")
-    print(f"   ⏳ This may take a moment for complex geometry...")
-    try:
-        # Perform the cut operation using the cutout stock
-        hollowed_shape = cut_foil_obj.Shape.cut(stock_cutout_obj.Shape)
-        
-        # Create new hollowed foil object
-        hollowed_foil_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Hollowed_Foil")
-        hollowed_foil_obj.Shape = hollowed_shape
-        hollowed_foil_obj.ViewObject.Visibility = True
-        hollowed_foil_obj.ViewObject.ShapeColor = (0.3, 0.3, 0.4)  # Dark grey
-        hollowed_foil_obj.ViewObject.Transparency = 70  # Make transparent to see cavity
-        
-        # Hide original foil and cutout
-        cut_foil_obj.ViewObject.Visibility = False
-        stock_cutout_obj.ViewObject.Visibility = False
-        
-        # Keep stock visible for reference
-        stock_obj.ViewObject.ShapeColor = (0.8, 0.8, 0.9)  # Light steel
-        
-        print(f"   ✅ Cavity created successfully")
-        print(f"   Original foil faces: {len(cut_foil_obj.Shape.Faces)}")
-        print(f"   Hollowed foil faces: {len(hollowed_shape.Faces)}")
-        
-        # Update view
-        update_view()
-        
-        return True
-        
-    except Exception as e:
-        print(f"   ❌ Boolean cut failed: {e}")
-        return False
-
-
-def step_6_split_foil_at_y_zero():
-    """STEP 6: Split hollowed foil at Y=0 for port/starboard"""
+def step_4_split_solid_foil_at_y_zero():
+    """STEP 4: Split solid foil at Y=0 for port/starboard (BEFORE boolean cut)"""
     global port_half, port_half_obj
     
-    print(f"\n✂️ Splitting hollowed foil at Y=0...")
+    print(f"\n✂️ Splitting solid foil at Y=0...")
     
     try:
         # Get bounding box for reference
         from FreeCAD import Vector, Base
-        bbox = hollowed_foil_obj.Shape.BoundBox
-        print(f"   Hollowed foil bounds:")
+        bbox = cut_foil_obj.Shape.BoundBox
+        print(f"   Solid foil bounds:")
         print(f"      X: {bbox.XMin:.1f} to {bbox.XMax:.1f}")
         print(f"      Y: {bbox.YMin:.1f} to {bbox.YMax:.1f}")
         print(f"      Z: {bbox.ZMin:.1f} to {bbox.ZMax:.1f}")
@@ -480,9 +368,9 @@ def step_6_split_foil_at_y_zero():
             Base.Vector(bbox.XMin - 100, bbox.YMin - 100, bbox.ZMin - 100)  # Starting well before YMin
         )
         
-        # Extract port half only
-        print(f"   Creating port half (will be mirrored for starboard)...")
-        port_half = hollowed_foil_obj.Shape.common(box_negative_y)
+        # Extract port half only from SOLID foil
+        print(f"   Creating port half from solid foil (will be mirrored for starboard)...")
+        port_half = cut_foil_obj.Shape.common(box_negative_y)
         
         # Verify the split worked
         if port_half.isNull() or len(port_half.Faces) == 0:
@@ -493,22 +381,23 @@ def step_6_split_foil_at_y_zero():
                 bbox.ZLength + 200,
                 Base.Vector(bbox.XMin - 100, -overlap, bbox.ZMin - 100)
             )
-            port_half = hollowed_foil_obj.Shape.cut(box_positive_y)
+            port_half = cut_foil_obj.Shape.cut(box_positive_y)
         
         # Create FreeCAD object for port half visualization
-        port_half_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Port_Half")
+        port_half_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Port_Half_Solid")
         port_half_obj.Shape = port_half
         port_half_obj.ViewObject.Visibility = True
         port_half_obj.ViewObject.ShapeColor = (0.2, 0.5, 0.8)  # Blue
         port_half_obj.ViewObject.Transparency = 30
-        port_half_obj.Label = f"{BOAT_NAME}_Port_Half_Working"
+        port_half_obj.Label = f"{BOAT_NAME}_Port_Half_Solid"
         
-        # Hide the original hollowed foil and stock
-        hollowed_foil_obj.ViewObject.Visibility = False
+        # Hide the original foil and stock for cleaner view
+        cut_foil_obj.ViewObject.Visibility = False
         stock_obj.ViewObject.Visibility = False
+        stock_cutout_obj.ViewObject.Visibility = False
         
-        print(f"   ✅ Port half created with {len(port_half.Faces)} faces")
-        print(f"   ℹ️ This half will be mirrored in slicer to create starboard half")
+        print(f"   ✅ Solid port half created with {len(port_half.Faces)} faces")
+        print(f"   ℹ️ This solid half will have holes added, then be hollowed")
         
         # Update view to focus on port half
         update_view()
@@ -520,8 +409,8 @@ def step_6_split_foil_at_y_zero():
         return False
 
 
-def step_7_create_cutting_plan():
-    """STEP 7: Create cutting plan for 3D printing"""
+def step_5_create_cutting_plan():
+    """STEP 5: Create cutting plan for 3D printing"""
     global port_plan
     
     print(f"\n🗺️ Creating cutting plan for 3D printing...")
@@ -531,11 +420,11 @@ def step_7_create_cutting_plan():
     return True
 
 
-def step_8_add_z_cut_alignment_pins():
-    """STEP 8: Add Z-cut alignment pins before cutting"""
+def step_6_add_z_cut_alignment_pins():
+    """STEP 6: Add Z-cut alignment pins to solid port half"""
     global port_half
     
-    print(f"\n🔩 Adding Z-cut alignment holes before slicing...")
+    print(f"\n🔩 Adding Z-cut alignment holes to solid port half...")
     print(f"   Adding 4 holes at each Z-cut position")
     print(f"   Holes at 20%, 40%, 60%, 80% of chord width")
     
@@ -553,16 +442,16 @@ def step_8_add_z_cut_alignment_pins():
     
     # Update view
     update_view()
-    print(f"   🔄 View updated to show Z-cut alignment holes")
+    print(f"   🔄 View updated to show Z-cut alignment holes in solid")
     
     return True
 
 
-def step_9_add_x_cut_alignment_pins():
-    """STEP 9: Add X-cut alignment pins before cutting"""
+def step_7_add_x_cut_alignment_pins():
+    """STEP 7: Add X-cut alignment pins to solid port half"""
     global port_half
     
-    print(f"\n🔧 Adding X-cut alignment holes before slicing...")
+    print(f"\n🔧 Adding X-cut alignment holes to solid port half...")
     print(f"   Adding 4 holes at each X-cut position")
     print(f"   Holes at 10%, 40%, 60%, 80% of slice height")
     
@@ -576,21 +465,21 @@ def step_9_add_x_cut_alignment_pins():
                 HOLE_DIAMETER, HOLE_DEPTH
             )
     
-    # Update the visualization object with all holes
+    # Update the visualization object with all alignment holes
     port_half_obj.Shape = port_half
-    port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_All_Holes"
+    port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_Alignment_Holes"
     port_half_obj.ViewObject.ShapeColor = (0.1, 0.6, 0.3)  # Green to show completion
     
     # Update view
     update_view()
-    print(f"   🔄 View updated to show all alignment holes")
-    print(f"   ✅ Port half ready for cutting with all alignment features")
+    print(f"   🔄 View updated to show all alignment holes in solid")
+    print(f"   ✅ Solid port half ready with all alignment features")
     
     return True
 
 
-def step_10_add_y_half_joining_holes():
-    """STEP 10: Add Y-direction holes for joining port and starboard halves"""
+def step_8_add_y_half_joining_holes():
+    """STEP 8: Add Y-direction holes for joining port and starboard halves"""
     global port_half
     
     print(f"\n🔩 Adding Y-direction holes for joining port and starboard halves...")
@@ -612,21 +501,149 @@ def step_10_add_y_half_joining_holes():
             HOLE_DIAMETER, [0.25, 0.75], [0.1, 0.4, 0.6, 0.9], HOLE_DEPTH
         )
     
+    # CRITICAL FIX: Convert compound back to solid after hole operations
+    print(f"\n🔧 Converting shape back to solid after hole operations...")
+    try:
+        if port_half.ShapeType == "Compound":
+            print(f"   Shape is compound, attempting to fuse into solid...")
+            # Try to fuse the compound into a single solid
+            port_half = port_half.fuse([])  # Fuse with empty list to consolidate
+            if port_half.ShapeType == "Solid":
+                print(f"   ✅ Successfully converted to solid")
+            else:
+                print(f"   ⚠️ Still {port_half.ShapeType}, but continuing...")
+        else:
+            print(f"   ✅ Shape is already {port_half.ShapeType}")
+    except Exception as e:
+        print(f"   ⚠️ Fuse operation failed: {e}, continuing anyway...")
+    
     # Update the visualization object with joining holes
     port_half_obj.Shape = port_half
-    port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_All_Holes_and_Joining"
-    port_half_obj.ViewObject.ShapeColor = (0.8, 0.3, 0.1)  # Orange to show joining holes added
+    port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_All_Holes"
+    port_half_obj.ViewObject.ShapeColor = (0.8, 0.3, 0.1)  # Orange to show all holes added
     
     # Update view
     update_view()
-    print(f"   🔄 View updated to show joining holes")
-    print(f"   ✅ Port half ready for cutting with alignment and joining features")
+    print(f"   🔄 View updated to show all holes in solid")
+    print(f"   ✅ Solid port half complete with alignment and joining features")
     
     return True
 
 
+def step_9_pre_boolean_checks():
+    """STEP 9: Perform pre-Boolean operation validation checks"""
+    print(f"\n🔍 Performing pre-Boolean operation checks...")
+    print(f"   Checking port half with holes vs stock cutout")
+    
+    # Check 1: Validate shapes
+    if not port_half.isValid():
+        print(f"❌ Port half shape is not valid!")
+        print(f"   The geometry has errors that prevent boolean operations.")
+        print(f"   Check hole cutting operations for issues.")
+        return False
+    
+    if not stock_cutout_obj.Shape.isValid():
+        print(f"❌ Stock cutout shape is not valid!")
+        print(f"   The geometry has errors that prevent boolean operations.")
+        print(f"   Please check the source STEP file for issues.")
+        return False
+    
+    print(f"   ✅ Both shapes are valid")
+    
+    # Check 2: Ensure shapes are solids
+    if not port_half.ShapeType == "Solid":
+        print(f"❌ Port half is not a solid! (Type: {port_half.ShapeType})")
+        print(f"   Boolean cut operations require solid objects.")
+        print(f"   The shape may have been corrupted during hole cutting.")
+        return False
+    
+    if not stock_cutout_obj.Shape.ShapeType == "Solid":
+        print(f"❌ Stock cutout is not a solid! (Type: {stock_cutout_obj.Shape.ShapeType})")
+        print(f"   Boolean cut operations require solid objects.")
+        print(f"   The imported shape may be a shell or open surface.")
+        return False
+    
+    print(f"   ✅ Both shapes are solids")
+    
+    # Check 3: Check for intersection
+    common_volume = port_half.common(stock_cutout_obj.Shape)
+    if common_volume.Volume < 0.001:  # Less than 0.001 mm³
+        print(f"❌ No meaningful intersection between shapes!")
+        print(f"   Common volume: {common_volume.Volume:.6f} mm³")
+        print(f"   The stock cutout and port half do not overlap sufficiently for a boolean cut.")
+        print(f"   Check positioning or shape dimensions.")
+        return False
+    
+    print(f"   ✅ Shapes intersect properly (common volume: {common_volume.Volume:.2f} mm³)")
+    
+    # Check 4: Check bounding box overlap
+    port_bbox = port_half.BoundBox
+    cutout_bbox = stock_cutout_obj.Shape.BoundBox
+    
+    if not (port_bbox.intersect(cutout_bbox)):
+        print(f"❌ Bounding boxes do not intersect!")
+        print(f"   Port half bounds: X({port_bbox.XMin:.1f}, {port_bbox.XMax:.1f})")
+        print(f"                     Y({port_bbox.YMin:.1f}, {port_bbox.YMax:.1f})")
+        print(f"                     Z({port_bbox.ZMin:.1f}, {port_bbox.ZMax:.1f})")
+        print(f"   Cutout bounds: X({cutout_bbox.XMin:.1f}, {cutout_bbox.XMax:.1f})")
+        print(f"                  Y({cutout_bbox.YMin:.1f}, {cutout_bbox.YMax:.1f})")
+        print(f"                  Z({cutout_bbox.ZMin:.1f}, {cutout_bbox.ZMax:.1f})")
+        return False
+    
+    print(f"   ✅ Bounding boxes overlap correctly")
+    
+    # Check 5: Check shape complexity
+    print(f"   ℹ️ Shape complexity:")
+    print(f"      Port half with holes: {len(port_half.Faces)} faces, {len(port_half.Edges)} edges")
+    print(f"      Stock cutout: {len(stock_cutout_obj.Shape.Faces)} faces, {len(stock_cutout_obj.Shape.Edges)} edges")
+    
+    if len(port_half.Faces) > 10000 or len(stock_cutout_obj.Shape.Faces) > 10000:
+        print(f"   ⚠️ Warning: High face count detected. Boolean operation may be slow.")
+    
+    print(f"\n✅ All pre-Boolean checks passed successfully!")
+    return True
+
+
+def step_10_boolean_cut_operation():
+    """STEP 10: Perform boolean cut to create hollowed port half"""
+    global port_half
+    
+    print(f"\n🔧 Creating cavity with boolean cut on port half...")
+    print(f"   ⏳ This may take a moment for complex geometry...")
+    try:
+        # Perform the cut operation on the port half with holes
+        original_faces = len(port_half.Faces)
+        hollowed_port_half = port_half.cut(stock_cutout_obj.Shape)
+        
+        # Update the port half with the hollowed version
+        port_half = hollowed_port_half
+        
+        # Update visualization object
+        port_half_obj.Shape = port_half
+        port_half_obj.Label = f"{BOAT_NAME}_Port_Half_Hollowed"
+        port_half_obj.ViewObject.ShapeColor = (0.3, 0.3, 0.4)  # Dark grey
+        port_half_obj.ViewObject.Transparency = 70  # Make transparent to see cavity
+        
+        # Show stock for reference
+        stock_obj.ViewObject.Visibility = True
+        stock_obj.ViewObject.ShapeColor = (0.8, 0.8, 0.9)  # Light steel
+        
+        print(f"   ✅ Cavity created successfully in port half")
+        print(f"   Original port half faces: {original_faces}")
+        print(f"   Hollowed port half faces: {len(port_half.Faces)}")
+        
+        # Update view
+        update_view()
+        
+        return True
+        
+    except Exception as e:
+        print(f"   ❌ Boolean cut failed: {e}")
+        return False
+
+
 def step_11_cut_pieces():
-    """STEP 11: Cut port half into pieces according to plan"""
+    """STEP 11: Cut hollowed port half into pieces according to plan"""
     global pieces, piece_objects
     
     from FreeCAD import Vector, Base
@@ -636,6 +653,7 @@ def step_11_cut_pieces():
     
     # Hide the working port half object
     port_half_obj.ViewObject.Visibility = False
+    stock_obj.ViewObject.Visibility = False
     
     # Modified cutting operations
     pieces = []
@@ -810,6 +828,10 @@ def step_13_final_view_and_summary():
     print(f"      • Rows at 25% and 75% of section height")
     print(f"      • Holes at 10%, 40%, 60%, 90% of chord width")
     print(f"      • Horizontal holes for joining port and starboard halves")
+    print(f"   Processing approach:")
+    print(f"      • Split solid foil first (more reliable)")
+    print(f"      • Add all holes to solid geometry (cleaner cuts)")
+    print(f"      • Boolean cut last (on port half only)")
     print(f"   Pieces created (to be mirrored):")
     piece_list = [name for name, _ in pieces]
     piece_list.sort()  # Sort for logical order
@@ -840,32 +862,32 @@ def run():
     if not step_3_position_stock_components():
         return
     
-    # STEP 4: Pre-Boolean validation checks
-    if not step_4_pre_boolean_checks():
+    # STEP 4: Split solid foil at Y=0 (BEFORE boolean cut)
+    if not step_4_split_solid_foil_at_y_zero():
         return
     
-    # STEP 5: Boolean cut operation (create hollowed foil)
-    if not step_5_boolean_cut_operation():
+    # STEP 5: Create cutting plan for 3D printing
+    if not step_5_create_cutting_plan():
         return
     
-    # STEP 6: Split foil at Y=0 for port/starboard
-    if not step_6_split_foil_at_y_zero():
+    # STEP 6: Add Z-cut alignment pins to solid port half
+    if not step_6_add_z_cut_alignment_pins():
         return
     
-    # STEP 7: Create cutting plan for 3D printing
-    if not step_7_create_cutting_plan():
+    # STEP 7: Add X-cut alignment pins to solid port half
+    if not step_7_add_x_cut_alignment_pins():
         return
     
-    # STEP 8: Add Z-cut alignment pins
-    if not step_8_add_z_cut_alignment_pins():
+    # STEP 8: Add Y-direction holes for joining halves to solid port half
+    if not step_8_add_y_half_joining_holes():
         return
     
-    # STEP 9: Add X-cut alignment pins
-    if not step_9_add_x_cut_alignment_pins():
+    # STEP 9: Pre-Boolean checks (moved here)
+    if not step_9_pre_boolean_checks():
         return
     
-    # STEP 10: Add Y-direction holes for joining halves
-    if not step_10_add_y_half_joining_holes():
+    # STEP 10: Boolean cut operation (port half only, AFTER holes)
+    if not step_10_boolean_cut_operation():
         return
     
     # STEP 11: Cut pieces according to plan
