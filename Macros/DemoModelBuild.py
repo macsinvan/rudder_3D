@@ -68,7 +68,7 @@ stock_obj = None
 stock_cutout_obj = None
 hollowed_foil_obj = None
 port_half = None
-port_half_obj = None  # New: FreeCAD object for visualization
+port_half_obj = None  # FreeCAD object for visualization
 port_plan = None
 pieces = []
 piece_objects = []
@@ -178,7 +178,7 @@ def add_x_cut_alignment_pins(shape, x_cut_position, z_start, z_end,
     
     # Get shape bounding box for Y position
     bbox = shape.BoundBox
-    y_pos = 0 - 3 - hole_diameter/2  # Fixed Y position off the edge
+    y_pos = 0 - 3 - hole_diameter/2  # Position holes just off the Y=0 split
     
     print(f"         Slice from Z={z_start:.1f} to {z_end:.1f} (height={slice_height:.1f})")
     print(f"         Y position for holes: {y_pos:.1f}")
@@ -210,6 +210,86 @@ def add_x_cut_alignment_pins(shape, x_cut_position, z_start, z_end,
             print(f"         ⚠️ Failed to add X-cut hole {i+1}")
     
     print(f"         ✅ Added {successful_holes}/4 X-cut holes")
+    return result_shape
+
+
+def add_y_half_joining_holes(shape, z_start, z_end, section_name,
+                             hole_diameter=6, row_positions=[0.25, 0.75], 
+                             x_positions=[0.1, 0.4, 0.6, 0.9], hole_depth=25):
+    """
+    Add horizontal holes in Y-direction for joining port and starboard halves.
+    
+    Args:
+        shape: The shape to add holes to
+        z_start: Bottom Z of the section
+        z_end: Top Z of the section  
+        section_name: Name for logging
+        hole_diameter: Bolt hole diameter (6mm)
+        row_positions: Z positions as fraction of section height [0.25, 0.75]
+        x_positions: X positions as fraction of chord width [0.1, 0.4, 0.6, 0.9]
+        hole_depth: Depth of holes into the half (25mm)
+    
+    Returns:
+        Modified shape with joining holes
+    """
+    from FreeCAD import Vector, Base
+    
+    section_height = z_end - z_start
+    print(f"      Adding Y-direction joining holes to {section_name}")
+    print(f"         Section Z: {z_start:.1f} to {z_end:.1f} (height={section_height:.1f})")
+    
+    result_shape = shape
+    total_holes = 0
+    
+    # Create holes at each row position
+    for row_frac in row_positions:
+        z_position = z_start + (section_height * row_frac)
+        print(f"         Row at Z={z_position:.1f} ({row_frac*100:.0f}% of section height)")
+        
+        # Find chord bounds at this Z using thin slice method
+        slice_thickness = 1.0
+        sample_slice = Part.makeBox(
+            1000,  # Large X
+            1000,  # Large Y  
+            slice_thickness,
+            Vector(-500, -500, z_position - slice_thickness/2)
+        )
+        
+        # Get intersection to find chord
+        try:
+            cross_section = shape.common(sample_slice)
+            chord_bbox = cross_section.BoundBox
+            
+            x_min = chord_bbox.XMin
+            x_max = chord_bbox.XMax
+            chord_width = x_max - x_min
+            
+            print(f"            Chord: X from {x_min:.1f} to {x_max:.1f} (width={chord_width:.1f})")
+            
+            # Create holes at each X position along this row
+            for x_frac in x_positions:
+                x_pos = x_min + (chord_width * x_frac)
+                
+                # Create horizontal hole (Y-direction) from Y=0 into the port half
+                hole_cylinder = Part.makeCylinder(
+                    hole_diameter / 2,
+                    hole_depth,
+                    Vector(x_pos, -hole_depth/2, z_position),  # Start at Y=0, extend into port half
+                    Vector(0, -1, 0)  # Negative Y direction (into port half)
+                )
+                
+                # Subtract hole from shape
+                try:
+                    result_shape = result_shape.cut(hole_cylinder)
+                    total_holes += 1
+                except:
+                    print(f"            ⚠️ Failed to add hole at X={x_pos:.1f}")
+            
+        except:
+            print(f"            ❌ Failed to find chord at Z={z_position:.1f}")
+    
+    expected_holes = len(row_positions) * len(x_positions)
+    print(f"         ✅ Added {total_holes}/{expected_holes} joining holes")
     return result_shape
 
 
@@ -564,14 +644,50 @@ def step_9_add_x_cut_alignment_pins():
     return True
 
 
-def step_10_cut_pieces():
-    """STEP 10: Cut port half into pieces according to plan"""
+def step_10_add_y_half_joining_holes():
+    """STEP 10: Add Y-direction holes for joining port and starboard halves"""
+    global port_half
+    
+    print(f"\n🔩 Adding Y-direction holes for joining port and starboard halves...")
+    print(f"   Adding 2 rows per section at 25% and 75% of height")
+    print(f"   Adding 4 holes per row at 10%, 40%, 60%, 90% of chord")
+    print(f"   Holes oriented horizontally (Y-axis) for joining halves")
+    
+    # Add joining holes to each planned section
+    for i, slice_info in enumerate(port_plan['slice_plans']):
+        section_num = i + 1
+        z_start = slice_info['z_start']
+        z_end = slice_info['z_end']
+        section_name = f"Section {section_num}"
+        
+        print(f"\n   Processing {section_name} (Z: {z_start:.0f} to {z_end:.0f}mm)")
+        
+        port_half = add_y_half_joining_holes(
+            port_half, z_start, z_end, section_name,
+            HOLE_DIAMETER, [0.25, 0.75], [0.1, 0.4, 0.6, 0.9], HOLE_DEPTH
+        )
+    
+    # Update the visualization object with joining holes
+    port_half_obj.Shape = port_half
+    port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_All_Holes_and_Joining"
+    port_half_obj.ViewObject.ShapeColor = (0.8, 0.3, 0.1)  # Orange to show joining holes added
+    
+    # Update view
+    update_view()
+    print(f"   🔄 View updated to show joining holes")
+    print(f"   ✅ Port half ready for cutting with alignment and joining features")
+    
+    return True
+
+
+def step_11_cut_pieces():
+    """STEP 11: Cut port half into pieces according to plan"""
     global pieces, piece_objects
     
     from FreeCAD import Vector, Base
     
     print(f"\n📐 Cutting pieces...")
-    print(f"   Alignment holes will be split automatically by cuts")
+    print(f"   Alignment and joining holes will be split automatically by cuts")
     
     # Hide the working port half object
     port_half_obj.ViewObject.Visibility = False
@@ -686,9 +802,9 @@ def step_10_cut_pieces():
     return True
 
 
-def step_11_export_pieces():
-    """STEP 11: Export individual pieces to STEP files"""
-    print(f"\n💾 Exporting individual pieces with alignment features...")
+def step_12_export_pieces():
+    """STEP 12: Export individual pieces to STEP files"""
+    print(f"\n💾 Exporting individual pieces with alignment and joining features...")
     pieces_folder = f"{PRINT_FOLDER}/pieces_for_mirroring"
     os.makedirs(pieces_folder, exist_ok=True)
     
@@ -724,8 +840,8 @@ def step_11_export_pieces():
     return True
 
 
-def step_12_final_view_and_summary():
-    """STEP 12: Update view and print final summary"""
+def step_13_final_view_and_summary():
+    """STEP 13: Update view and print final summary"""
     # Update view
     update_view()
     
@@ -736,6 +852,7 @@ def step_12_final_view_and_summary():
     print(f"      2. Print one set as-is (port half)")
     print(f"      3. Mirror and print again (creates starboard half)")
     print(f"      4. Join using 6mm dowels through alignment holes")
+    print(f"      5. Join port and starboard halves using Y-direction joining holes")
     print(f"   Alignment features:")
     print(f"      • Z-cuts: 4 holes at 20%, 40%, 60%, 80% of chord")
     print(f"      • X-cuts: 4 holes at 10%, 40%, 60%, 80% of slice height")
@@ -743,6 +860,11 @@ def step_12_final_view_and_summary():
     print(f"      • Hole depth: {HOLE_DEPTH}mm")
     print(f"      • Z-holes: vertical (perpendicular to Z-cut plane)")
     print(f"      • X-holes: horizontal (perpendicular to X-cut plane)")
+    print(f"   Half-joining features:")
+    print(f"      • Y-direction holes: 8 holes per section (2 rows × 4 holes)")
+    print(f"      • Rows at 25% and 75% of section height")
+    print(f"      • Holes at 10%, 40%, 60%, 90% of chord width")
+    print(f"      • Horizontal holes for joining port and starboard halves")
     print(f"   Pieces created (to be mirrored):")
     piece_list = [name for name, _ in pieces]
     piece_list.sort()  # Sort for logical order
@@ -796,18 +918,22 @@ def run():
     # STEP 9: Add X-cut alignment pins
     if not step_9_add_x_cut_alignment_pins():
         return
-    """
-    # STEP 10: Cut pieces according to plan
-    if not step_10_cut_pieces():
+    
+    # STEP 10: Add Y-direction holes for joining halves
+    if not step_10_add_y_half_joining_holes():
         return
     
-    # STEP 11: Export pieces to STEP files
-    if not step_11_export_pieces():
+    # STEP 11: Cut pieces according to plan
+    if not step_11_cut_pieces():
         return
     
-    # STEP 12: Final view update and summary
-    step_12_final_view_and_summary()
-    """
+    # STEP 12: Export pieces to STEP files
+    if not step_12_export_pieces():
+        return
+    
+    # STEP 13: Final view update and summary
+    step_13_final_view_and_summary()
+
 
 # Run the script
 run()
