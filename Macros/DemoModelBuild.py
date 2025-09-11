@@ -100,6 +100,7 @@ except ImportError as e:
         y_pos = 0 - 3 - hole_diameter/2
         
         print(f"         Slice from Z={z_start:.1f} to {z_end:.1f} (height={slice_height:.1f})")
+        print(f"         Y position for holes: {y_pos:.1f}")
         
         # Calculate hole positions
         hole_positions = []
@@ -182,6 +183,109 @@ except ImportError as e:
         expected_holes = len(row_positions) * len(x_positions)
         print(f"         ✅ Added {total_holes}/{expected_holes} joining holes")
         return result_shape
+
+
+# Define foam filling holes function (always available, not in module)
+def add_foam_filling_holes(shape, z_start, z_end, section_name, x_cut_position=None,
+                          hole_diameter=10, y_position=-8):
+    """
+    Add foam filling holes - vertical holes for foam injection.
+    One hole per piece, positioned at thicker part of foil.
+    
+    Args:
+        shape: The shape to add holes to
+        z_start: Bottom Z of the section
+        z_end: Top Z of the section  
+        section_name: Name for logging
+        x_cut_position: X coordinate of cut (None if no X-cut)
+        hole_diameter: Foam hole diameter (10mm)
+        y_position: Y position for holes (-8mm)
+    
+    Returns:
+        Modified shape with foam holes
+    """
+    from FreeCAD import Vector, Base
+    
+    section_height = z_end - z_start
+    # Position foam hole at 75% of section height (thicker part)
+    z_position = z_start + (section_height * 0.75)
+    
+    print(f"      Adding foam filling hole to {section_name}")
+    print(f"         Hole at Z={z_position:.1f} (75% of section height)")
+    
+    # Find chord bounds at this Z
+    slice_thickness = 1.0
+    sample_slice = Part.makeBox(
+        1000, 1000, slice_thickness,
+        Vector(-500, -500, z_position - slice_thickness/2)
+    )
+    
+    try:
+        cross_section = shape.common(sample_slice)
+        chord_bbox = cross_section.BoundBox
+        
+        x_min = chord_bbox.XMin
+        x_max = chord_bbox.XMax
+        chord_width = x_max - x_min
+        
+        print(f"            Chord: X from {x_min:.1f} to {x_max:.1f} (width={chord_width:.1f})")
+        
+        # Calculate hole position
+        if x_cut_position is not None:
+            # Has X-cut: position hole 8mm from cut line (toward leading edge)
+            x_pos = x_cut_position - 8  # radius + 3mm clearance
+            print(f"            X-cut at {x_cut_position:.1f}, hole at X={x_pos:.1f}")
+        else:
+            # No X-cut: position at geometric center
+            x_pos = x_min + (chord_width * 0.5)
+            print(f"            No X-cut, hole at center X={x_pos:.1f}")
+        
+        # Create vertical foam hole
+        hole_cylinder = Part.makeCylinder(
+            hole_diameter / 2,
+            section_height + 10,  # Through entire section
+            Vector(x_pos, y_position, z_start - 5),
+            Vector(0, 0, 1)  # Z direction (vertical)
+        )
+        
+        # Subtract hole from shape
+        result_shape = shape.cut(hole_cylinder)
+        print(f"         ✅ Added foam hole (10mm) at X={x_pos:.1f}, Y={y_position:.1f}, Z={z_position:.1f}")
+        return result_shape
+        
+    except Exception as e:
+        print(f"            ❌ Failed to add foam hole: {e}")
+        return shape
+
+
+def ensure_solid(shape, operation_name="operations"):
+    """
+    Ensure a shape is a solid, converting from compound if necessary.
+    
+    Args:
+        shape: The shape to check/convert
+        operation_name: Name of the operation for logging
+    
+    Returns:
+        The shape as a solid (or best attempt)
+    """
+    print(f"\n🔧 Converting shape back to solid after {operation_name}...")
+    try:
+        if shape.ShapeType == "Compound":
+            print(f"   Shape is compound, attempting to fuse into solid...")
+            # Try to fuse the compound into a single solid
+            shape = shape.fuse([])  # Fuse with empty list to consolidate
+            if shape.ShapeType == "Solid":
+                print(f"   ✅ Successfully converted to solid")
+            else:
+                print(f"   ⚠️ Still {shape.ShapeType}, but continuing...")
+        else:
+            print(f"   ✅ Shape is already {shape.ShapeType}")
+    except Exception as e:
+        print(f"   ⚠️ Fuse operation failed: {e}, continuing anyway...")
+    
+    return shape
+
 
 print("Imports the Cut Foil and Stock and prepares for demo print")
 # Configuration
@@ -501,37 +605,66 @@ def step_8_add_y_half_joining_holes():
             HOLE_DIAMETER, [0.25, 0.75], [0.1, 0.4, 0.6, 0.9], HOLE_DEPTH
         )
     
-    # CRITICAL FIX: Convert compound back to solid after hole operations
-    print(f"\n🔧 Converting shape back to solid after hole operations...")
-    try:
-        if port_half.ShapeType == "Compound":
-            print(f"   Shape is compound, attempting to fuse into solid...")
-            # Try to fuse the compound into a single solid
-            port_half = port_half.fuse([])  # Fuse with empty list to consolidate
-            if port_half.ShapeType == "Solid":
-                print(f"   ✅ Successfully converted to solid")
-            else:
-                print(f"   ⚠️ Still {port_half.ShapeType}, but continuing...")
-        else:
-            print(f"   ✅ Shape is already {port_half.ShapeType}")
-    except Exception as e:
-        print(f"   ⚠️ Fuse operation failed: {e}, continuing anyway...")
+    # Use the new ensure_solid function
+    port_half = ensure_solid(port_half, "hole operations")
     
     # Update the visualization object with joining holes
     port_half_obj.Shape = port_half
-    port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_All_Holes"
-    port_half_obj.ViewObject.ShapeColor = (0.8, 0.3, 0.1)  # Orange to show all holes added
+    port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_Joining_Holes"
+    port_half_obj.ViewObject.ShapeColor = (0.8, 0.3, 0.1)  # Orange to show joining holes added
     
     # Update view
     update_view()
-    print(f"   🔄 View updated to show all holes in solid")
+    print(f"   🔄 View updated to show joining holes in solid")
     print(f"   ✅ Solid port half complete with alignment and joining features")
     
     return True
 
 
-def step_9_pre_boolean_checks():
-    """STEP 9: Perform pre-Boolean operation validation checks"""
+def step_9_add_foam_filling_holes():
+    """STEP 9: Add foam filling holes for foam injection"""
+    global port_half
+    
+    print(f"\n🔩 Adding foam filling holes...")
+    print(f"   Adding 10mm diameter holes for foam injection")
+    print(f"   One hole per piece at 75% height (thicker part)")
+    print(f"   Position: 8mm from X-cut line, Y=-8mm")
+    
+    # Add foam holes to each planned section
+    for i, slice_info in enumerate(port_plan['slice_plans']):
+        section_num = i + 1
+        z_start = slice_info['z_start']
+        z_end = slice_info['z_end']
+        section_name = f"Section {section_num}"
+        
+        # Get X-cut position if this section needs splitting
+        x_cut_position = slice_info.get('x_center') if slice_info['needs_x_split'] else None
+        
+        print(f"\n   Processing {section_name} (Z: {z_start:.0f} to {z_end:.0f}mm)")
+        
+        port_half = add_foam_filling_holes(
+            port_half, z_start, z_end, section_name, x_cut_position,
+            hole_diameter=10, y_position=-8
+        )
+    
+    # Ensure solid after foam holes
+    port_half = ensure_solid(port_half, "foam filling operations")
+    
+    # Update the visualization object with foam holes
+    port_half_obj.Shape = port_half
+    port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_Foam_Holes"
+    port_half_obj.ViewObject.ShapeColor = (0.6, 0.2, 0.8)  # Purple to show foam holes added
+    
+    # Update view
+    update_view()
+    print(f"   🔄 View updated to show foam holes")
+    print(f"   ✅ Foam filling holes added")
+    
+    return True
+
+
+def step_10_pre_boolean_checks():
+    """STEP 10: Perform pre-Boolean operation validation checks"""
     print(f"\n🔍 Performing pre-Boolean operation checks...")
     print(f"   Checking port half with holes vs stock cutout")
     
@@ -604,8 +737,8 @@ def step_9_pre_boolean_checks():
     return True
 
 
-def step_10_boolean_cut_operation():
-    """STEP 10: Perform boolean cut to create hollowed port half"""
+def step_11_boolean_cut_operation():
+    """STEP 11: Perform boolean cut to create hollowed port half"""
     global port_half
     
     print(f"\n🔧 Creating cavity with boolean cut on port half...")
@@ -642,14 +775,14 @@ def step_10_boolean_cut_operation():
         return False
 
 
-def step_11_cut_pieces():
-    """STEP 11: Cut hollowed port half into pieces according to plan"""
+def step_12_cut_pieces():
+    """STEP 12: Cut hollowed port half into pieces according to plan"""
     global pieces, piece_objects
     
     from FreeCAD import Vector, Base
     
     print(f"\n📐 Cutting pieces...")
-    print(f"   Alignment and joining holes will be split automatically by cuts")
+    print(f"   Alignment, joining, and foam holes will be split automatically by cuts")
     
     # Hide the working port half object
     port_half_obj.ViewObject.Visibility = False
@@ -765,9 +898,9 @@ def step_11_cut_pieces():
     return True
 
 
-def step_12_export_pieces():
-    """STEP 12: Export individual pieces to STEP files"""
-    print(f"\n💾 Exporting individual pieces with alignment and joining features...")
+def step_13_export_pieces():
+    """STEP 13: Export individual pieces to STEP files"""
+    print(f"\n💾 Exporting individual pieces with alignment, joining, and foam features...")
     pieces_folder = f"{PRINT_FOLDER}/pieces_for_mirroring"
     os.makedirs(pieces_folder, exist_ok=True)
     
@@ -803,8 +936,8 @@ def step_12_export_pieces():
     return True
 
 
-def step_13_final_view_and_summary():
-    """STEP 13: Update view and print final summary"""
+def step_14_final_view_and_summary():
+    """STEP 14: Update view and print final summary"""
     # Update view
     update_view()
     
@@ -816,6 +949,7 @@ def step_13_final_view_and_summary():
     print(f"      3. Mirror and print again (creates starboard half)")
     print(f"      4. Join using 6mm dowels through alignment holes")
     print(f"      5. Join port and starboard halves using Y-direction joining holes")
+    print(f"      6. Inject foam through 10mm foam filling holes")
     print(f"   Alignment features:")
     print(f"      • Z-cuts: 4 holes at 20%, 40%, 60%, 80% of chord")
     print(f"      • X-cuts: 4 holes at 10%, 40%, 60%, 80% of slice height")
@@ -828,6 +962,10 @@ def step_13_final_view_and_summary():
     print(f"      • Rows at 25% and 75% of section height")
     print(f"      • Holes at 10%, 40%, 60%, 90% of chord width")
     print(f"      • Horizontal holes for joining port and starboard halves")
+    print(f"   Foam filling features:")
+    print(f"      • 10mm diameter vertical holes for foam injection")
+    print(f"      • One hole per piece at 75% height (thicker part)")
+    print(f"      • Position: 8mm from X-cut line, Y=-8mm")
     print(f"   Processing approach:")
     print(f"      • Split solid foil first (more reliable)")
     print(f"      • Add all holes to solid geometry (cleaner cuts)")
@@ -882,24 +1020,28 @@ def run():
     if not step_8_add_y_half_joining_holes():
         return
     
-    # STEP 9: Pre-Boolean checks (moved here)
-    if not step_9_pre_boolean_checks():
+    # STEP 9: Add foam filling holes (NEW)
+    if not step_9_add_foam_filling_holes():
         return
     
-    # STEP 10: Boolean cut operation (port half only, AFTER holes)
-    if not step_10_boolean_cut_operation():
+    # STEP 10: Pre-Boolean checks
+    if not step_10_pre_boolean_checks():
         return
     
-    # STEP 11: Cut pieces according to plan
-    if not step_11_cut_pieces():
+    # STEP 11: Boolean cut operation (port half only, AFTER holes)
+    if not step_11_boolean_cut_operation():
         return
     
-    # STEP 12: Export pieces to STEP files
-    if not step_12_export_pieces():
+    # STEP 12: Cut pieces according to plan
+    if not step_12_cut_pieces():
         return
     
-    # STEP 13: Final view update and summary
-    step_13_final_view_and_summary()
+    # STEP 13: Export pieces to STEP files
+    if not step_13_export_pieces():
+        return
+    
+    # STEP 14: Final view update and summary
+    step_14_final_view_and_summary()
 
 
 # Run the script
