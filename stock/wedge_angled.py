@@ -4,7 +4,7 @@ import math
 import Part
 from FreeCAD import Vector
 
-def build_wedge(row_dict, radius_at_func, solid_v=False):  # Added solid_v parameter
+def build_wedge(row_dict, radius_at_func, solid_v=False):
     start = float(row_dict['start'])
     width = float(row_dict['width'])
     length_out = float(row_dict['length'])      # CSV top-edge length
@@ -36,8 +36,6 @@ def build_wedge(row_dict, radius_at_func, solid_v=False):  # Added solid_v param
 
         if solid_v:
             # Create single trapezoid for filled V
-            # Wide end at post: 2*r (diameter)
-            # Narrow end at tip: 2*t
             post_face_verts = [
                 Vector(base_x, -r, -start),
                 Vector(base_x, r, -start),
@@ -55,6 +53,14 @@ def build_wedge(row_dict, radius_at_func, solid_v=False):  # Added solid_v param
             tip_wire = Part.makePolygon(tip_face_verts + [tip_face_verts[0]])
             
             solid_wedge = Part.makeLoft([post_wire, tip_wire], True, True)
+            
+            if solid_wedge.isNull():
+                raise RuntimeError(
+                    f"Failed to create 90° solid wedge '{label}' at start={start}mm. "
+                    f"Loft operation produced null shape. "
+                    f"Geometry: base_x={base_x:.2f}, d={d:.2f}, r={r:.2f}, t={t:.2f}"
+                )
+            
             parts.append(solid_wedge)
         else:
             # Original hollow V behavior
@@ -91,10 +97,6 @@ def build_wedge(row_dict, radius_at_func, solid_v=False):  # Added solid_v param
         # Create single trapezoid following EXACT same geometry as hollow strips
         
         # Step 1: Create trapezoid with same length as strips (L_in)
-        # Wide end at post: 2*r_bot (using r_bot like hollow case)
-        # Narrow end at tip: 2*t
-        # Starting at base_x, ending at d (same as strips)
-        
         post_face_verts = [
             Vector(base_x, -r_bot, -start),
             Vector(base_x, r_bot, -start),
@@ -113,6 +115,13 @@ def build_wedge(row_dict, radius_at_func, solid_v=False):  # Added solid_v param
         
         # Create loft between the faces
         solid_wedge = Part.makeLoft([post_wire, tip_wire], True, True)
+        
+        if solid_wedge.isNull():
+            raise RuntimeError(
+                f"Failed to create angled solid wedge '{label}' at start={start}mm. "
+                f"Initial loft operation produced null shape. "
+                f"Geometry: base_x={base_x:.2f}, d={d:.2f}, r_bot={r_bot:.2f}, t={t:.2f}"
+            )
         
         # Step 2: Apply same translation as hollow strips
         x_pivot_local = d - (length_out + E_trail)
@@ -138,7 +147,21 @@ def build_wedge(row_dict, radius_at_func, solid_v=False):  # Added solid_v param
         )
         trim.Placement.Base = Vector(bb.XMin - margin, bb.YMin - margin, min(bb.ZMin, -start - width) - margin)
         
+        # Store original bounds for error reporting
+        original_bounds = str(bb)
         solid_wedge = solid_wedge.common(trim)
+        
+        if solid_wedge.isNull():
+            raise RuntimeError(
+                f"Wedge '{label}' at start={start}mm became NULL after tip cut!\n"
+                f"  Angle: {angle_deg}°, Position: {start}mm down post\n"
+                f"  Radii: r={r:.2f}mm, r_bot={r_bot:.2f}mm\n"
+                f"  Cut position: x_cut={x_cut:.2f}mm\n"
+                f"  Base positions: base_x={base_x:.2f}mm, d={d:.2f}mm\n"
+                f"  Original wedge bounds: {original_bounds}\n"
+                f"  Trim box: X[{bb.XMin - margin:.2f}, {x_cut:.2f}]\n"
+                f"  This typically means the trim box doesn't intersect the wedge properly."
+            )
         
         parts.append(solid_wedge)
     else:
@@ -174,8 +197,25 @@ def build_wedge(row_dict, radius_at_func, solid_v=False):  # Added solid_v param
         )
         trim.Placement.Base = Vector(bb.XMin - margin, bb.YMin - margin, min(bb.ZMin, -start - width) - margin)
 
+        original_bounds = str(bb)
         p_top = p_top.common(trim)
         p_bot = p_bot.common(trim)
+        
+        if p_top.isNull() or p_bot.isNull():
+            null_parts = []
+            if p_top.isNull():
+                null_parts.append("top")
+            if p_bot.isNull():
+                null_parts.append("bottom")
+            
+            raise RuntimeError(
+                f"Wedge '{label}' at start={start}mm: {', '.join(null_parts)} plate(s) became NULL after tip cut!\n"
+                f"  Angle: {angle_deg}°\n"
+                f"  Radii: r={r:.2f}mm, r_bot={r_bot:.2f}mm\n"
+                f"  Cut position: x_cut={x_cut:.2f}mm\n"
+                f"  Original bounds: {original_bounds}\n"
+                f"  This typically means the trim box doesn't intersect the plates properly."
+            )
 
         parts.extend([p_top, p_bot])
 

@@ -228,7 +228,7 @@ class StockBuilderCore:
                 
                 # Fuse the cylinders with the cutout shape
                 self.log("   Fusing cylinders with cutout...")
-                modified_shape = cutout_shape.fuse(cylinders_compound)
+                modified_shape = cutout_shape.cut(cylinders_compound)
                 
                 # Create a new object with the modified shape
                 modified_obj = doc.addObject("Part::Feature", "ModifiedCutout")
@@ -464,8 +464,14 @@ class StockBuilderCore:
         # Use boat-specific path structure
         output_dir = self.project_path / "boats" / boat_name / "output" / subdir
         
+        # Check if this is a cutout - don't merge cutouts to preserve individual wedges
+        if "_Cutout" in base_name:
+            ensure_merged = False
+        else:
+            ensure_merged = True
+    
         return self.step_handler.export_step(stock_obj, filename=filename, 
-                                            output_dir=output_dir, ensure_merged=True)
+                                    output_dir=output_dir, ensure_merged=ensure_merged)
     
     def save_document(self, doc, filepath=None):
         """Save FreeCAD document"""

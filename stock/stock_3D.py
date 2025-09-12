@@ -67,6 +67,9 @@ def build_stock_from_dimensions(doc: App.Document, dimensions: dict) -> App.Docu
     post_shape_indices = []
     non_post_shape_indices = []
     
+    # DEBUG: Track shapes count
+    print(f"DEBUG: Starting with {len(compound_shapes)} shapes")
+    
     # Process posts (cylinders and tapers)
     for post in dimensions.get('posts', []):
         try:
@@ -109,8 +112,10 @@ def build_stock_from_dimensions(doc: App.Document, dimensions: dict) -> App.Docu
         except Exception as e:
             print(f"  Error building post {post}: {e}")
     
+    print(f"DEBUG: After posts, have {len(compound_shapes)} shapes")
+    
     # Process tines (wedges and plates)
-    for tine in dimensions.get('tines', []):
+    for tine_idx, tine in enumerate(dimensions.get('tines', [])):
         try:
             shapes_before = len(compound_shapes)
             
@@ -125,8 +130,20 @@ def build_stock_from_dimensions(doc: App.Document, dimensions: dict) -> App.Docu
                 'label': tine.get('label', '')
             }
             
+            print(f"\nDEBUG: Processing tine #{tine_idx+1}: '{tine.get('label')}' at start={tine['start']}mm, angle={tine.get('angle')}°")
+            
             if tine['type'] == 'plate':
                 plate_parts, plate_summary = build_plate(row_dict, _radius_at)
+                
+                # DEBUG: Check returned parts
+                print(f"  DEBUG: Plate '{tine.get('label')}' returned {len(plate_parts)} parts")
+                for i, part in enumerate(plate_parts):
+                    if part.isNull():
+                        print(f"    WARNING: Part {i} is NULL!")
+                    else:
+                        bb = part.BoundBox
+                        print(f"    Part {i}: X[{bb.XMin:.1f},{bb.XMax:.1f}] Y[{bb.YMin:.1f},{bb.YMax:.1f}] Z[{bb.ZMin:.1f},{bb.ZMax:.1f}] Volume={part.Volume:.1f}")
+                
                 compound_shapes.extend(plate_parts)
                 summaries.append(plate_summary)
                 # Mark these as non-post shapes
@@ -143,6 +160,18 @@ def build_stock_from_dimensions(doc: App.Document, dimensions: dict) -> App.Docu
                     wedge_parts, wedge_summary = build_wedge(row_dict, _radius_at, solid_v=solid_v)
                 else:
                     wedge_parts, wedge_summary = build_wedge_angled(row_dict, _radius_at, solid_v=solid_v)
+                
+                # DEBUG: Check returned parts
+                print(f"  DEBUG: Wedge '{tine.get('label')}' returned {len(wedge_parts)} parts (solid_v={solid_v})")
+                for i, part in enumerate(wedge_parts):
+                    if part is None:
+                        print(f"    WARNING: Part {i} is None!")
+                    elif part.isNull():
+                        print(f"    WARNING: Part {i} is NULL!")
+                    else:
+                        bb = part.BoundBox
+                        print(f"    Part {i}: X[{bb.XMin:.1f},{bb.XMax:.1f}] Y[{bb.YMin:.1f},{bb.YMax:.1f}] Z[{bb.ZMin:.1f},{bb.ZMax:.1f}] Volume={part.Volume:.1f}")
+                
                 compound_shapes.extend(wedge_parts)
                 summaries.append(wedge_summary)
                 # Mark these as non-post shapes
@@ -152,9 +181,17 @@ def build_stock_from_dimensions(doc: App.Document, dimensions: dict) -> App.Docu
             
             else:
                 print(f"  Unknown tine type: {tine['type']}")
+            
+            print(f"  DEBUG: Total shapes after this tine: {len(compound_shapes)}")
                 
         except Exception as e:
             print(f"  Error building tine {tine}: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    print(f"\nDEBUG: Before heel cutter, have {len(compound_shapes)} total shapes")
+    print(f"  Post shape indices: {post_shape_indices}")
+    print(f"  Non-post shape indices: {non_post_shape_indices}")
     
     # Apply smart heel cutting with visibility control
     compound_shapes = apply_heel_cutter_workflow(
@@ -163,10 +200,21 @@ def build_stock_from_dimensions(doc: App.Document, dimensions: dict) -> App.Docu
         debug_visible=False
     )
     
+    print(f"DEBUG: After heel cutter, have {len(compound_shapes)} shapes")
+    
     print(f"Components: {', '.join(summaries) if summaries else 'none'}")
     
     if not compound_shapes:
         raise ValueError("No valid stock geometry found in dimensions.")
+    
+    # DEBUG: Print final shape details
+    print(f"\nDEBUG: Final shapes in compound:")
+    for i, shape in enumerate(compound_shapes):
+        if shape.isNull():
+            print(f"  Shape {i}: NULL")
+        else:
+            bb = shape.BoundBox
+            print(f"  Shape {i}: X[{bb.XMin:.1f},{bb.XMax:.1f}] Y[{bb.YMin:.1f},{bb.YMax:.1f}] Z[{bb.ZMin:.1f},{bb.ZMax:.1f}] Volume={shape.Volume:.1f}")
     
     # Create compound shape
     compound = Part.makeCompound(compound_shapes)

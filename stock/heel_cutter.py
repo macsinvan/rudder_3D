@@ -177,26 +177,47 @@ def apply_heel_cutter_workflow(doc, post_segments, summaries, compound_shapes, p
                 
                 # Apply smart cutter to non-post shapes only
                 cut_count = 0
+                preserved_count = 0
                 for i, shape_idx in enumerate(non_post_shape_indices):
                     try:
                         original_shape = compound_shapes[shape_idx]
                         cut_shape = original_shape.cut(smart_cutter)
-                        modified_shapes[shape_idx] = cut_shape
-                        cut_count += 1
+                        
+                        # CHECK IF CUT RESULT IS VALID
+                        if cut_shape.isNull() or cut_shape.Volume < 0.001:  # Less than 0.001 mm³ is effectively nothing
+                            if debug_visible:
+                                print(f"CUTTING: Shape {shape_idx} would be eliminated by cut (NULL or zero volume), preserving original")
+                            modified_shapes[shape_idx] = original_shape
+                            preserved_count += 1
+                        else:
+                            # Check if volume reduction is too severe (>99% removed)
+                            volume_ratio = cut_shape.Volume / original_shape.Volume
+                            if volume_ratio < 0.01:  # Less than 1% remaining
+                                if debug_visible:
+                                    print(f"CUTTING: Shape {shape_idx} would lose {(1-volume_ratio)*100:.1f}% volume, preserving original")
+                                modified_shapes[shape_idx] = original_shape
+                                preserved_count += 1
+                            else:
+                                if debug_visible:
+                                    print(f"CUTTING: Shape {shape_idx} cut successfully, {volume_ratio*100:.1f}% volume remaining")
+                                modified_shapes[shape_idx] = cut_shape
+                                cut_count += 1
+                                
                     except Exception as e:
                         if debug_visible:
                             print(f"CUTTING: Failed to cut shape {shape_idx}: {e}")
                         modified_shapes[shape_idx] = original_shape
+                        preserved_count += 1
                 
                 # Keep post shapes unmodified in their original positions
                 for shape_idx in post_shape_indices:
                     modified_shapes[shape_idx] = compound_shapes[shape_idx]
                 
                 if debug_visible:
-                    print(f"CUTTING: Successfully cut {cut_count}/{len(non_post_shapes)} non-post shapes")
+                    print(f"CUTTING: Cut {cut_count} shapes, preserved {preserved_count} shapes")
                 
                 visibility_note = " (visible)" if debug_visible else ""
-                summaries.append(f"HeelCutterHalfBox z[{cutter_obj.Shape.BoundBox.ZMin:.1f},{cutter_obj.Shape.BoundBox.ZMax:.1f}] - Smart cut applied to {cut_count} shapes{visibility_note}")
+                summaries.append(f"HeelCutterHalfBox z[{cutter_obj.Shape.BoundBox.ZMin:.1f},{cutter_obj.Shape.BoundBox.ZMax:.1f}] - Smart cut applied to {cut_count} shapes, {preserved_count} preserved{visibility_note}")
                 
             except Exception as e:
                 if debug_visible:
