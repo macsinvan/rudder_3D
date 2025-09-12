@@ -97,6 +97,7 @@ class StockBuilderCore:
         """
         Add perforation cylinders to the rudder post section of the cutout
         Uses hybrid approach: fuse cylinders with post only, then combine with wedges
+        Modified configuration: 4 cylinders per level (+Y, -Y, +30°, -30°), 25mm spacing
         """
         self.log("🔧 Adding perforation cylinders to cutout...")
         
@@ -112,7 +113,7 @@ class StockBuilderCore:
             cylinder_diameter = 5.0  # mm
             cylinder_radius = cylinder_diameter / 2.0
             cylinder_length = 100.0  # mm
-            vertical_spacing = 15.0  # mm between centers
+            vertical_spacing = 25.0  # mm between centers (changed from 15mm)
             
             # Get post dimensions from the dimensions dict
             post_end_z = dimensions.get('post_end_mm', 604.0)
@@ -130,6 +131,7 @@ class StockBuilderCore:
             
             self.log(f"   Post length: {post_end_z}mm")
             self.log(f"   Starting perforations at Z={start_z}mm")
+            self.log(f"   Vertical spacing: {vertical_spacing}mm")
             self.log(f"   Creating {num_cylinders} perforation levels")
             
             # Create cylinders at each vertical position
@@ -140,35 +142,48 @@ class StockBuilderCore:
                 if z_position < end_z:
                     break
                 
-                # Create cylinders starting from center (0,0) going outward
-                # X direction (negative only)
-                cyl_x = Part.makeCylinder(
-                    cylinder_radius,
-                    cylinder_length,
-                    App.Vector(0, 0, z_position),
-                    App.Vector(-1, 0, 0)
-                )
-                cylinder_shapes.append(cyl_x)
-                
-                # Y direction (positive)
+                # Y direction (positive) - straight forward
                 cyl_y_pos = Part.makeCylinder(
                     cylinder_radius,
                     cylinder_length,
                     App.Vector(0, 0, z_position),
-                    App.Vector(0, 1, 0)
+                    App.Vector(0, 1, 0)  # +Y direction
                 )
                 cylinder_shapes.append(cyl_y_pos)
                 
-                # Y direction (negative)
+                # Y direction (negative) - straight back
                 cyl_y_neg = Part.makeCylinder(
                     cylinder_radius,
                     cylinder_length,
                     App.Vector(0, 0, z_position),
-                    App.Vector(0, -1, 0)
+                    App.Vector(0, -1, 0)  # -Y direction
                 )
                 cylinder_shapes.append(cyl_y_neg)
+                
+                # Angled at +30° from Y axis (toward -X)
+                # Direction vector: cos(30°) in Y, -sin(30°) in X
+                angle_30 = math.radians(30)
+                dir_30_pos = App.Vector(-math.cos(angle_30), math.sin(angle_30), 0)
+                cyl_30_pos = Part.makeCylinder(
+                    cylinder_radius,
+                    cylinder_length,
+                    App.Vector(0, 0, z_position),
+                    dir_30_pos
+                )
+                cylinder_shapes.append(cyl_30_pos)
+                
+                # Angled at -30° from Y axis (toward +X)
+                # Direction vector: cos(30°) in Y, sin(30°) in X
+                dir_30_neg = App.Vector(-math.cos(angle_30), -math.sin(angle_30), 0)
+                cyl_30_neg = Part.makeCylinder(
+                    cylinder_radius,
+                    cylinder_length,
+                    App.Vector(0, 0, z_position),
+                    dir_30_neg
+                )
+                cylinder_shapes.append(cyl_30_neg)
             
-            self.log(f"   Created {len(cylinder_shapes)} perforation cylinders")
+            self.log(f"   Created {len(cylinder_shapes)} perforation cylinders (4 per level)")
             
             # HYBRID APPROACH: Separate post and wedge shapes
             if cylinder_shapes:
@@ -181,8 +196,6 @@ class StockBuilderCore:
                 
                 for i, solid in enumerate(solids):
                     # Posts are cylindrical/tapered and have much larger volume
-                    # Cylinder and taper volumes are typically > 30000 mm³
-                    # Wedges are typically < 320000 mm³
                     bbox = solid.BoundBox
                     
                     # Check if it's centered around origin (characteristic of posts)
@@ -250,7 +263,7 @@ class StockBuilderCore:
                 except:
                     pass
                 
-                self.log("✅ Successfully added perforation cylinders with hybrid approach")
+                self.log("✅ Successfully added perforation cylinders (4 directions, 25mm spacing)")
                 return modified_obj
             else:
                 self.log("⚠️ No cylinders created")
@@ -382,7 +395,8 @@ class StockBuilderCore:
         if results['cutout']:
             cutout_name = f"{results['boat_name']}_Stock_Cutout"
             self.log(f"✅ Cutout: {cutout_name} (tolerance: {cutout_tolerance_mm}mm)")
-            self.log(f"   - With perforation cylinders (hybrid approach)")
+            self.log(f"   - With perforation cylinders (4 directions, 25mm spacing)")
+            self.log(f"   - With support plates (6 total)")
         else:
             self.log("⭕️ Cutout: Not built")
         
