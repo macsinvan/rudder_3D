@@ -57,11 +57,42 @@ def build_wedge(row_dict, radius_at_func, solid_v=False):
             if solid_wedge.isNull():
                 raise RuntimeError(
                     f"Failed to create 90° solid wedge '{label}' at start={start}mm. "
-                    f"Loft operation produced null shape. "
-                    f"Geometry: base_x={base_x:.2f}, d={d:.2f}, r={r:.2f}, t={t:.2f}"
+                    f"Loft operation produced null shape."
                 )
             
             parts.append(solid_wedge)
+            
+            # Add support plates for cutout (solid_v=True)
+            plate_x = 100.0  # mm
+            plate_y = 150.0  # mm
+            plate_z = 5.0    # mm
+            
+            # Calculate midpoint of wedge
+            midpoint_x = (base_x + d) / 2.0
+            midpoint_y = 0.0  # Centered on Y
+            
+            # Create top plate (above wedge)
+            top_plate = Part.makeBox(plate_x, plate_y, plate_z)
+            # Position at midpoint, centered, touching top of wedge
+            top_plate.Placement.Base = Vector(
+                midpoint_x - plate_x/2,
+                -plate_y/2,
+                -start  # Top of wedge
+            )
+            parts.append(top_plate)
+            
+            # Create bottom plate (below wedge)
+            bottom_plate = Part.makeBox(plate_x, plate_y, plate_z)
+            # Position at midpoint, centered, touching bottom of wedge
+            bottom_plate.Placement.Base = Vector(
+                midpoint_x - plate_x/2,
+                -plate_y/2,
+                -(start + width + plate_z)  # Below wedge
+            )
+            parts.append(bottom_plate)
+            
+            print(f"    Added support plates at X={midpoint_x:.1f} for 90° wedge")
+            
         else:
             # Original hollow V behavior
             p_top = Part.makeBox(L_in, t, width)
@@ -119,15 +150,20 @@ def build_wedge(row_dict, radius_at_func, solid_v=False):
         if solid_wedge.isNull():
             raise RuntimeError(
                 f"Failed to create angled solid wedge '{label}' at start={start}mm. "
-                f"Initial loft operation produced null shape. "
-                f"Geometry: base_x={base_x:.2f}, d={d:.2f}, r_bot={r_bot:.2f}, t={t:.2f}"
+                f"Initial loft operation produced null shape."
             )
+        
+        # Calculate midpoint BEFORE transformations
+        midpoint_x = (base_x + d) / 2.0
+        midpoint_y = 0.0
+        midpoint_z = -(start + width/2.0)  # Center of wedge height
         
         # Step 2: Apply same translation as hollow strips
         x_pivot_local = d - (length_out + E_trail)
         dx = r - x_pivot_local
         if abs(dx) > 1e-12:
             solid_wedge.translate(Vector(dx, 0.0, 0.0))
+            midpoint_x += dx  # Update midpoint
         
         # Step 3: Apply same tilt rotation as hollow strips
         tilt = 90.0 - angle_deg
@@ -153,19 +189,74 @@ def build_wedge(row_dict, radius_at_func, solid_v=False):
         
         if solid_wedge.isNull():
             raise RuntimeError(
-                f"Wedge '{label}' at start={start}mm became NULL after tip cut!\n"
-                f"  Angle: {angle_deg}°, Position: {start}mm down post\n"
-                f"  Radii: r={r:.2f}mm, r_bot={r_bot:.2f}mm\n"
-                f"  Cut position: x_cut={x_cut:.2f}mm\n"
-                f"  Base positions: base_x={base_x:.2f}mm, d={d:.2f}mm\n"
-                f"  Original wedge bounds: {original_bounds}\n"
-                f"  Trim box: X[{bb.XMin - margin:.2f}, {x_cut:.2f}]\n"
-                f"  This typically means the trim box doesn't intersect the wedge properly."
+                f"Wedge '{label}' at start={start}mm became NULL after tip cut!"
             )
         
         parts.append(solid_wedge)
+        
+        # Add support plates for angled cutout
+        plate_x = 100.0  # mm
+        plate_y = 150.0  # mm
+        plate_z = 5.0    # mm
+        
+        # Calculate actual midpoint after transformations
+        # Use the wedge's bounding box to find its actual center
+        wedge_center_x = (bb.XMin + bb.XMax) / 2.0
+        wedge_center_y = (bb.YMin + bb.YMax) / 2.0
+        
+        # Create top plate
+        top_plate = Part.makeBox(plate_x, plate_y, plate_z)
+        # Center the plate at wedge midpoint
+        top_plate.Placement.Base = Vector(
+            wedge_center_x - plate_x/2,
+            wedge_center_y - plate_y/2,
+            -start  # Top of wedge
+        )
+        
+        # Apply the same rotations as the wedge
+        # First rotate for the V-angle (around Z axis)
+        if angle_deg < 90:
+            top_plate.rotate(Vector(wedge_center_x, wedge_center_y, -start), 
+                           Vector(0, 0, 1), -alpha_deg)
+        else:
+            top_plate.rotate(Vector(wedge_center_x, wedge_center_y, -start), 
+                           Vector(0, 0, 1), alpha_deg)
+        
+        # Then apply the tilt rotation (around Y axis)
+        top_plate.rotate(pivot, Vector(0, 1, 0), -tilt)
+        
+        # Apply same cut as wedge
+        top_plate = top_plate.common(trim)
+        if not top_plate.isNull():
+            parts.append(top_plate)
+            
+        # Create bottom plate
+        bottom_plate = Part.makeBox(plate_x, plate_y, plate_z)
+        bottom_plate.Placement.Base = Vector(
+            wedge_center_x - plate_x/2,
+            wedge_center_y - plate_y/2,
+            -(start + width + plate_z)  # Below wedge
+        )
+        
+        # Apply same rotations
+        if angle_deg < 90:
+            bottom_plate.rotate(Vector(wedge_center_x, wedge_center_y, -(start + width + plate_z)), 
+                              Vector(0, 0, 1), -alpha_deg)
+        else:
+            bottom_plate.rotate(Vector(wedge_center_x, wedge_center_y, -(start + width + plate_z)), 
+                              Vector(0, 0, 1), alpha_deg)
+        
+        bottom_plate.rotate(pivot, Vector(0, 1, 0), -tilt)
+        
+        # Apply same cut
+        bottom_plate = bottom_plate.common(trim)
+        if not bottom_plate.isNull():
+            parts.append(bottom_plate)
+            
+        print(f"    Added support plates at X={wedge_center_x:.1f}, Y={wedge_center_y:.1f} for {angle_deg}° wedge")
+        
     else:
-        # Original hollow V behavior
+        # Original hollow V behavior (no plates for stock)
         p_top = Part.makeBox(L_in, t, width)
         p_top.Placement.Base = Vector(base_x, 0.0, -(start + width))
         p_bot = Part.makeBox(L_in, t, width)
@@ -197,25 +288,8 @@ def build_wedge(row_dict, radius_at_func, solid_v=False):
         )
         trim.Placement.Base = Vector(bb.XMin - margin, bb.YMin - margin, min(bb.ZMin, -start - width) - margin)
 
-        original_bounds = str(bb)
         p_top = p_top.common(trim)
         p_bot = p_bot.common(trim)
-        
-        if p_top.isNull() or p_bot.isNull():
-            null_parts = []
-            if p_top.isNull():
-                null_parts.append("top")
-            if p_bot.isNull():
-                null_parts.append("bottom")
-            
-            raise RuntimeError(
-                f"Wedge '{label}' at start={start}mm: {', '.join(null_parts)} plate(s) became NULL after tip cut!\n"
-                f"  Angle: {angle_deg}°\n"
-                f"  Radii: r={r:.2f}mm, r_bot={r_bot:.2f}mm\n"
-                f"  Cut position: x_cut={x_cut:.2f}mm\n"
-                f"  Original bounds: {original_bounds}\n"
-                f"  This typically means the trim box doesn't intersect the plates properly."
-            )
 
         parts.extend([p_top, p_bot])
 

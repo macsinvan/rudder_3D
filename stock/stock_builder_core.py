@@ -93,60 +93,10 @@ class StockBuilderCore:
         else:
             raise ValueError("No CSV file selected")
     
-    def create_tine_slot_plate(self, width=100.0, thickness=5.0, length=100.0, corner_radius=None):
-        """
-        Create a rounded rectangular plate for cutting slots in tines
-        Creates a HORIZONTAL plate lying flat
-        
-        Args:
-            width: Width of the plate in mm (X direction)
-            thickness: Thickness of the plate in mm (Z direction when horizontal)
-            length: Length of the plate in mm (Y direction)
-            corner_radius: Radius for rounded corners (defaults to thickness/2 for fully rounded ends)
-        
-        Returns:
-            Part.Shape: The plate shape with rounded ends
-        """
-        # Simple rectangular profile in XZ plane
-        # X: from -50 to +50 (100mm wide)
-        # Z: from -2.5 to +2.5 (5mm thick)
-        half_width = width / 2.0
-        half_thickness = thickness / 2.0
-        
-        # Create simple rectangle in XZ plane
-        p1 = Vector(-half_width, 0, -half_thickness)
-        p2 = Vector(half_width, 0, -half_thickness)
-        p3 = Vector(half_width, 0, half_thickness)
-        p4 = Vector(-half_width, 0, half_thickness)
-        
-        # Create edges
-        e1 = Part.makeLine(p1, p2)
-        e2 = Part.makeLine(p2, p3)
-        e3 = Part.makeLine(p3, p4)
-        e4 = Part.makeLine(p4, p1)
-        
-        # Create wire and face
-        wire = Part.Wire([e1, e2, e3, e4])
-        face = Part.Face(wire)
-        
-        # Extrude along Y axis
-        extrusion_vector = Vector(0, length, 0)
-        solid = face.extrude(extrusion_vector)
-        
-        return solid
-    
-    
     def add_perforation_cylinders(self, cutout_obj, doc, dimensions):
         """
         Add perforation cylinders to the rudder post section of the cutout
-        
-        Args:
-            cutout_obj: The cutout object to modify
-            doc: FreeCAD document
-            dimensions: Dictionary containing stock dimensions
-        
-        Returns:
-            Modified cutout object with perforation cylinders
+        Uses hybrid approach: fuse cylinders with post only, then combine with wedges
         """
         self.log("🔧 Adding perforation cylinders to cutout...")
         
@@ -165,15 +115,13 @@ class StockBuilderCore:
             vertical_spacing = 15.0  # mm between centers
             
             # Get post dimensions from the dimensions dict
-            # From CSV: post goes from 0 to 604mm (in Z going negative)
-            post_end_z = dimensions.get('post_end_mm', 604.0)  # End of post from CSV
+            post_end_z = dimensions.get('post_end_mm', 604.0)
             
-            # Starting position: 30mm down from top (top is at Z=0, so start at Z=-30)
-            start_z = -30.0  # Start 30mm below top
+            # Starting position: 30mm down from top
+            start_z = -30.0
             
             # Calculate number of cylinders that fit along the post
-            # Leave some margin at the bottom
-            end_z = -post_end_z + 30.0  # Stop 30mm before bottom
+            end_z = -post_end_z + 30.0
             usable_length = abs(start_z - end_z)
             num_cylinders = int(usable_length / vertical_spacing) + 1
             
@@ -186,7 +134,7 @@ class StockBuilderCore:
             
             # Create cylinders at each vertical position
             for i in range(num_cylinders):
-                z_position = start_z - (i * vertical_spacing)  # Going down (more negative)
+                z_position = start_z - (i * vertical_spacing)
                 
                 # Skip if we're getting too close to the bottom
                 if z_position < end_z:
@@ -197,8 +145,8 @@ class StockBuilderCore:
                 cyl_x = Part.makeCylinder(
                     cylinder_radius,
                     cylinder_length,
-                    App.Vector(0, 0, z_position),  # Start at center
-                    App.Vector(-1, 0, 0)  # Direction: negative X
+                    App.Vector(0, 0, z_position),
+                    App.Vector(-1, 0, 0)
                 )
                 cylinder_shapes.append(cyl_x)
                 
@@ -206,8 +154,8 @@ class StockBuilderCore:
                 cyl_y_pos = Part.makeCylinder(
                     cylinder_radius,
                     cylinder_length,
-                    App.Vector(0, 0, z_position),  # Start at center
-                    App.Vector(0, 1, 0)  # Direction: positive Y
+                    App.Vector(0, 0, z_position),
+                    App.Vector(0, 1, 0)
                 )
                 cylinder_shapes.append(cyl_y_pos)
                 
@@ -215,20 +163,72 @@ class StockBuilderCore:
                 cyl_y_neg = Part.makeCylinder(
                     cylinder_radius,
                     cylinder_length,
-                    App.Vector(0, 0, z_position),  # Start at center
-                    App.Vector(0, -1, 0)  # Direction: negative Y
+                    App.Vector(0, 0, z_position),
+                    App.Vector(0, -1, 0)
                 )
                 cylinder_shapes.append(cyl_y_neg)
             
             self.log(f"   Created {len(cylinder_shapes)} perforation cylinders")
             
-            # Combine all cylinders into one compound
+            # HYBRID APPROACH: Separate post and wedge shapes
             if cylinder_shapes:
-                cylinders_compound = Part.makeCompound(cylinder_shapes)
+                # Step 1: Identify post vs wedge shapes by volume/characteristics
+                post_shapes = []
+                wedge_shapes = []
                 
-                # Fuse the cylinders with the cutout shape
-                self.log("   Fusing cylinders with cutout...")
-                modified_shape = cutout_shape.cut(cylinders_compound)
+                # Get the solids from the cutout
+                solids = cutout_shape.Solids if hasattr(cutout_shape, 'Solids') else []
+                
+                for i, solid in enumerate(solids):
+                    # Posts are cylindrical/tapered and have much larger volume
+                    # Cylinder and taper volumes are typically > 30000 mm³
+                    # Wedges are typically < 320000 mm³
+                    bbox = solid.BoundBox
+                    
+                    # Check if it's centered around origin (characteristic of posts)
+                    x_center = (bbox.XMin + bbox.XMax) / 2
+                    y_center = (bbox.YMin + bbox.YMax) / 2
+                    
+                    # Posts are centered around X=0, Y=0
+                    if abs(x_center) < 5 and abs(y_center) < 5:
+                        post_shapes.append(solid)
+                        self.log(f"   Identified shape {i} as POST (centered at origin)")
+                    else:
+                        wedge_shapes.append(solid)
+                        self.log(f"   Identified shape {i} as WEDGE (offset from origin)")
+                
+                self.log(f"   Separated: {len(post_shapes)} post shapes, {len(wedge_shapes)} wedge shapes")
+                
+                # Step 2: Fuse cylinders with post shapes only
+                if post_shapes:
+                    # Combine all post shapes
+                    if len(post_shapes) > 1:
+                        post_compound = post_shapes[0].fuse(post_shapes[1:])
+                    else:
+                        post_compound = post_shapes[0]
+                    
+                    # Create compound of cylinders
+                    cylinders_compound = Part.makeCompound(cylinder_shapes)
+                    
+                    # Fuse cylinders with post
+                    self.log("   Fusing cylinders with post only...")
+                    post_with_cylinders = post_compound.fuse(cylinders_compound)
+                    
+                    # Step 3: Combine modified post with wedges
+                    final_shapes = [post_with_cylinders]
+                    final_shapes.extend(wedge_shapes)
+                    
+                    # Fuse everything together for final solid
+                    self.log("   Final fusion of post+cylinders with wedges...")
+                    if len(final_shapes) > 1:
+                        modified_shape = final_shapes[0].fuse(final_shapes[1:])
+                    else:
+                        modified_shape = final_shapes[0]
+                else:
+                    # Fallback: no posts found, use original approach
+                    self.log("   WARNING: No post shapes identified, using original fusion")
+                    cylinders_compound = Part.makeCompound(cylinder_shapes)
+                    modified_shape = cutout_shape.fuse(cylinders_compound)
                 
                 # Create a new object with the modified shape
                 modified_obj = doc.addObject("Part::Feature", "ModifiedCutout")
@@ -250,7 +250,7 @@ class StockBuilderCore:
                 except:
                     pass
                 
-                self.log("✅ Successfully added perforation cylinders")
+                self.log("✅ Successfully added perforation cylinders with hybrid approach")
                 return modified_obj
             else:
                 self.log("⚠️ No cylinders created")
@@ -258,6 +258,8 @@ class StockBuilderCore:
                 
         except Exception as e:
             self.log(f"⚠️ Error adding perforation cylinders: {e}")
+            import traceback
+            traceback.print_exc()
             return cutout_obj
     
     def build(self, doc=None, csv_path=None, cutout_tolerance_mm=None, **kwargs):
@@ -322,7 +324,7 @@ class StockBuilderCore:
         stock_obj = self._build_single_object(doc, dimensions, stock_name, **kwargs)
         results['stock'] = stock_obj
         
-        # Step 4: If wedge style, modify dimensions and build cutout
+        # Step 4: If wedge style, build cutout
         if results['style'] == 'wedge':
             self.log("\n" + "="*60)
             self.log(f"PASS 2: Building Cutout (tolerance: {cutout_tolerance_mm}mm)")
@@ -331,15 +333,23 @@ class StockBuilderCore:
             cutout_dimensions = create_wedge_cutout_dimensions(dimensions, cutout_tolerance_mm)
             cutout_name = f"{results['boat_name']}_Stock_Cutout"
             
-            # Build the basic cutout
+            # Build the basic cutout WITHOUT any modifications - skip export and report for now
             cutout_obj = self._build_single_object(doc, cutout_dimensions, cutout_name, 
                                                   skip_export=True, skip_report=True, **kwargs)
             
-            # Add perforation cylinders to the cutout
+            # Step 5: Apply ALL modifications at the very end
+            self.log("\n" + "="*60)
+            self.log("PASS 3: Adding Final Modifications")
+            self.log("="*60)
+            
+            # Add perforation cylinders with hybrid approach
             cutout_obj = self.add_perforation_cylinders(cutout_obj, doc, cutout_dimensions)
             
+            # Now export and generate report for the fully modified cutout
+            self.log("\n" + "="*60)
+            self.log("PASS 4: Export and Documentation")
+            self.log("="*60)
             
-            # Now export and generate report for the modified cutout
             self.export_stock_step(cutout_obj, object_name=cutout_name)
             
             # Generate approval report for modified cutout
@@ -372,8 +382,7 @@ class StockBuilderCore:
         if results['cutout']:
             cutout_name = f"{results['boat_name']}_Stock_Cutout"
             self.log(f"✅ Cutout: {cutout_name} (tolerance: {cutout_tolerance_mm}mm)")
-            self.log(f"   - With perforation cylinders")
-            self.log(f"   - With tine slot plates")
+            self.log(f"   - With perforation cylinders (hybrid approach)")
         else:
             self.log("⭕️ Cutout: Not built")
         
@@ -464,14 +473,8 @@ class StockBuilderCore:
         # Use boat-specific path structure
         output_dir = self.project_path / "boats" / boat_name / "output" / subdir
         
-        # Check if this is a cutout - don't merge cutouts to preserve individual wedges
-        if "_Cutout" in base_name:
-            ensure_merged = False
-        else:
-            ensure_merged = True
-    
         return self.step_handler.export_step(stock_obj, filename=filename, 
-                                    output_dir=output_dir, ensure_merged=ensure_merged)
+                                            output_dir=output_dir, ensure_merged=True)
     
     def save_document(self, doc, filepath=None):
         """Save FreeCAD document"""
