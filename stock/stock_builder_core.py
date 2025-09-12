@@ -13,6 +13,7 @@ if venv_path.exists():
 
 import FreeCAD as App
 import Part
+from FreeCAD import Vector
 from PySide2 import QtWidgets
 
 # Add project root
@@ -90,6 +91,147 @@ class StockBuilderCore:
             return csv_path
         else:
             raise ValueError("No CSV file selected")
+    
+    def create_tine_slot_plate(self, width=100.0, thickness=5.0, length=100.0, corner_radius=None):
+        """
+        Create a rounded rectangular plate for cutting slots in tines
+        Creates a HORIZONTAL plate lying flat
+        
+        Args:
+            width: Width of the plate in mm (X direction)
+            thickness: Thickness of the plate in mm (Z direction when horizontal)
+            length: Length of the plate in mm (Y direction)
+            corner_radius: Radius for rounded corners (defaults to thickness/2 for fully rounded ends)
+        
+        Returns:
+            Part.Shape: The plate shape with rounded ends
+        """
+        # Simple rectangular profile in XZ plane
+        # X: from -50 to +50 (100mm wide)
+        # Z: from -2.5 to +2.5 (5mm thick)
+        half_width = width / 2.0
+        half_thickness = thickness / 2.0
+        
+        # Create simple rectangle in XZ plane
+        p1 = Vector(-half_width, 0, -half_thickness)
+        p2 = Vector(half_width, 0, -half_thickness)
+        p3 = Vector(half_width, 0, half_thickness)
+        p4 = Vector(-half_width, 0, half_thickness)
+        
+        # Create edges
+        e1 = Part.makeLine(p1, p2)
+        e2 = Part.makeLine(p2, p3)
+        e3 = Part.makeLine(p3, p4)
+        e4 = Part.makeLine(p4, p1)
+        
+        # Create wire and face
+        wire = Part.Wire([e1, e2, e3, e4])
+        face = Part.Face(wire)
+        
+        # Extrude along Y axis
+        extrusion_vector = Vector(0, length, 0)
+        solid = face.extrude(extrusion_vector)
+        
+        return solid
+    
+    def add_tine_slot_plates(self, cutout_obj, doc, dimensions):
+        """
+        Add slot plates to each tine for fiberglass wrapping
+        
+        Args:
+            cutout_obj: The cutout object to modify
+            doc: FreeCAD document
+            dimensions: Dictionary containing stock dimensions
+        
+        Returns:
+            Modified cutout object with tine slot plates
+        """
+        self.log("🔧 Adding tine slot plates for fiberglass wrapping...")
+        
+        try:
+            # Get the shape of the cutout
+            if hasattr(cutout_obj, 'Shape'):
+                cutout_shape = cutout_obj.Shape
+            else:
+                self.log("⚠️ Cutout object has no Shape attribute")
+                return cutout_obj
+            
+            # Create list to hold all plate shapes
+            plate_shapes = []
+            
+            # Get cutout tolerance
+            cutout_mm = dimensions.get('cutout_mm', 2.0)
+            
+            # Get tines from dimensions
+            if 'tines' not in dimensions:
+                self.log("⚠️ No tines found in dimensions")
+                return cutout_shape
+            
+            tines = dimensions['tines']
+            self.log(f"   Processing {len(tines)} tines...")
+            
+            # Process each tine
+            for i, tine in enumerate(tines, 1):
+                # Extract tine parameters
+                tine_start = -abs(tine['start'])  # Ensure negative Z
+                tine_width = tine['width']  # Should be 40mm
+                
+                self.log(f"   Tine {i}: start={tine_start}, width={tine_width}")
+                
+                # Calculate Z positions for top and bottom plates
+                top_z = tine_start + cutout_mm + 2.5
+                bottom_z = tine_start - tine_width - cutout_mm - 2.5
+                
+                self.log(f"      Top plate Z: {top_z}")
+                self.log(f"      Bottom plate Z: {bottom_z}")
+                
+                # Create top plate
+                top_plate = self.create_tine_slot_plate(
+                    width=100.0,
+                    thickness=5.0,
+                    length=100.0,
+                    corner_radius=2.5
+                )
+                
+                # Center the plate at Y=0 and position at correct Z
+                transform_top = App.Matrix()
+                transform_top.move(Vector(0, -50, top_z))
+                top_plate = top_plate.transformGeometry(transform_top)
+                plate_shapes.append(top_plate)
+                
+                # Create bottom plate
+                bottom_plate = self.create_tine_slot_plate(
+                    width=100.0,
+                    thickness=5.0,
+                    length=100.0,
+                    corner_radius=2.5
+                )
+                
+                # Center the plate at Y=0 and position at correct Z
+                transform_bottom = App.Matrix()
+                transform_bottom.move(Vector(0, -50, bottom_z))
+                bottom_plate = bottom_plate.transformGeometry(transform_bottom)
+                plate_shapes.append(bottom_plate)
+            
+            self.log(f"   Created {len(plate_shapes)} slot plates (2 per tine)")
+            
+            # Combine all plates into one compound
+            if plate_shapes:
+                plates_compound = Part.makeCompound(plate_shapes)
+                
+                # Fuse the plates with the cutout shape
+                self.log("   Fusing slot plates with cutout...")
+                modified_shape = cutout_shape.fuse(plates_compound)
+                
+                # Return the modified shape
+                return modified_shape
+            else:
+                self.log("⚠️ No slot plates created")
+                return cutout_shape
+                
+        except Exception as e:
+            self.log(f"⚠️ Error adding tine slot plates: {e}")
+            return cutout_shape
     
     def add_perforation_cylinders(self, cutout_obj, doc, dimensions):
         """
@@ -293,6 +435,14 @@ class StockBuilderCore:
             # Add perforation cylinders to the cutout
             cutout_obj = self.add_perforation_cylinders(cutout_obj, doc, cutout_dimensions)
             
+            # Add tine slot plates to the cutout
+            self.log("\n🔧 Adding tine slot plates...")
+            cutout_shape = cutout_obj.Shape
+            modified_shape = self.add_tine_slot_plates(cutout_obj, doc, cutout_dimensions)
+            
+            # Update the cutout object with the fully modified shape
+            cutout_obj.Shape = modified_shape
+            
             # Now export and generate report for the modified cutout
             self.export_stock_step(cutout_obj, object_name=cutout_name)
             
@@ -316,7 +466,7 @@ class StockBuilderCore:
             
             results['cutout'] = cutout_obj
         else:
-            self.log(f"\n⏭️ Skipping cutout - stock style is '{results['style']}', not 'wedge'")
+            self.log(f"\n⭕️ Skipping cutout - stock style is '{results['style']}', not 'wedge'")
         
         # Summary
         self.log("\n" + "="*60)
@@ -327,8 +477,9 @@ class StockBuilderCore:
             cutout_name = f"{results['boat_name']}_Stock_Cutout"
             self.log(f"✅ Cutout: {cutout_name} (tolerance: {cutout_tolerance_mm}mm)")
             self.log(f"   - With perforation cylinders")
+            self.log(f"   - With tine slot plates")
         else:
-            self.log("⏭️ Cutout: Not built")
+            self.log("⭕️ Cutout: Not built")
         
         # Build statistics
         results['stats'] = {
