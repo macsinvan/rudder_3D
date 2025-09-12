@@ -179,21 +179,27 @@ class StockBuilderCore:
                 tine_length = tine['length']  # 220 or 240mm
                 tine_angle = tine['angle']  # 93, 90, or 135 degrees
                 
-                # Calculate rotation delta from 90 degrees (plates start horizontal)
-                rotation_angle = tine_angle - 90.0
-                
                 # Calculate X position (midpoint of tine)
                 x_position = tine_length / 2.0
                 
+                # Calculate rotation angle from vertical
+                rotation_angle = tine_angle - 90.0  # Delta from vertical
+                
+                # Calculate Z offset due to tine angle
+                # When tine rotates from vertical, a point at x_position moves in Z
+                z_offset = x_position * math.tan(math.radians(rotation_angle))
+                
                 self.log(f"   Tine {i}: start={tine_start}, width={tine_width}, length={tine_length}, angle={tine_angle}°")
-                self.log(f"      X position: {x_position}, rotation delta: {rotation_angle}°")
+                self.log(f"      X position: {x_position}, rotation: {rotation_angle}°, Z offset: {z_offset:.3f}")
                 
-                # Calculate Z positions for top and bottom plates
-                top_z = tine_start + cutout_mm + 2.5
-                bottom_z = tine_start - tine_width - cutout_mm - 2.5
+                # Calculate Z positions accounting for tine angle
+                # Top plate center at actual tine top edge position
+                top_z = (tine_start + cutout_mm) - z_offset
+                # Bottom plate center at actual tine bottom edge position
+                bottom_z = (tine_start - tine_width - cutout_mm) - z_offset
                 
-                self.log(f"      Top plate Z: {top_z}")
-                self.log(f"      Bottom plate Z: {bottom_z}")
+                self.log(f"      Top plate center Z: {top_z:.3f}")
+                self.log(f"      Bottom plate center Z: {bottom_z:.3f}")
                 
                 # Create top plate
                 top_plate = self.create_tine_slot_plate(
@@ -203,14 +209,9 @@ class StockBuilderCore:
                     corner_radius=2.5
                 )
                 
-                # Transform top plate: center Y, rotate, then position
+                # Position top plate (NO ROTATION YET)
                 transform_top = App.Matrix()
-                # First center at Y=0
-                transform_top.move(Vector(0, -50, 0))
-                # Rotate around Y axis by delta angle
-                transform_top.rotateY(math.radians(rotation_angle))
-                # Move to final position
-                transform_top.move(Vector(x_position, 0, top_z))
+                transform_top.move(Vector(x_position, -50, top_z))
                 top_plate = top_plate.transformGeometry(transform_top)
                 plate_shapes.append(top_plate)
                 
@@ -222,14 +223,9 @@ class StockBuilderCore:
                     corner_radius=2.5
                 )
                 
-                # Transform bottom plate: center Y, rotate, then position
+                # Position bottom plate (NO ROTATION YET)
                 transform_bottom = App.Matrix()
-                # First center at Y=0
-                transform_bottom.move(Vector(0, -50, 0))
-                # Rotate around Y axis by delta angle
-                transform_bottom.rotateY(math.radians(rotation_angle))
-                # Move to final position
-                transform_bottom.move(Vector(x_position, 0, bottom_z))
+                transform_bottom.move(Vector(x_position, -50, bottom_z))
                 bottom_plate = bottom_plate.transformGeometry(transform_bottom)
                 plate_shapes.append(bottom_plate)
             
