@@ -135,121 +135,6 @@ class StockBuilderCore:
         
         return solid
     
-    def add_tine_slot_plates(self, cutout_obj, doc, dimensions):
-        """
-        Add slot plates to each tine for fiberglass wrapping
-        
-        Args:
-            cutout_obj: The cutout object to modify
-            doc: FreeCAD document
-            dimensions: Dictionary containing stock dimensions
-        
-        Returns:
-            Modified cutout object with tine slot plates
-        """
-        self.log("🔧 Adding tine slot plates for fiberglass wrapping...")
-        
-        try:
-            # Get the shape of the cutout
-            if hasattr(cutout_obj, 'Shape'):
-                cutout_shape = cutout_obj.Shape
-            else:
-                self.log("⚠️ Cutout object has no Shape attribute")
-                return cutout_obj
-            
-            # Create list to hold all plate shapes
-            plate_shapes = []
-            
-            # Get cutout tolerance
-            cutout_mm = dimensions.get('cutout_mm', 2.0)
-            
-            # Get tines from dimensions
-            if 'tines' not in dimensions:
-                self.log("⚠️ No tines found in dimensions")
-                return cutout_shape
-            
-            tines = dimensions['tines']
-            self.log(f"   Processing {len(tines)} tines...")
-            
-            # Process each tine
-            for i, tine in enumerate(tines, 1):
-                # Extract tine parameters
-                tine_start = -abs(tine['start'])  # Ensure negative Z
-                tine_width = tine['width']  # Should be 40mm
-                tine_length = tine['length']  # 220 or 240mm
-                tine_angle = tine['angle']  # 93, 90, or 135 degrees
-                rotation_angle = tine_angle - 90.0  # Delta from vertical
-
-                # Calculate X position (midpoint of tine)
-                x_position = (tine_length / 2.0) * math.cos(math.radians(rotation_angle))
-                print("++++++++++++++++++++++++ X_POSITION = ", x_position)
-                
-                # Calculate rotation angle from vertical
-                
-                
-                # Calculate Z offset due to tine angle
-                # When tine rotates from vertical, a point at x_position moves in Z
-                z_offset = x_position * math.tan(math.radians(rotation_angle))
-                
-                self.log(f"   Tine {i}: start={tine_start}, width={tine_width}, length={tine_length}, angle={tine_angle}°")
-                self.log(f"      X position: {x_position}, rotation: {rotation_angle}°, Z offset: {z_offset:.3f}")
-                
-                # Calculate Z positions accounting for tine angle
-                # Top plate center at actual tine top edge position
-                top_z = (tine_start + cutout_mm) - z_offset
-                # Bottom plate center at actual tine bottom edge position
-                bottom_z = (tine_start - tine_width - cutout_mm) - z_offset
-                
-                self.log(f"      Top plate center Z: {top_z:.3f}")
-                self.log(f"      Bottom plate center Z: {bottom_z:.3f}")
-                
-                # Create top plate
-                top_plate = self.create_tine_slot_plate(
-                    width=100.0,
-                    thickness=5.0,
-                    length=100.0,
-                    corner_radius=2.5
-                )
-                
-                # Position top plate (NO ROTATION YET)
-                transform_top = App.Matrix()
-                transform_top.move(Vector(x_position, -50, top_z))
-                top_plate = top_plate.transformGeometry(transform_top)
-                plate_shapes.append(top_plate)
-                
-                # Create bottom plate
-                bottom_plate = self.create_tine_slot_plate(
-                    width=100.0,
-                    thickness=5.0,
-                    length=100.0,
-                    corner_radius=2.5
-                )
-                
-                # Position bottom plate (NO ROTATION YET)
-                transform_bottom = App.Matrix()
-                transform_bottom.move(Vector(x_position, -50, bottom_z))
-                bottom_plate = bottom_plate.transformGeometry(transform_bottom)
-                plate_shapes.append(bottom_plate)
-            
-            self.log(f"   Created {len(plate_shapes)} slot plates (2 per tine)")
-            
-            # Combine all plates into one compound
-            if plate_shapes:
-                plates_compound = Part.makeCompound(plate_shapes)
-                
-                # Fuse the plates with the cutout shape
-                self.log("   Fusing slot plates with cutout...")
-                modified_shape = cutout_shape.fuse(plates_compound)
-                
-                # Return the modified shape
-                return modified_shape
-            else:
-                self.log("⚠️ No slot plates created")
-                return cutout_shape
-                
-        except Exception as e:
-            self.log(f"⚠️ Error adding tine slot plates: {e}")
-            return cutout_shape
     
     def add_perforation_cylinders(self, cutout_obj, doc, dimensions):
         """
@@ -453,13 +338,6 @@ class StockBuilderCore:
             # Add perforation cylinders to the cutout
             cutout_obj = self.add_perforation_cylinders(cutout_obj, doc, cutout_dimensions)
             
-            # Add tine slot plates to the cutout
-            self.log("\n🔧 Adding tine slot plates...")
-            cutout_shape = cutout_obj.Shape
-            modified_shape = self.add_tine_slot_plates(cutout_obj, doc, cutout_dimensions)
-            
-            # Update the cutout object with the fully modified shape
-            cutout_obj.Shape = modified_shape
             
             # Now export and generate report for the modified cutout
             self.export_stock_step(cutout_obj, object_name=cutout_name)
