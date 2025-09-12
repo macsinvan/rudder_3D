@@ -9,7 +9,6 @@ import Part
 
 # Import geometry builders
 from stock.geom import radius_at as _radius_at_core, append_post_segment_from_row
-from stock.wedge import build_wedge
 from stock.plate import build_plate
 from stock.cylinder import build_cylinder
 from stock.taper import build_taper
@@ -154,12 +153,7 @@ def build_stock_from_dimensions(doc: App.Document, dimensions: dict) -> App.Docu
             elif tine['type'] == 'wedge':
                 # Get solid_v from tine dictionary (will be True for cutouts, False for stock)
                 solid_v = tine.get('solid_v', False)
-                
-                angle_val = float(tine.get('angle', 90))
-                if abs(angle_val - 90.0) < 1e-9:
-                    wedge_parts, wedge_summary = build_wedge(row_dict, _radius_at, solid_v=solid_v)
-                else:
-                    wedge_parts, wedge_summary = build_wedge_angled(row_dict, _radius_at, solid_v=solid_v)
+                wedge_parts, wedge_summary = build_wedge_angled(row_dict, _radius_at, solid_v=solid_v)
                 
                 # DEBUG: Check returned parts
                 print(f"  DEBUG: Wedge '{tine.get('label')}' returned {len(wedge_parts)} parts (solid_v={solid_v})")
