@@ -5,6 +5,7 @@ Reads CSV once, builds everything from dimensions
 import sys
 from pathlib import Path
 import time
+import math
 
 # Add venv path for reportlab access in FreeCAD
 venv_path = Path.home() / "Rudder_Code" / "venv" / "lib" / "python3.9" / "site-packages"
@@ -175,8 +176,17 @@ class StockBuilderCore:
                 # Extract tine parameters
                 tine_start = -abs(tine['start'])  # Ensure negative Z
                 tine_width = tine['width']  # Should be 40mm
+                tine_length = tine['length']  # 220 or 240mm
+                tine_angle = tine['angle']  # 93, 90, or 135 degrees
                 
-                self.log(f"   Tine {i}: start={tine_start}, width={tine_width}")
+                # Calculate rotation delta from 90 degrees (plates start horizontal)
+                rotation_angle = tine_angle - 90.0
+                
+                # Calculate X position (midpoint of tine)
+                x_position = tine_length / 2.0
+                
+                self.log(f"   Tine {i}: start={tine_start}, width={tine_width}, length={tine_length}, angle={tine_angle}°")
+                self.log(f"      X position: {x_position}, rotation delta: {rotation_angle}°")
                 
                 # Calculate Z positions for top and bottom plates
                 top_z = tine_start + cutout_mm + 2.5
@@ -193,9 +203,14 @@ class StockBuilderCore:
                     corner_radius=2.5
                 )
                 
-                # Center the plate at Y=0 and position at correct Z
+                # Transform top plate: center Y, rotate, then position
                 transform_top = App.Matrix()
-                transform_top.move(Vector(0, -50, top_z))
+                # First center at Y=0
+                transform_top.move(Vector(0, -50, 0))
+                # Rotate around Y axis by delta angle
+                transform_top.rotateY(math.radians(rotation_angle))
+                # Move to final position
+                transform_top.move(Vector(x_position, 0, top_z))
                 top_plate = top_plate.transformGeometry(transform_top)
                 plate_shapes.append(top_plate)
                 
@@ -207,9 +222,14 @@ class StockBuilderCore:
                     corner_radius=2.5
                 )
                 
-                # Center the plate at Y=0 and position at correct Z
+                # Transform bottom plate: center Y, rotate, then position
                 transform_bottom = App.Matrix()
-                transform_bottom.move(Vector(0, -50, bottom_z))
+                # First center at Y=0
+                transform_bottom.move(Vector(0, -50, 0))
+                # Rotate around Y axis by delta angle
+                transform_bottom.rotateY(math.radians(rotation_angle))
+                # Move to final position
+                transform_bottom.move(Vector(x_position, 0, bottom_z))
                 bottom_plate = bottom_plate.transformGeometry(transform_bottom)
                 plate_shapes.append(bottom_plate)
             
