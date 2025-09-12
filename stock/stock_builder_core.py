@@ -178,12 +178,14 @@ class StockBuilderCore:
                 tine_width = tine['width']  # Should be 40mm
                 tine_length = tine['length']  # 220 or 240mm
                 tine_angle = tine['angle']  # 93, 90, or 135 degrees
-                
+                rotation_angle = tine_angle - 90.0  # Delta from vertical
+
                 # Calculate X position (midpoint of tine)
-                x_position = tine_length / 2.0
+                x_position = (tine_length / 2.0) * math.cos(math.radians(rotation_angle))
+                print("++++++++++++++++++++++++ X_POSITION = ", x_position)
                 
                 # Calculate rotation angle from vertical
-                rotation_angle = tine_angle - 90.0  # Delta from vertical
+                
                 
                 # Calculate Z offset due to tine angle
                 # When tine rotates from vertical, a point at x_position moves in Z
