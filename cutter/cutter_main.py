@@ -1,5 +1,5 @@
 # Rudder Profile Cutter - Creates final foil by cutting stock cavity + mold creation
-# Version 2.3.1 - Fixed makeThickSolid API call syntax
+# Version 2.4.0 - Fixed shape.fix() method calls and improved error handling
 
 import os
 import FreeCAD as App
@@ -9,7 +9,7 @@ from FreeCAD import Vector
 
 # Configuration
 BOAT_NAME = "MackenSea"
-VERSION = "2.3.1"
+VERSION = "2.4.0"
 
 # Shell parameters
 SHELL_THICKNESS = 3.0      # mm target wall thickness
@@ -37,6 +37,36 @@ CUTTER_STEP = f"{OUTPUT_BASE}/cut_foil/{BOAT_NAME}_Cutter.step"
 # Parameters
 CUTTER_HEIGHT = 100.0  # mm
 CUTTER_MARGIN = 50.0   # mm
+
+def fix_shape(shape, tolerance=0.1):
+    """
+    Properly fix an invalid shape
+    Returns: fixed shape or None if unfixable
+    """
+    if shape.isNull():
+        return None
+        
+    if shape.isValid():
+        return shape
+    
+    # Create a copy to work with
+    fixed_shape = shape.copy()
+    
+    # Try to fix with specified tolerance
+    success = fixed_shape.fix(tolerance, tolerance, tolerance)
+    
+    if success and fixed_shape.isValid() and not fixed_shape.isNull():
+        return fixed_shape
+    
+    # If that didn't work, try with larger tolerance
+    fixed_shape = shape.copy()
+    success = fixed_shape.fix(tolerance * 10, tolerance * 10, tolerance * 10)
+    
+    if success and fixed_shape.isValid() and not fixed_shape.isNull():
+        print(f"   Fixed with larger tolerance: {tolerance * 10}")
+        return fixed_shape
+    
+    return None
 
 def verify_shell_thickness(shell_shape, target_thickness, tolerance=0.5):
     """
@@ -110,25 +140,12 @@ def create_shell(solid_shape, target_thickness):
         # Check and fix invalid shapes
         if scaled_shape.isNull() or not scaled_shape.isValid():
             print("   Scaled shape invalid, attempting to fix...")
-            try:
-                # Try fixing the shape
-                fixed = scaled_shape.fix(SHELL_TOLERANCE, SHELL_TOLERANCE, SHELL_TOLERANCE)
-                # Handle that fix() might return boolean
-                if isinstance(fixed, bool):
-                    if not fixed:
-                        # Adjust for next iteration - try thinner
-                        thickness_multiplier *= 0.8
-                        continue
-                else:
-                    scaled_shape = fixed
-                    if scaled_shape.isNull() or not scaled_shape.isValid():
-                        # Adjust for next iteration - try thinner
-                        thickness_multiplier *= 0.8
-                        continue
-            except:
+            fixed = fix_shape(scaled_shape, SHELL_TOLERANCE)
+            if fixed is None:
                 # Adjust for next iteration - try thinner
                 thickness_multiplier *= 0.8
                 continue
+            scaled_shape = fixed
         
         # Create shell by boolean cut
         try:
@@ -229,14 +246,18 @@ def create_split_shell(shell_shape, doc, split_at_y=0.0):
         # Create negative half (Y < split_at_y)
         negative_half = shell_shape.common(cutting_box_negative)
         
-        # Validate results
+        # Validate and fix results if needed
         if positive_half.isNull() or not positive_half.isValid():
             print("⚠️  Positive half invalid, attempting to fix...")
-            positive_half = positive_half.fix(0.1, 0.1, 0.1)
+            fixed = fix_shape(positive_half, 0.1)
+            if fixed:
+                positive_half = fixed
             
         if negative_half.isNull() or not negative_half.isValid():
             print("⚠️  Negative half invalid, attempting to fix...")
-            negative_half = negative_half.fix(0.1, 0.1, 0.1)
+            fixed = fix_shape(negative_half, 0.1)
+            if fixed:
+                negative_half = fixed
         
         # Calculate volumes for verification
         original_volume = shell_shape.Volume
@@ -455,10 +476,11 @@ def run():
     
     if not cut_shape.isValid():
         print("⚠️  Cut shape is invalid, attempting to fix...")
-        cut_shape = cut_shape.fix()
-        if cut_shape.isNull() or not cut_shape.isValid():
+        fixed = fix_shape(cut_shape, 0.1)
+        if fixed is None:
             print("❌ Could not fix invalid cut shape")
             return
+        cut_shape = fixed
         print("✅ Fixed cut shape")
     
     cut_foil = doc.addObject("Part::Feature", "Cut_Foil")

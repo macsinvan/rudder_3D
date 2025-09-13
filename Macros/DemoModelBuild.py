@@ -58,7 +58,7 @@ FOAM_HOLE_CONFIG = {
 
 # Hole Position Arrays (as fractions of dimension)
 HOLE_POSITIONS = {
-    'z_cut': [0.35, 0.45, 0.60],          # Along chord width
+    'z_cut': [0.30, 0.45, 0.60, 0.90],          # Along chord width
     'x_cut': [0.1, 0.4, 0.6, 0.8],        # Along slice height
     'y_join_rows': [0.25, 0.75],          # Row positions in section height
     'y_join_cols': [0.1, 0.4, 0.6, 0.9],  # Along chord width
