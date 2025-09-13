@@ -24,7 +24,7 @@ if project.exists():
 
 # Import modules
 from stock.wedge_cutout_calc import create_wedge_cutout_dimensions
-from stock.csv_dimension_parser import CSVDimensionParser
+from helpers.stock_csv_dimension_parser import CSVDimensionParser
 from stock.approval_report_generator import ApprovalReportGenerator
 from helpers.step_handler import StepHandler
 
