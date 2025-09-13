@@ -1,18 +1,26 @@
-meta,boat_name,version,style,cutout_mm
-meta,MackenSea,1.0.0,wedge,2
+# Rudder Stock Configuration
+# This defines the rudder stock. The top reference point (0) is the point that the stock enters the rudder.
+# Units: All measurements in millimeters, angles in degrees
 
+# OVERVIEW
+boat_name,MackenSea
+version,1.0.0
+style,wedge
+cutout_mm,2
 
-post,type,start,end,diameter_start,label
-post,cylinder,0,20,44,Rudder Sleeve
-
-post,type,start,end,diameter_start,diameter_end,label
+# POST SECTIONS
+# Posts define the main shaft segments (cylinder or tapered)
+# type,start,end,diameter_start,diameter_end,label
+post,cylinder,0,20,44,,Rudder Sleeve
 post,taper,20,604,44,20,Rudder Taper
 
-tine,wedge,start,width,length,plate_thickness,angle,label
+# TINE ATTACHMENTS
+# Tines are the blade attachments
+# Currently supported:
+# None: tine,none
+# Wedge: tine,wedge,start,width,length,plate_thickness,angle,label
+# Plate: tine,plate,start,width,length,plate_thickness,angle,label
+# Cylinder: tine,cylinder,start,diameter,length,angle,label
 tine,wedge,113,40,220,5,93,Support 1
-
-tine,wedge,start,width,length,plate_thickness,angle,label
 tine,wedge,365,40,220,5,90,Support 2
-
-tine,wedge,start,width,length,plate_thickness,angle,label
 tine,wedge,560,40,240,5,135,Support 3
