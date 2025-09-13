@@ -68,6 +68,34 @@ def create_edges(segments):
     return edges
 
 
+def add_point_markers(segments, doc, object_prefix):
+    """Add red spheres and labels at each point for the outline."""
+    print(f"   Adding point markers and labels...")
+    
+    # Collect all unique points
+    point_set = set()
+    for seg_type, points in segments:
+        for point in points:
+            point_set.add(tuple(point))
+    
+    # Create sphere and label for each point
+    for csv_x, csv_y in point_set:
+        # Create small red sphere
+        sphere = Part.makeSphere(2.0, Vector(csv_x, 0, csv_y))
+        sphere_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_{object_prefix}_Point_{csv_x}_{csv_y}")
+        sphere_obj.Shape = sphere
+        sphere_obj.ViewObject.ShapeColor = (1.0, 0.0, 0.0)  # Red
+        
+        # Create label with CSV coordinates - offset above and to the right
+        label = doc.addObject("App::Annotation", f"{BOAT_NAME}_{object_prefix}_Label_{csv_x}_{csv_y}")
+        label.LabelText = f"[{csv_x}, {csv_y}]"
+        label.Position = Vector(csv_x + 5, 0, csv_y + 5)  # Offset for visibility
+        label.ViewObject.TextColor = (1.0, 0.0, 0.0)  # Red text
+        label.ViewObject.FontSize = 24  # Much larger font
+    
+    print(f"   Added {len(point_set)} point markers")
+
+
 def process_csv(csv_filename, object_prefix, colors, doc):
     """Process a CSV file and create FreeCAD objects."""
     csv_path = f"{INPUT_FOLDER}/{csv_filename}"
@@ -136,6 +164,10 @@ def process_csv(csv_filename, object_prefix, colors, doc):
     except Exception as e:
         print(f"❌ Shrunk wire failed: {e}")
         return None, None
+    
+    # Add point markers for Outline only
+    if object_prefix == "Outline":
+        add_point_markers(segments, doc, object_prefix)
     
     # Get points for grid
     all_points = []

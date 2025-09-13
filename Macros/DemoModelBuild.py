@@ -24,12 +24,12 @@ from helpers.step_save_load import load_step, save_step, validate_step_file, Ste
 
 # Boat Configuration
 BOAT_NAME = "MackenSea"
-VERSION = "2.5.1"  # Z-holes now use foam configuration
+VERSION = "2.5.2"  # Z-holes now use foam configuration
 
 # Stock Positioning (mm)
 STOCK_CONFIG = {
-    'post_center_x': 323,
-    'post_top_z': -75,
+    'post_center_x': 380,
+    'post_top_z': -65,
     'post_diameter': 44,
     'post_diameter_delta': 4,  # Difference for cutout
 }
