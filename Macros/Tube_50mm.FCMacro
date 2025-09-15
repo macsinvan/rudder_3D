@@ -1,0 +1,310 @@
+# FreeCAD Macro: Parametric Tube with UI Controls
+# Creates a tube with parameters exposed in the FreeCAD property editor
+# Can create round or square tubes with round tapered ends
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+from FreeCAD import Base
+
+class ParametricTube:
+    def __init__(self, obj):
+        """Add properties to the object"""
+        
+        # Main tube properties
+        obj.addProperty("App::PropertyLength", "Diameter", "Dimensions", 
+                       "Outer diameter of the tube (or width if square)").Diameter = 16.0
+        obj.addProperty("App::PropertyLength", "Length", "Dimensions", 
+                       "Total length of the tube").Length = 50.0
+        obj.addProperty("App::PropertyBool", "SquareProfile", "Dimensions", 
+                       "True for square tube, False for round").SquareProfile = False
+        obj.addProperty("App::PropertyBool", "Hollow", "Dimensions", 
+                       "True for hollow tube, False for solid rod").Hollow = True
+        obj.addProperty("App::PropertyLength", "WallThickness", "Dimensions", 
+                       "Wall thickness (only for hollow tubes)").WallThickness = 2.0
+        
+        # Taper properties
+        obj.addProperty("App::PropertyInteger", "NumberOfTapers", "Taper", 
+                       "Number of tapered ends (0, 1, or 2)").NumberOfTapers = 1
+        obj.addProperty("App::PropertyLength", "TaperLength1", "Taper", 
+                       "Length of first taper (top end when 1 taper, bottom when 2)").TaperLength1 = 20.0
+        obj.addProperty("App::PropertyLength", "TaperLength2", "Taper", 
+                       "Length of second taper (only used when NumberOfTapers = 2)").TaperLength2 = 20.0
+        obj.addProperty("App::PropertyFloat", "TaperReduction", "Taper", 
+                       "End diameter as fraction of main (0.95 = 95%)").TaperReduction = 0.95
+        
+        # X-Cut properties
+        obj.addProperty("App::PropertyBool", "EnableXCuts", "X-Cuts", 
+                       "Add X-cuts to tapered ends").EnableXCuts = True
+        obj.addProperty("App::PropertyLength", "XCutWidth", "X-Cuts", 
+                       "Width of X-cut slots").XCutWidth = 1.5
+        obj.addProperty("App::PropertyLength", "XCutDepth", "X-Cuts", 
+                       "Depth of X-cuts into tapered section").XCutDepth = 15.0
+        
+        obj.Proxy = self
+        
+    def execute(self, obj):
+        """Recalculate the shape when properties change"""
+        
+        # Get values from properties
+        diameter = float(obj.Diameter)
+        length = float(obj.Length)
+        square_profile = obj.SquareProfile
+        hollow = obj.Hollow
+        wall_thickness = float(obj.WallThickness)
+        num_tapers = obj.NumberOfTapers
+        taper_length1 = float(obj.TaperLength1)
+        taper_length2 = float(obj.TaperLength2)
+        taper_reduction = obj.TaperReduction
+        enable_xcuts = obj.EnableXCuts
+        xcut_width = float(obj.XCutWidth)
+        xcut_depth = float(obj.XCutDepth)
+        
+        # Validate parameters
+        if num_tapers not in [0, 1, 2]:
+            App.Console.PrintError("NumberOfTapers must be 0, 1, or 2\n")
+            return
+        
+        # Calculate total taper length based on number of tapers
+        if num_tapers == 0:
+            total_taper_length = 0
+        elif num_tapers == 1:
+            total_taper_length = taper_length1
+        else:  # num_tapers == 2
+            total_taper_length = taper_length1 + taper_length2
+            
+        if total_taper_length > length:
+            App.Console.PrintError("Total taper length exceeds tube length!\n")
+            return
+            
+        main_radius = diameter / 2.0
+        
+        if hollow and wall_thickness >= main_radius:
+            App.Console.PrintError("Wall thickness must be less than tube radius!\n")
+            return
+        
+        # Calculate dimensions
+        inner_radius = main_radius - wall_thickness if hollow else 0
+        taper_end_radius = main_radius * taper_reduction
+        taper_end_inner_radius = taper_end_radius - wall_thickness if hollow else 0
+        
+        # Calculate main section length
+        main_section_length = length - total_taper_length
+        
+        # Create the main tube section
+        if main_section_length > 0:
+            # Position main section after first taper if there are 2 tapers
+            z_offset = taper_length1 if num_tapers == 2 else 0
+            
+            if square_profile:
+                # Create square/rectangular tube
+                # Outer square
+                main_outer = Part.makeBox(diameter, diameter, main_section_length,
+                                         Base.Vector(-diameter/2, -diameter/2, z_offset))
+                
+                if hollow:
+                    # Inner square for hollow tube
+                    inner_size = diameter - (2 * wall_thickness)
+                    main_inner = Part.makeBox(inner_size, inner_size, main_section_length,
+                                             Base.Vector(-inner_size/2, -inner_size/2, z_offset))
+                    tube_body = main_outer.cut(main_inner)
+                else:
+                    tube_body = main_outer
+            else:
+                # Create round tube (original code)
+                main_outer = Part.makeCylinder(main_radius, main_section_length, 
+                                              Base.Vector(0, 0, z_offset), 
+                                              Base.Vector(0, 0, 1))
+                
+                if hollow:
+                    main_inner = Part.makeCylinder(inner_radius, main_section_length, 
+                                                  Base.Vector(0, 0, z_offset), 
+                                                  Base.Vector(0, 0, 1))
+                    tube_body = main_outer.cut(main_inner)
+                else:
+                    tube_body = main_outer
+        else:
+            tube_body = None
+        
+        # Add first taper (always round)
+        if num_tapers >= 1:
+            if num_tapers == 1:
+                # Single taper at top
+                taper1_z = main_section_length
+                taper1_outer = Part.makeCone(main_radius, taper_end_radius, taper_length1,
+                                            Base.Vector(0, 0, taper1_z), Base.Vector(0, 0, 1))
+                if hollow:
+                    taper1_inner = Part.makeCone(inner_radius, taper_end_inner_radius, taper_length1,
+                                                Base.Vector(0, 0, taper1_z), Base.Vector(0, 0, 1))
+                    taper1 = taper1_outer.cut(taper1_inner)
+                else:
+                    taper1 = taper1_outer
+            else:  # Bottom taper when there are 2 tapers (inverted)
+                taper1_outer = Part.makeCone(taper_end_radius, main_radius, taper_length1,
+                                            Base.Vector(0, 0, 0), Base.Vector(0, 0, 1))
+                if hollow:
+                    taper1_inner = Part.makeCone(taper_end_inner_radius, inner_radius, taper_length1,
+                                                Base.Vector(0, 0, 0), Base.Vector(0, 0, 1))
+                    taper1 = taper1_outer.cut(taper1_inner)
+                else:
+                    taper1 = taper1_outer
+            
+            if tube_body is not None:
+                tube_body = tube_body.fuse(taper1)
+            else:
+                tube_body = taper1
+        
+        # Add second taper (always round) - only when NumberOfTapers = 2
+        if num_tapers == 2:
+            taper2_z = taper_length1 + main_section_length
+            taper2_outer = Part.makeCone(main_radius, taper_end_radius, taper_length2,
+                                        Base.Vector(0, 0, taper2_z), Base.Vector(0, 0, 1))
+            if hollow:
+                taper2_inner = Part.makeCone(inner_radius, taper_end_inner_radius, taper_length2,
+                                            Base.Vector(0, 0, taper2_z), Base.Vector(0, 0, 1))
+                taper2 = taper2_outer.cut(taper2_inner)
+            else:
+                taper2 = taper2_outer
+            
+            tube_body = tube_body.fuse(taper2)
+        
+        # Add X-cuts if enabled
+        if enable_xcuts and num_tapers > 0:
+            # X-cut at top end
+            if num_tapers == 1:
+                # Single taper at top
+                cut_z = length - min(xcut_depth, taper_length1)
+                actual_cut_depth = min(xcut_depth, taper_length1)
+            else:
+                # Top taper when there are 2 tapers
+                cut_z = length - min(xcut_depth, taper_length2)
+                actual_cut_depth = min(xcut_depth, taper_length2)
+            
+            # Create X-cuts for top taper
+            cut1_box = Part.makeBox(diameter * 2, xcut_width, actual_cut_depth,
+                                   Base.Vector(-diameter, -xcut_width/2, cut_z))
+            cut2_box = Part.makeBox(xcut_width, diameter * 2, actual_cut_depth,
+                                   Base.Vector(-xcut_width/2, -diameter, cut_z))
+            
+            tube_body = tube_body.cut(cut1_box)
+            tube_body = tube_body.cut(cut2_box)
+            
+            # Add X-cuts to bottom taper if it exists
+            if num_tapers == 2:
+                actual_cut_depth_bottom = min(xcut_depth, taper_length1)
+                cut3_box = Part.makeBox(diameter * 2, xcut_width, actual_cut_depth_bottom,
+                                       Base.Vector(-diameter, -xcut_width/2, 0))
+                cut4_box = Part.makeBox(xcut_width, diameter * 2, actual_cut_depth_bottom,
+                                       Base.Vector(-xcut_width/2, -diameter, 0))
+                
+                tube_body = tube_body.cut(cut3_box)
+                tube_body = tube_body.cut(cut4_box)
+        
+        obj.Shape = tube_body
+
+class ViewProviderTube:
+    def __init__(self, obj):
+        """Set view properties"""
+        obj.Proxy = self
+        
+    def attach(self, obj):
+        """Setup the view provider"""
+        return
+        
+    def updateData(self, fp, prop):
+        """Handle property changes"""
+        return
+        
+    def getDisplayModes(self, obj):
+        """Return available display modes"""
+        return ["Shaded"]
+        
+    def getDefaultDisplayMode(self):
+        """Return default display mode"""
+        return "Shaded"
+        
+    def setDisplayMode(self, mode):
+        """Set display mode"""
+        return mode
+        
+    def onChanged(self, vp, prop):
+        """Handle view property changes"""
+        return
+        
+    def getIcon(self):
+        """Return icon for tree view"""
+        return """
+            /* XPM */
+            static char * tube_xpm[] = {
+            "16 16 3 1",
+            "   c None",
+            ".  c #000000",
+            "+  c #808080",
+            "                ",
+            "    ........    ",
+            "   .++++++++.   ",
+            "  .++++++++++.  ",
+            "  .++++++++++.  ",
+            "  .++++++++++.  ",
+            "  .++++++++++.  ",
+            "  .++++++++++.  ",
+            "  .++++++++++.  ",
+            "  .++++++++++.  ",
+            "  .++++++++++.  ",
+            "  .++++++++++.  ",
+            "  .++++++++++.  ",
+            "   .++++++++.   ",
+            "    ........    ",
+            "                "};
+            """
+            
+    def dumps(self):
+        """Save callback"""
+        return None
+        
+    def loads(self, state):
+        """Restore callback"""
+        return None
+
+def makeParametricTube():
+    """Create a parametric tube object"""
+    doc = App.ActiveDocument
+    if doc is None:
+        doc = App.newDocument("ParametricTube")
+    
+    # Create the object
+    obj = doc.addObject("Part::FeaturePython", "ParametricTube")
+    
+    # Attach the parametric tube feature
+    ParametricTube(obj)
+    
+    # Attach the view provider
+    if App.GuiUp:
+        ViewProviderTube(obj.ViewObject)
+        obj.ViewObject.ShapeColor = (0.7, 0.7, 0.8)
+        obj.ViewObject.Transparency = 0
+    
+    # Recompute to create initial shape
+    doc.recompute()
+    
+    # Fit view
+    if App.GuiUp:
+        Gui.ActiveDocument.ActiveView.fitAll()
+    
+    # Print instructions
+    App.Console.PrintMessage("\n" + "="*60 + "\n")
+    App.Console.PrintMessage("Parametric Tube Created!\n")
+    App.Console.PrintMessage("="*60 + "\n")
+    App.Console.PrintMessage("Adjust parameters in the Property Editor (Data tab):\n")
+    App.Console.PrintMessage("- Dimensions: Diameter, Length, SquareProfile, Hollow, WallThickness\n")
+    App.Console.PrintMessage("- Taper: NumberOfTapers (0,1,2), TaperLength1, TaperLength2, TaperReduction\n")
+    App.Console.PrintMessage("- X-Cuts: EnableXCuts, XCutWidth, XCutDepth\n")
+    App.Console.PrintMessage("\nNote: TaperLength2 only used when NumberOfTapers = 2\n")
+    App.Console.PrintMessage("Changes update automatically!\n")
+    App.Console.PrintMessage("="*60 + "\n\n")
+    
+    return obj
+
+# Run the macro
+if __name__ == "__main__":
+    tube = makeParametricTube()

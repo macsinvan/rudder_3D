@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rudder Outline Design Tool</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .app-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+            color: white;
+            padding: 25px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.2em;
+            margin-bottom: 8px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+        
+        .content {
+            padding: 40px;
+        }
+        
+        /* Start Screen */
+        .start-screen {
+            text-align: center;
+            padding: 60px 20px;
+        }
+        
+        .start-screen h2 {
+            color: #333;
+            margin-bottom: 40px;
+        }
+        
+        .start-buttons {
+            display: flex;
+            gap: 30px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .start-button {
+            padding: 40px;
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+            min-width: 200px;
+        }
+        
+        .start-button:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            border-color: #2196F3;
+        }
+        
+        .start-button .icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+        
+        .start-button .title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .start-button .description {
+            font-size: 14px;
+            color: #666;
+        }
+        
+        /* Form Screen */
+        .form-screen {
+            display: none;
+        }
+        
+        .form-section {
+            margin-bottom: 30px;
+        }
+        
+        .form-section h3 {
+            color: #333;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            color: #555;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        .form-group input:focus,
+        .form-group textarea:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #2196F3;
+        }
+        
+        .form-group textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+        
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+        
+        .error {
+            color: #f44336;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        
+        .success {
+            color: #4CAF50;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        
+        /* Image Upload Screen */
+        .image-screen {
+            display: none;
+        }
+        
+        .upload-area {
+            border: 3px dashed #2196F3;
+            border-radius: 12px;
+            padding: 60px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #f8f9fa;
+        }
+        
+        .upload-area:hover {
+            background: #e3f2fd;
+            border-color: #1976D2;
+        }
+        
+        .upload-area.dragging {
+            background: #e3f2fd;
+            border-color: #1976D2;
+        }
+        
+        .upload-area .icon {
+            font-size: 64px;
+            color: #2196F3;
+            margin-bottom: 20px;
+        }
+        
+        .upload-area .text {
+            font-size: 18px;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .upload-area .subtext {
+            font-size: 14px;
+            color: #666;
+        }
+        
+        #fileInput {
+            display: none;
+        }
+        
+        /* Canvas Preview */
+        .canvas-container {
+            display: none;
+            margin-top: 30px;
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        
+        #previewCanvas {
+            display: block;
+            margin: 0 auto;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .canvas-info {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+        
+        .canvas-info .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        
+        .canvas-info .info-label {
+            font-weight: 500;
+            color: #555;
+        }
+        
+        .canvas-info .info-value {
+            color: #333;
+        }
+        
+        .rudder-box {
+            background: #f0f7ff;
+            border: 2px solid #2196F3;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .rudder-box h4 {
+            color: #1976D2;
+            margin-bottom: 15px;
+            font-size: 16px;
+        }
+        
+        /* Buttons */
+        .button-group {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+            justify-content: flex-end;
+        }
+        
+        button {
+            padding: 12px 30px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            background: #1976D2;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(33, 150, 243, 0.3);
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        button.secondary {
+            background: #757575;
+        }
+        
+        button.secondary:hover {
+            background: #616161;
+        }
+        
+        button.success {
+            background: #4CAF50;
+        }
+        
+        button.success:hover {
+            background: #45a049;
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+        
+        /* Status Messages */
+        .status-message {
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 20px;
+            display: none;
+        }
+        
+        .status-message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+        
+        .status-message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <div class="header">
+            <h1>⚓ Rudder Outline Design Tool</h1>
+            <p>Create and edit rudder profile specifications</p>
+        </div>
+        
+        <div class="content">
+            <!-- Start Screen -->
+            <div class="start-screen" id="startScreen">
+                <h2>Welcome! Choose an option to begin:</h2>
+                <div class="start-buttons">
+                    <div class="start-button" onclick="startNewDesign()">
+                        <div class="icon">📐</div>
+                        <div class="title">New Design</div>
+                        <div class="description">Start from scratch with a new rudder outline</div>
+                    </div>
+                    <div class="start-button" onclick="openExistingDesign()">
+                        <div class="icon">📂</div>
+                        <div class="title">Open Existing</div>
+                        <div class="description">Load and edit an existing design file</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Form Screen -->
+            <div class="form-screen" id="formScreen">
+                <div class="form-section">
+                    <h3>Document & Owner Information</h3>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="docVersion">Document Version*</label>
+                            <input type="text" id="docVersion" placeholder="e.g. 1.0" value="1.0">
+                            <span class="error" id="docVersionError"></span>
+                        </div>
+                        <div class="form-group">
+                            <label for="ownerName">Owner's Name*</label>
+                            <input type="text" id="ownerName" placeholder="Enter owner's full name">
+                            <span class="error" id="ownerNameError"></span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-section">
+                    <h3>Boat Information</h3>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="boatName">Boat Name*</label>
+                            <input type="text" id="boatName" placeholder="Enter boat name">
+                            <span class="error" id="boatNameError"></span>
+                        </div>
+                        <div class="form-group">
+                            <label for="boatBrand">Boat Brand*</label>
+                            <input type="text" id="boatBrand" placeholder="e.g. Beneteau, Catalina, Jeanneau">
+                            <span class="error" id="boatBrandError"></span>
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="boatModel">Boat Model*</label>
+                            <input type="text" id="boatModel" placeholder="e.g. Oceanis 46.1, 445">
+                            <span class="error" id="boatModelError"></span>
+                        </div>
+                        <div class="form-group">
+                            <label for="boatYear">Boat Year</label>
+                            <input type="number" id="boatYear" placeholder="e.g. 2022" min="1900" max="2030">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-section">
+                    <h3>Rudder Specifications</h3>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="dimensions">Dimensions*</label>
+                            <select id="dimensions">
+                                <option value="mm">Millimeters (mm)</option>
+                                <option value="inches">Inches</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="rudder-box">
+                        <h4>Rudder "Box" Dimensions</h4>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="rudderHeight">Height*</label>
+                                <input type="number" id="rudderHeight" placeholder="Height in selected units" step="0.1" min="0">
+                                <span class="error" id="rudderHeightError"></span>
+                            </div>
+                            <div class="form-group">
+                                <label for="rudderWidth">Width*</label>
+                                <input type="number" id="rudderWidth" placeholder="Width in selected units" step="0.1" min="0">
+                                <span class="error" id="rudderWidthError"></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="nacaRatio">NACA Ratio (%)</label>
+                        <input type="number" id="nacaRatio" placeholder="e.g. 15 for NACA 0015" min="0" max="100" step="0.1">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="additionalNotes">Additional Notes</label>
+                        <textarea id="additionalNotes" placeholder="Any additional specifications, modifications, or important notes about this rudder..."></textarea>
+                    </div>
+                </div>
+                
+                <div class="button-group">
+                    <button class="secondary" onclick="backToStart()">Back</button>
+                    <button onclick="saveSpecifications()">Save Specifications</button>
+                    <button id="nextButton" class="success hidden" onclick="goToImageUpload()">Next: Upload Image →</button>
+                </div>
+                
+                <div class="status-message" id="formStatus"></div>
+            </div>
+            
+            <!-- Image Upload Screen -->
+            <div class="image-screen" id="imageScreen">
+                <h3>Upload Rudder Outline Image</h3>
+                <p style="color: #666; margin-bottom: 20px;">Upload an image of your rudder outline. It will be automatically scaled to match your specifications.</p>
+                
+                <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+                    <div class="icon">📷</div>
+                    <div class="text">Click to upload or drag & drop</div>
+                    <div class="subtext">Supports JPG, PNG formats</div>
+                </div>
+                
+                <input type="file" id="fileInput" accept="image/jpeg,image/jpg,image/png">
+                
+                <div class="canvas-container" id="canvasContainer">
+                    <canvas id="previewCanvas"></canvas>
+                    <div class="canvas-info">
+                        <div class="info-row">
+                            <span class="info-label">Original Size:</span>
+                            <span class="info-value" id="originalSize">-</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Scaled Size:</span>
+                            <span class="info-value" id="scaledSize">-</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Scale Factor:</span>
+                            <span class="info-value" id="scaleFactor">-</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="button-group">
+                    <button class="secondary" onclick="backToForm()">Back</button>
+                    <button id="processButton" class="success hidden" onclick="processImage()">Process Outline</button>
+                </div>
+                
+                <div class="status-message" id="imageStatus"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // State management
+        let currentScreen = 'start';
+        let specifications = {};
+        let uploadedImage = null;
+        let imageScale = 1;
+        
+        // Screen navigation
+        function showScreen(screenName) {
+            document.getElementById('startScreen').style.display = 'none';
+            document.getElementById('formScreen').style.display = 'none';
+            document.getElementById('imageScreen').style.display = 'none';
+            
+            switch(screenName) {
+                case 'start':
+                    document.getElementById('startScreen').style.display = 'block';
+                    break;
+                case 'form':
+                    document.getElementById('formScreen').style.display = 'block';
+                    break;
+                case 'image':
+                    document.getElementById('imageScreen').style.display = 'block';
+                    break;
+            }
+            currentScreen = screenName;
+        }
+        
+        function startNewDesign() {
+            showScreen('form');
+        }
+        
+        function openExistingDesign() {
+            // Create a file input for CSV
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.csv,.txt';
+            input.onchange = function(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        parseExistingFile(e.target.result);
+                    };
+                    reader.readAsText(file);
+                }
+            };
+            input.click();
+        }
+        
+        function parseExistingFile(content) {
+            // Parse the CSV header to fill in the form
+            const lines = content.split('\n');
+            
+            // Parse header comments for our specific fields
+            for (let line of lines) {
+                if (line.startsWith('#')) {
+                    // Document Version
+                    if (line.includes('Document Version:')) {
+                        const match = line.match(/Document Version:\s*(.+)/i);
+                        if (match) document.getElementById('docVersion').value = match[1].trim();
+                    }
+                    // Owner's Name
+                    if (line.includes("Owner's Name:") || line.includes("Owners Name:")) {
+                        const match = line.match(/Owner['s]* Name:\s*(.+)/i);
+                        if (match) document.getElementById('ownerName').value = match[1].trim();
+                    }
+                    // Boat Name
+                    if (line.includes('Boat Name:') || line.includes('Boat name:')) {
+                        const match = line.match(/Boat [Nn]ame:\s*(.+)/i);
+                        if (match) document.getElementById('boatName').value = match[1].trim();
+                    }
+                    // Boat Brand
+                    if (line.includes('Boat Brand:')) {
+                        const match = line.match(/Boat Brand:\s*(.+)/i);
+                        if (match) document.getElementById('boatBrand').value = match[1].trim();
+                    }
+                    // Boat Model
+                    if (line.includes('Boat Model:')) {
+                        const match = line.match(/Boat Model:\s*(.+)/i);
+                        if (match) document.getElementById('boatModel').value = match[1].trim();
+                    }
+                    // Boat Year
+                    if (line.includes('Boat Year:')) {
+                        const match = line.match(/Boat Year:\s*(\d+)/i);
+                        if (match) document.getElementById('boatYear').value = match[1];
+                    }
+                    // Dimensions
+                    if (line.includes('Dimensions:')) {
+                        const match = line.match(/Dimensions:\s*(\w+)/i);
+                        if (match) {
+                            const unit = match[1].toLowerCase();
+                            if (unit.includes('mm')) document.getElementById('dimensions').value = 'mm';
+                            else if (unit.includes('inch')) document.getElementById('dimensions').value = 'inches';
+                        }
+                    }
+                    // Rudder Height
+                    if (line.includes('Height:')) {
+                        const match = line.match(/Height:\s*([\d.]+)/i);
+                        if (match) document.getElementById('rudderHeight').value = match[1];
+                    }
+                    // Rudder Width
+                    if (line.includes('Width:')) {
+                        const match = line.match(/Width:\s*([\d.]+)/i);
+                        if (match) document.getElementById('rudderWidth').value = match[1];
+                    }
+                    // NACA Ratio
+                    if (line.includes('NACA') && line.includes('%')) {
+                        const match = line.match(/NACA.*?([\d.]+)%/i);
+                        if (match) document.getElementById('nacaRatio').value = match[1];
+                    }
+                }
+            }
+            
+            showScreen('form');
+            
+            // Show success message
+            const status = document.getElementById('formStatus');
+            status.className = 'status-message success';
+            status.textContent = 'File loaded successfully. Review and update specifications as needed.';
+            status.style.display = 'block';
+        }
+        
+        function backToStart() {
+            showScreen('start');
+        }
+        
+        function backToForm() {
+            showScreen('form');
+        }
+        
+        function validateForm() {
+            let isValid = true;
+            const errors = {};
+            
+            // Validate required fields
+            const docVersion = document.getElementById('docVersion').value.trim();
+            if (!docVersion) {
+                errors.docVersion = 'Document version is required';
+                isValid = false;
+            }
+            
+            const ownerName = document.getElementById('ownerName').value.trim();
+            if (!ownerName) {
+                errors.ownerName = "Owner's name is required";
+                isValid = false;
+            }
+            
+            const boatName = document.getElementById('boatName').value.trim();
+            if (!boatName) {
+                errors.boatName = 'Boat name is required';
+                isValid = false;
+            }
+            
+            const boatBrand = document.getElementById('boatBrand').value.trim();
+            if (!boatBrand) {
+                errors.boatBrand = 'Boat brand is required';
+                isValid = false;
+            }
+            
+            const boatModel = document.getElementById('boatModel').value.trim();
+            if (!boatModel) {
+                errors.boatModel = 'Boat model is required';
+                isValid = false;
+            }
+            
+            const rudderHeight = document.getElementById('rudderHeight').value;
+            if (!rudderHeight || rudderHeight <= 0) {
+                errors.rudderHeight = 'Valid height is required';
+                isValid = false;
+            }
+            
+            const rudderWidth = document.getElementById('rudderWidth').value;
+            if (!rudderWidth || rudderWidth <= 0) {
+                errors.rudderWidth = 'Valid width is required';
+                isValid = false;
+            }
+            
+            // Display errors
+            document.getElementById('docVersionError').textContent = errors.docVersion || '';
+            document.getElementById('ownerNameError').textContent = errors.ownerName || '';
+            document.getElementById('boatNameError').textContent = errors.boatName || '';
+            document.getElementById('boatBrandError').textContent = errors.boatBrand || '';
+            document.getElementById('boatModelError').textContent = errors.boatModel || '';
+            document.getElementById('rudderHeightError').textContent = errors.rudderHeight || '';
+            document.getElementById('rudderWidthError').textContent = errors.rudderWidth || '';
+            
+            return isValid;
+        }
+        
+        function saveSpecifications() {
+            if (!validateForm()) {
+                const status = document.getElementById('formStatus');
+                status.className = 'status-message error';
+                status.textContent = 'Please correct the errors above before saving.';
+                status.style.display = 'block';
+                return;
+            }
+            
+            // Save specifications
+            specifications = {
+                docVersion: document.getElementById('docVersion').value.trim(),
+                ownerName: document.getElementById('ownerName').value.trim(),
+                boatName: document.getElementById('boatName').value.trim(),
+                boatBrand: document.getElementById('boatBrand').value.trim(),
+                boatModel: document.getElementById('boatModel').value.trim(),
+                boatYear: document.getElementById('boatYear').value || null,
+                dimensions: document.getElementById('dimensions').value,
+                rudderHeight: parseFloat(document.getElementById('rudderHeight').value),
+                rudderWidth: parseFloat(document.getElementById('rudderWidth').value),
+                nacaRatio: document.getElementById('nacaRatio').value ? parseFloat(document.getElementById('nacaRatio').value) : null,
+                additionalNotes: document.getElementById('additionalNotes').value.trim(),
+                timestamp: new Date().toISOString()
+            };
+            
+            // Show success message
+            const status = document.getElementById('formStatus');
+            status.className = 'status-message success';
+            status.textContent = 'Specifications saved successfully!';
+            status.style.display = 'block';
+            
+            // Show next button
+            document.getElementById('nextButton').classList.remove('hidden');
+        }
+        
+        function goToImageUpload() {
+            showScreen('image');
+        }
+        
+        // Image upload handling
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        
+        // Drag and drop
+        uploadArea.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            uploadArea.classList.add('dragging');
+        });
+        
+        uploadArea.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('dragging');
+        });
+        
+        uploadArea.addEventListener('drop', function(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('dragging');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleImageFile(files[0]);
+            }
+        });
+        
+        fileInput.addEventListener('change', function(e) {
+            if (e.target.files.length > 0) {
+                handleImageFile(e.target.files[0]);
+            }
+        });
+        
+        function handleImageFile(file) {
+            // Validate file type
+            if (!file.type.match(/image\/(jpeg|jpg|png)/)) {
+                const status = document.getElementById('imageStatus');
+                status.className = 'status-message error';
+                status.textContent = 'Please upload a JPG or PNG image.';
+                status.style.display = 'block';
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    uploadedImage = img;
+                    displayScaledImage();
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        function displayScaledImage() {
+            const canvas = document.getElementById('previewCanvas');
+            const ctx = canvas.getContext('2d');
+            const container = document.getElementById('canvasContainer');
+            
+            // Calculate scale factor based on rudder box dimensions
+            const targetHeight = specifications.rudderHeight;
+            const targetWidth = specifications.rudderWidth;
+            
+            // Scale to fit within the box while maintaining aspect ratio
+            const scaleHeight = targetHeight / uploadedImage.height;
+            const scaleWidth = targetWidth / uploadedImage.width;
+            
+            // Use the smaller scale to ensure it fits within both dimensions
+            imageScale = Math.min(scaleHeight, scaleWidth);
+            
+            // Set canvas size
+            const scaledWidth = uploadedImage.width * imageScale;
+            const scaledHeight = uploadedImage.height * imageScale;
+            
+            // Limit display size for preview
+            const maxDisplaySize = 600;
+            let displayScale = 1;
+            if (Math.max(scaledWidth, scaledHeight) > maxDisplaySize) {
+                displayScale = maxDisplaySize / Math.max(scaledWidth, scaledHeight);
+            }
+            
+            canvas.width = scaledWidth * displayScale;
+            canvas.height = scaledHeight * displayScale;
+            
+            // Draw scaled image
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(uploadedImage, 0, 0, canvas.width, canvas.height);
+            
+            // Update info
+            document.getElementById('originalSize').textContent = `${uploadedImage.width} × ${uploadedImage.height} px`;
+            document.getElementById('scaledSize').textContent = `${scaledWidth.toFixed(1)} × ${scaledHeight.toFixed(1)} ${specifications.dimensions}`;
+            document.getElementById('scaleFactor').textContent = `${imageScale.toFixed(3)}×`;
+            
+            // Show canvas and process button
+            container.style.display = 'block';
+            document.getElementById('processButton').classList.remove('hidden');
+            
+            // Show success message
+            const status = document.getElementById('imageStatus');
+            status.className = 'status-message success';
+            status.textContent = 'Image uploaded and scaled successfully!';
+            status.style.display = 'block';
+        }
+        
+        function processImage() {
+            // This would be where we process the image to extract the outline
+            // For now, we'll just show a success message
+            const status = document.getElementById('imageStatus');
+            status.className = 'status-message success';
+            status.textContent = 'Ready for outline tracing! (Next step: implement edge detection and point extraction)';
+            status.style.display = 'block';
+        }
+    </script>
+</body>
+</html>

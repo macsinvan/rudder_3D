@@ -1,0 +1,347 @@
+# FreeCAD Macro: Parametric Perforated Plate with UI Controls
+# Creates a plate with hexagonal or circular perforation patterns
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+from FreeCAD import Base
+
+class ParametricPerforatedPlate:
+    def __init__(self, obj):
+        """Add properties to the object"""
+        
+        # Plate dimensions
+        obj.addProperty("App::PropertyLength", "Length", "Dimensions", 
+                       "Length of the plate (X direction)").Length = 250.0
+        obj.addProperty("App::PropertyLength", "Width", "Dimensions", 
+                       "Width of the plate (Y direction)").Width = 150.0
+        obj.addProperty("App::PropertyLength", "Thickness", "Dimensions", 
+                       "Thickness of the plate (Z direction)").Thickness = 8.0
+        
+        # Pattern properties
+        obj.addProperty("App::PropertyEnumeration", "PatternType", "Pattern", 
+                       "Type of perforation pattern")
+        obj.PatternType = ['Hexagonal', 'Circular', 'Solid']
+        obj.PatternType = 'Hexagonal'  # Default
+        
+        # Hexagonal pattern properties
+        obj.addProperty("App::PropertyLength", "HexRadius", "Hexagonal Pattern", 
+                       "Radius of hexagonal holes (corner to corner / 2)").HexRadius = 10.0
+        obj.addProperty("App::PropertyLength", "HexWallThickness", "Hexagonal Pattern", 
+                       "Wall thickness between hexagons").HexWallThickness = 3.0
+        
+        # Circular pattern properties
+        obj.addProperty("App::PropertyLength", "HoleDiameter", "Circular Pattern", 
+                       "Diameter of circular holes").HoleDiameter = 10.0
+        obj.addProperty("App::PropertyLength", "HoleSpacing", "Circular Pattern", 
+                       "Center-to-center spacing of holes").HoleSpacing = 15.0
+        
+        # Edge margin
+        obj.addProperty("App::PropertyLength", "EdgeMargin", "Pattern", 
+                       "Minimum margin from plate edges").EdgeMargin = 5.0
+        
+        obj.Proxy = self
+        
+    def create_hex_point(self, center_x, center_y, radius, angle_offset=0):
+        """Create points for a hexagon"""
+        points = []
+        for i in range(6):
+            angle = math.radians(60 * i + angle_offset)
+            x = center_x + radius * math.cos(angle)
+            y = center_y + radius * math.sin(angle)
+            points.append(Base.Vector(x, y, 0))
+        return points
+    
+    def create_hexagonal_pattern(self, length, width, thickness, hex_radius, wall_thickness, margin):
+        """Create hexagonal perforation pattern"""
+        try:
+            # Create base plate
+            base_plate = Part.makeBox(length, width, thickness)
+            
+            # Calculate hex spacing
+            # For flat-top hexagons: width = 2 * radius * cos(30°)
+            hex_width = 2 * hex_radius * math.cos(math.radians(30))
+            hex_height = 2 * hex_radius
+            
+            # Add wall thickness to spacing
+            spacing_x = hex_width + wall_thickness
+            spacing_y = (hex_height * 0.75) + wall_thickness  # Hexagons overlap by 25%
+            
+            # Calculate number of hexagons that fit
+            nx = int((length - 2 * margin) / spacing_x) + 1
+            ny = int((width - 2 * margin) / spacing_y) + 1
+            
+            # Create holes to subtract
+            holes = []
+            hole_count = 0
+            
+            for row in range(ny):
+                for col in range(nx):
+                    # Calculate center position
+                    x = margin + col * spacing_x
+                    y = margin + row * spacing_y
+                    
+                    # Offset every other row for hexagonal packing
+                    if row % 2 == 1:
+                        x += spacing_x / 2
+                        # Skip if this pushes the hex too far right
+                        if x + hex_radius > length - margin:
+                            continue
+                    
+                    # Check if hex fits within margins
+                    if (x - hex_radius >= margin and x + hex_radius <= length - margin and
+                        y - hex_radius >= margin and y + hex_radius <= width - margin):
+                        
+                        # Create hexagon points (flat-top orientation)
+                        hex_points = self.create_hex_point(x, y, hex_radius * 0.9, 30)  # Slightly smaller for wall thickness
+                        hex_points.append(hex_points[0])  # Close the shape
+                        
+                        # Create wire and face
+                        hex_wire = Part.makePolygon(hex_points)
+                        hex_face = Part.Face(hex_wire)
+                        
+                        # Extrude to create hole
+                        hex_solid = hex_face.extrude(Base.Vector(0, 0, thickness + 2))
+                        hex_solid.translate(Base.Vector(0, 0, -1))  # Start below plate
+                        
+                        holes.append(hex_solid)
+                        hole_count += 1
+            
+            # Subtract all holes from base plate
+            if holes:
+                App.Console.PrintMessage(f"Creating {hole_count} hexagonal holes...\n")
+                
+                # Fuse all holes first for efficiency
+                if len(holes) > 1:
+                    holes_union = holes[0]
+                    for hole in holes[1:]:
+                        holes_union = holes_union.fuse(hole)
+                else:
+                    holes_union = holes[0]
+                
+                # Subtract from base plate
+                perforated = base_plate.cut(holes_union)
+                return perforated, hole_count
+            else:
+                App.Console.PrintWarning("No hexagonal holes created (plate too small or margins too large)\n")
+                return base_plate, 0
+                
+        except Exception as e:
+            App.Console.PrintError(f"Error creating hexagonal pattern: {str(e)}\n")
+            return Part.makeBox(length, width, thickness), 0
+    
+    def create_circular_pattern(self, length, width, thickness, hole_diameter, spacing, margin):
+        """Create circular perforation pattern"""
+        try:
+            # Create base plate
+            base_plate = Part.makeBox(length, width, thickness)
+            
+            # Calculate number of holes that fit
+            nx = int((length - 2 * margin) / spacing) + 1
+            ny = int((width - 2 * margin) / spacing) + 1
+            
+            # Adjust spacing to fit evenly
+            actual_spacing_x = (length - 2 * margin) / max(1, (nx - 1)) if nx > 1 else 0
+            actual_spacing_y = (width - 2 * margin) / max(1, (ny - 1)) if ny > 1 else 0
+            
+            # Create holes to subtract
+            holes = []
+            hole_count = 0
+            hole_radius = hole_diameter / 2
+            
+            for i in range(nx):
+                for j in range(ny):
+                    x = margin + i * actual_spacing_x if nx > 1 else length / 2
+                    y = margin + j * actual_spacing_y if ny > 1 else width / 2
+                    
+                    # Only create hole if it's fully within the margins
+                    if (x - hole_radius >= margin and x + hole_radius <= length - margin and
+                        y - hole_radius >= margin and y + hole_radius <= width - margin):
+                        
+                        # Create cylinder for hole
+                        cylinder = Part.makeCylinder(
+                            hole_radius,
+                            thickness + 2,  # Slightly taller than plate
+                            Base.Vector(x, y, -1),  # Start below plate
+                            Base.Vector(0, 0, 1)
+                        )
+                        holes.append(cylinder)
+                        hole_count += 1
+            
+            # Subtract all holes from base plate
+            if holes:
+                App.Console.PrintMessage(f"Creating {hole_count} circular holes...\n")
+                
+                # Fuse all holes first for efficiency
+                if len(holes) > 1:
+                    holes_union = holes[0]
+                    for hole in holes[1:]:
+                        holes_union = holes_union.fuse(hole)
+                else:
+                    holes_union = holes[0]
+                
+                # Subtract from base plate
+                perforated = base_plate.cut(holes_union)
+                return perforated, hole_count
+            else:
+                App.Console.PrintWarning("No circular holes created (plate too small or margins too large)\n")
+                return base_plate, 0
+                
+        except Exception as e:
+            App.Console.PrintError(f"Error creating circular pattern: {str(e)}\n")
+            return Part.makeBox(length, width, thickness), 0
+    
+    def execute(self, obj):
+        """Recalculate the shape when properties change"""
+        
+        # Get values from properties
+        length = float(obj.Length)
+        width = float(obj.Width)
+        thickness = float(obj.Thickness)
+        pattern_type = obj.PatternType
+        hex_radius = float(obj.HexRadius)
+        hex_wall = float(obj.HexWallThickness)
+        hole_diameter = float(obj.HoleDiameter)
+        hole_spacing = float(obj.HoleSpacing)
+        margin = float(obj.EdgeMargin)
+        
+        # Validate parameters
+        if length <= 0 or width <= 0 or thickness <= 0:
+            App.Console.PrintError("Plate dimensions must be positive\n")
+            return
+        
+        # Create plate based on pattern type
+        if pattern_type == 'Hexagonal':
+            shape, hole_count = self.create_hexagonal_pattern(
+                length, width, thickness, hex_radius, hex_wall, margin
+            )
+            App.Console.PrintMessage(f"Created hexagonal perforated plate with {hole_count} holes\n")
+            
+        elif pattern_type == 'Circular':
+            shape, hole_count = self.create_circular_pattern(
+                length, width, thickness, hole_diameter, hole_spacing, margin
+            )
+            App.Console.PrintMessage(f"Created circular perforated plate with {hole_count} holes\n")
+            
+        else:  # Solid
+            shape = Part.makeBox(length, width, thickness)
+            App.Console.PrintMessage("Created solid plate (no perforations)\n")
+        
+        obj.Shape = shape
+
+class ViewProviderPerforatedPlate:
+    def __init__(self, obj):
+        """Set view properties"""
+        obj.Proxy = self
+        
+    def attach(self, obj):
+        """Setup the view provider"""
+        return
+        
+    def updateData(self, fp, prop):
+        """Handle property changes"""
+        return
+        
+    def getDisplayModes(self, obj):
+        """Return available display modes"""
+        return ["Shaded"]
+        
+    def getDefaultDisplayMode(self):
+        """Return default display mode"""
+        return "Shaded"
+        
+    def setDisplayMode(self, mode):
+        """Set display mode"""
+        return mode
+        
+    def onChanged(self, vp, prop):
+        """Handle view property changes"""
+        return
+        
+    def getIcon(self):
+        """Return icon for tree view"""
+        return """
+            /* XPM */
+            static char * plate_xpm[] = {
+            "16 16 3 1",
+            "   c None",
+            ".  c #000000",
+            "+  c #808080",
+            "                ",
+            "  ............  ",
+            "  .+.+.+.+.+.+. ",
+            "  .+.+.+.+.+.+. ",
+            "  .+.+.+.+.+.+. ",
+            "  .+.+.+.+.+.+. ",
+            "  .+.+.+.+.+.+. ",
+            "  .+.+.+.+.+.+. ",
+            "  .+.+.+.+.+.+. ",
+            "  .+.+.+.+.+.+. ",
+            "  .+.+.+.+.+.+. ",
+            "  .+.+.+.+.+.+. ",
+            "  .+.+.+.+.+.+. ",
+            "  .+.+.+.+.+.+. ",
+            "  ............  ",
+            "                "};
+            """
+            
+    def dumps(self):
+        """Save callback"""
+        return None
+        
+    def loads(self, state):
+        """Restore callback"""
+        return None
+
+def makeParametricPerforatedPlate():
+    """Create a parametric perforated plate object"""
+    doc = App.ActiveDocument
+    if doc is None:
+        doc = App.newDocument("ParametricPlate")
+    
+    # Create the object
+    obj = doc.addObject("Part::FeaturePython", "PerforatedPlate")
+    
+    # Attach the parametric plate feature
+    ParametricPerforatedPlate(obj)
+    
+    # Attach the view provider
+    if App.GuiUp:
+        ViewProviderPerforatedPlate(obj.ViewObject)
+        obj.ViewObject.ShapeColor = (0.8, 0.8, 0.9)
+        obj.ViewObject.Transparency = 0
+    
+    # Recompute to create initial shape
+    doc.recompute()
+    
+    # Fit view
+    if App.GuiUp:
+        Gui.ActiveDocument.ActiveView.fitAll()
+    
+    # Print instructions
+    App.Console.PrintMessage("\n" + "="*60 + "\n")
+    App.Console.PrintMessage("Parametric Perforated Plate Created!\n")
+    App.Console.PrintMessage("="*60 + "\n")
+    App.Console.PrintMessage("Adjust parameters in the Property Editor (Data tab):\n")
+    App.Console.PrintMessage("\nDimensions:\n")
+    App.Console.PrintMessage("  - Length: Plate length (X direction)\n")
+    App.Console.PrintMessage("  - Width: Plate width (Y direction)\n")
+    App.Console.PrintMessage("  - Thickness: Plate thickness\n")
+    App.Console.PrintMessage("\nPattern:\n")
+    App.Console.PrintMessage("  - PatternType: Hexagonal, Circular, or Solid\n")
+    App.Console.PrintMessage("  - EdgeMargin: Minimum distance from edges\n")
+    App.Console.PrintMessage("\nHexagonal Pattern:\n")
+    App.Console.PrintMessage("  - HexRadius: Size of hexagonal holes\n")
+    App.Console.PrintMessage("  - HexWallThickness: Wall between hexagons\n")
+    App.Console.PrintMessage("\nCircular Pattern:\n")
+    App.Console.PrintMessage("  - HoleDiameter: Diameter of circular holes\n")
+    App.Console.PrintMessage("  - HoleSpacing: Center-to-center spacing\n")
+    App.Console.PrintMessage("\nChanges update automatically!\n")
+    App.Console.PrintMessage("="*60 + "\n\n")
+    
+    return obj
+
+# Run the macro
+if __name__ == "__main__":
+    plate = makeParametricPerforatedPlate()

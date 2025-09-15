@@ -1,7 +1,7 @@
 """
 Rudder Outline Builder - Scaled Version with Integrity Checks
 Processes Profile and Outline CSV files with LINE and ARC segments.
-Scales to standard dimensions (X=500mm, Z=1110mm) based on outline.
+Scales to standard dimensions based on BoxSize from outline CSV.
 Creates wire and shrunk wire for each, exports as STEP.
 """
 import os
@@ -11,10 +11,6 @@ import FreeCAD as App
 import FreeCADGui as Gui
 import Part
 from FreeCAD import Vector
-
-# Add helpers path and import CSV reader
-sys.path.insert(0, os.path.expanduser("~/Rudder_Code/helpers"))
-from read_rudder_outline_csv import read_csv
 
 # Configuration
 BOAT_NAME = "MackenSea"
@@ -32,8 +28,6 @@ PROFILE_STEP = f"{BOAT_NAME}_Profile.step"
 OUTLINE_STEP = f"{BOAT_NAME}_Outline.step"
 
 # Parameters
-TARGET_X = 500.0    # mm target width
-TARGET_Z = 1110.0   # mm target height
 OFFSET_DIST = -5.0  # mm inward offset
 GRID_SPACING = 10   # mm grid spacing
 GRID_MARGIN = 50    # mm beyond bounds
@@ -51,6 +45,150 @@ OUTLINE_COLORS = {
     'wire': (0.0, 0.5, 1.0),
     'shrunk': (0.0, 0.2, 0.8)
 }
+
+
+def read_csv(csv_path):
+    """
+    Read CSV file in the new cleaned format.
+    Returns (segments, parameters) where:
+    - segments is a list of tuples (segment_type, points)
+    - parameters is a dict of key-value pairs from the CSV
+    """
+    segments = []
+    parameters = {}
+    current_points = []  # Track all points continuously
+    
+    with open(csv_path, 'r') as f:
+        lines = f.readlines()
+    
+    in_segments = False
+    current_segment_type = None
+    current_segment_points = []
+    
+    for line in lines:
+        line = line.strip()
+        
+        # Skip comments and empty lines
+        if not line or line.startswith('#'):
+            continue
+        
+        # Check if we've reached the points section
+        if line == 'X,Y':
+            in_segments = True
+            continue
+        
+        if not in_segments:
+            # Parse parameters
+            if ',' in line:
+                # Special handling for BoxSize which has format: BoxSize,500,1110
+                if line.startswith('BoxSize,'):
+                    parts = line.split(',')
+                    if len(parts) >= 3:
+                        parameters['BoxSize'] = f"{parts[1].strip()},{parts[2].strip()}"
+                        parameters['BoxSize_X'] = float(parts[1].strip())
+                        parameters['BoxSize_Z'] = float(parts[2].strip())
+                else:
+                    # Regular parameter parsing
+                    parts = line.split(',', 1)
+                    if len(parts) == 2:
+                        key = parts[0].strip()
+                        value = parts[1].strip()
+                        parameters[key] = value
+        else:
+            # Parse segments and points
+            if line.startswith('SEGMENT'):
+                # Save previous segment if exists
+                if current_segment_type and current_segment_points:
+                    segments.append((current_segment_type.lower(), current_segment_points[:]))
+                
+                # Start new segment
+                parts = line.split(',')
+                if len(parts) >= 2:
+                    current_segment_type = parts[1].strip()
+                    current_segment_points = []
+                    
+                    # If this isn't the first segment, start with the last point from current_points
+                    if current_points:
+                        current_segment_points.append(current_points[-1])
+            elif ',' in line:
+                # Parse point
+                parts = line.split(',')
+                if len(parts) >= 2:
+                    try:
+                        x = float(parts[0].strip())
+                        y = float(parts[1].strip())
+                        point = (x, -y)  # Y from CSV becomes negative Z in 3D space
+                        current_segment_points.append(point)
+                        current_points.append(point)
+                    except ValueError:
+                        pass  # Skip invalid points
+    
+    # Save last segment
+    if current_segment_type and current_segment_points:
+        segments.append((current_segment_type.lower(), current_segment_points))
+    
+    # Validate that we have segments
+    if not segments:
+        raise ValueError("No valid segments found in CSV")
+    
+    return segments, parameters
+
+
+def calculate_scale_factors(segments, box_size_x=None, box_size_z=None):
+    """Calculate scale factors to achieve target dimensions."""
+    # Collect all points
+    all_points = []
+    for _, points in segments:
+        all_points.extend(points)
+    
+    # Check if we have points
+    if not all_points:
+        print(f"   ❌ ERROR: No points found in segments!")
+        return 1.0, 1.0, 0, 0, 0, 0
+    
+    # Find current bounds
+    xs = [p[0] for p in all_points]
+    zs = [p[1] for p in all_points]
+    
+    if not xs or not zs:
+        print(f"   ❌ ERROR: No valid coordinates found!")
+        return 1.0, 1.0, 0, 0, 0, 0
+    
+    max_x = max(xs)
+    min_z = min(zs)  # Will be negative
+    
+    # Check for zero dimensions
+    if max_x == 0:
+        print(f"   ❌ ERROR: Maximum X is 0!")
+        return 1.0, 1.0, 0, 0, 0, 0
+    
+    if min_z == 0:
+        print(f"   ❌ ERROR: Minimum Z is 0! All Z coordinates might be 0.")
+        print(f"   Z values found: {set(zs)}")
+        return 1.0, 1.0, 0, 0, 0, 0
+    
+    # Use BoxSize if provided, otherwise use original dimensions
+    if box_size_x is None:
+        box_size_x = max_x
+    if box_size_z is None:
+        box_size_z = abs(min_z)
+    
+    # Calculate scale factors
+    scale_x = box_size_x / max_x
+    scale_z = box_size_z / abs(min_z)
+    
+    print(f"\n📐 SCALING CALCULATIONS:")
+    print(f"   Original dimensions:")
+    print(f"      X max = {max_x:.1f}mm")
+    print(f"      Z min = {min_z:.1f}mm (height = {abs(min_z):.1f}mm)")
+    print(f"   Target dimensions (from BoxSize):")
+    print(f"      X = {box_size_x}mm")
+    print(f"      Z = {box_size_z}mm")
+    print(f"   Scale factors:")
+    print(f"      X scale = {scale_x:.4f} ({scale_x*100:.1f}%)")
+    print(f"      Z scale = {scale_z:.4f} ({scale_z*100:.1f}%)")
+    
+    return scale_x, scale_z, max_x, abs(min_z), box_size_x, box_size_z
 
 
 def validate_shape(shape, name):
@@ -137,37 +275,6 @@ def validate_shape(shape, name):
     return True
 
 
-def calculate_scale_factors(segments):
-    """Calculate scale factors to achieve target dimensions."""
-    # Collect all points
-    all_points = []
-    for _, points in segments:
-        all_points.extend(points)
-    
-    # Find current bounds
-    xs = [p[0] for p in all_points]
-    zs = [p[1] for p in all_points]
-    max_x = max(xs)
-    min_z = min(zs)  # Will be negative
-    
-    # Calculate scale factors
-    scale_x = TARGET_X / max_x
-    scale_z = TARGET_Z / abs(min_z)
-    
-    print(f"\n📏 SCALING CALCULATIONS:")
-    print(f"   Original dimensions:")
-    print(f"      X max = {max_x:.1f}mm")
-    print(f"      Z min = {min_z:.1f}mm (height = {abs(min_z):.1f}mm)")
-    print(f"   Target dimensions:")
-    print(f"      X = {TARGET_X}mm")
-    print(f"      Z = {TARGET_Z}mm")
-    print(f"   Scale factors:")
-    print(f"      X scale = {scale_x:.4f} ({scale_x*100:.1f}%)")
-    print(f"      Z scale = {scale_z:.4f} ({scale_z*100:.1f}%)")
-    
-    return scale_x, scale_z, max_x, abs(min_z)
-
-
 def create_edges(segments, scale_x=1.0, scale_z=1.0):
     """Create FreeCAD edges from segments with optional scaling."""
     edges = []
@@ -179,20 +286,21 @@ def create_edges(segments, scale_x=1.0, scale_z=1.0):
                 p2 = Vector(points[i+1][0] * scale_x, 0, points[i+1][1] * scale_z)
                 edges.append(Part.makeLine(p1, p2))
         elif seg_type == 'arc':
-            p1 = Vector(points[0][0] * scale_x, 0, points[0][1] * scale_z)
-            p2 = Vector(points[1][0] * scale_x, 0, points[1][1] * scale_z)
-            p3 = Vector(points[2][0] * scale_x, 0, points[2][1] * scale_z)
-            edges.append(Part.Arc(p1, p2, p3).toShape())
+            if len(points) >= 3:
+                p1 = Vector(points[0][0] * scale_x, 0, points[0][1] * scale_z)
+                p2 = Vector(points[1][0] * scale_x, 0, points[1][1] * scale_z)
+                p3 = Vector(points[2][0] * scale_x, 0, points[2][1] * scale_z)
+                edges.append(Part.Arc(p1, p2, p3).toShape())
     
     return edges
 
 
-def add_dimension_labels(doc, original_x, original_z, scale_x, scale_z):
+def add_dimension_labels(doc, original_x, original_z, scale_x, scale_z, target_x, target_z):
     """Add dimension labels showing original and scaled sizes."""
     # Create text showing dimensions
     info_text = f"""SCALING INFO:
 Original: {original_x:.1f} x {original_z:.1f}mm
-Scaled: {TARGET_X:.0f} x {TARGET_Z:.0f}mm
+Scaled: {target_x:.0f} x {target_z:.0f}mm
 Scale X: {scale_x:.3f} ({scale_x*100:.0f}%)
 Scale Z: {scale_z:.3f} ({scale_z*100:.0f}%)"""
     
@@ -205,7 +313,7 @@ Scale Z: {scale_z:.3f} ({scale_z*100:.0f}%)"""
     
     # Add dimension lines for scaled outline
     # Horizontal dimension (X)
-    x_dim_line = Part.makeLine(Vector(0, 0, 20), Vector(TARGET_X, 0, 20))
+    x_dim_line = Part.makeLine(Vector(0, 0, 20), Vector(target_x, 0, 20))
     x_dim_obj = doc.addObject("Part::Feature", "X_Dimension")
     x_dim_obj.Shape = x_dim_line
     x_dim_obj.ViewObject.ShapeColor = (0.0, 0.0, 0.0)
@@ -213,13 +321,13 @@ Scale Z: {scale_z:.3f} ({scale_z*100:.0f}%)"""
     
     # X dimension label
     x_label = doc.addObject("App::Annotation", "X_Label")
-    x_label.LabelText = f"{TARGET_X:.0f}mm"
-    x_label.Position = Vector(TARGET_X/2, 0, 30)
+    x_label.LabelText = f"{target_x:.0f}mm"
+    x_label.Position = Vector(target_x/2, 0, 30)
     x_label.ViewObject.TextColor = (0.0, 0.0, 0.0)
     x_label.ViewObject.FontSize = 28
     
     # Vertical dimension (Z)
-    z_dim_line = Part.makeLine(Vector(-20, 0, 0), Vector(-20, 0, -TARGET_Z))
+    z_dim_line = Part.makeLine(Vector(-20, 0, 0), Vector(-20, 0, -target_z))
     z_dim_obj = doc.addObject("Part::Feature", "Z_Dimension")
     z_dim_obj.Shape = z_dim_line
     z_dim_obj.ViewObject.ShapeColor = (0.0, 0.0, 0.0)
@@ -227,8 +335,8 @@ Scale Z: {scale_z:.3f} ({scale_z*100:.0f}%)"""
     
     # Z dimension label
     z_label = doc.addObject("App::Annotation", "Z_Label")
-    z_label.LabelText = f"{TARGET_Z:.0f}mm"
-    z_label.Position = Vector(-40, 0, -TARGET_Z/2)
+    z_label.LabelText = f"{target_z:.0f}mm"
+    z_label.Position = Vector(-40, 0, -target_z/2)
     z_label.ViewObject.TextColor = (0.0, 0.0, 0.0)
     z_label.ViewObject.FontSize = 28
 
@@ -239,16 +347,16 @@ def process_csv(csv_filename, object_prefix, colors, doc, scale_x=1.0, scale_z=1
     
     if not os.path.exists(csv_path):
         print(f"⚠️ {csv_filename} not found, skipping")
-        return None, None, None
+        return None, None, None, {}
     
     print(f"📂 Processing {csv_filename}")
     
     # Parse CSV
     try:
-        segments = read_csv(csv_path)
+        segments, parameters = read_csv(csv_path)
     except ValueError as e:
         print(f"❌ {csv_filename}: {e}")
-        return None, None, None
+        return None, None, None, {}
     
     # Create scaled edges and wire
     edges = create_edges(segments, scale_x, scale_z)
@@ -266,7 +374,7 @@ def process_csv(csv_filename, object_prefix, colors, doc, scale_x=1.0, scale_z=1
     # Validate wire
     if not validate_shape(wire, f"{object_prefix} wire"):
         print(f"   ❌ Wire validation failed, aborting")
-        return None, None, None
+        return None, None, None, parameters
     
     # Report scaled dimensions
     bbox = wire.BoundBox
@@ -310,7 +418,7 @@ def process_csv(csv_filename, object_prefix, colors, doc, scale_x=1.0, scale_z=1
         
     except Exception as e:
         print(f"❌ Shrunk wire failed: {e}")
-        return None, None, None
+        return None, None, None, parameters
     
     # Get scaled points for grid
     all_points = []
@@ -318,7 +426,7 @@ def process_csv(csv_filename, object_prefix, colors, doc, scale_x=1.0, scale_z=1
         for point in points:
             all_points.append((point[0] * scale_x, point[1] * scale_z))
     
-    return objects, all_points, segments
+    return objects, all_points, segments, parameters
 
 
 def draw_grid(points, doc):
@@ -360,7 +468,6 @@ def draw_grid(points, doc):
 def run():
     """Main entry point."""
     print(f"\n🚤 Rudder Outline Builder v{VERSION} for {BOAT_NAME}")
-    print(f"📏 Scaling to standard dimensions: X={TARGET_X}mm, Z={TARGET_Z}mm")
     
     # Ensure output folder
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
@@ -373,30 +480,52 @@ def run():
     Gui.activateWorkbench("PartWorkbench")
     
     # Process Outline FIRST to calculate scale factors
-    print("\n📋 OUTLINE (calculating scale factors):")
+    print("\n📋 OUTLINE (reading BoxSize and calculating scale factors):")
     outline_path = f"{INPUT_FOLDER}/{OUTLINE_CSV}"
+    box_size_x = None
+    box_size_z = None
+    
     if os.path.exists(outline_path):
         try:
-            outline_segments = read_csv(outline_path)
-            scale_x, scale_z, orig_x, orig_z = calculate_scale_factors(outline_segments)
+            outline_segments, outline_params = read_csv(outline_path)
+            
+            # Debug: Show parsed parameters
+            print(f"   Parsed parameters: {list(outline_params.keys())}")
+            
+            # Get BoxSize from parameters
+            if 'BoxSize_X' in outline_params and 'BoxSize_Z' in outline_params:
+                box_size_x = outline_params['BoxSize_X']
+                box_size_z = outline_params['BoxSize_Z']
+                print(f"   Found BoxSize in outline: {box_size_x} x {box_size_z}mm")
+            else:
+                print(f"   ⚠️ BoxSize not found in outline CSV, using original dimensions")
+                if 'BoxSize' in outline_params:
+                    print(f"   (BoxSize raw value: {outline_params['BoxSize']})")
+            
+            print(f"   Found {len(outline_segments)} segments")
+            
+            scale_x, scale_z, orig_x, orig_z, target_x, target_z = calculate_scale_factors(
+                outline_segments, box_size_x, box_size_z)
         except ValueError as e:
             print(f"❌ Failed to calculate scale factors: {e}")
-            scale_x, scale_z, orig_x, orig_z = 1.0, 1.0, 0, 0
+            scale_x, scale_z, orig_x, orig_z, target_x, target_z = 1.0, 1.0, 0, 0, 0, 0
     else:
         print(f"⚠️ {OUTLINE_CSV} not found, using scale 1.0")
-        scale_x, scale_z, orig_x, orig_z = 1.0, 1.0, 0, 0
+        scale_x, scale_z, orig_x, orig_z, target_x, target_z = 1.0, 1.0, 0, 0, 0, 0
     
     # Process Outline with scaling
     print("\n📋 OUTLINE (applying scaling):")
-    outline_objects, outline_points, _ = process_csv(OUTLINE_CSV, "Outline", OUTLINE_COLORS, doc, scale_x, scale_z)
+    outline_objects, outline_points, _, outline_params = process_csv(
+        OUTLINE_CSV, "Outline", OUTLINE_COLORS, doc, scale_x, scale_z)
     
     # Process Profile with SAME scale factors
     print("\n📋 PROFILE (using same scale factors):")
-    profile_objects, profile_points, _ = process_csv(PROFILE_CSV, "Profile", PROFILE_COLORS, doc, scale_x, scale_z)
+    profile_objects, profile_points, _, profile_params = process_csv(
+        PROFILE_CSV, "Profile", PROFILE_COLORS, doc, scale_x, scale_z)
     
     # Add dimension labels to show scaling
     if scale_x != 1.0 or scale_z != 1.0:
-        add_dimension_labels(doc, orig_x, orig_z, scale_x, scale_z)
+        add_dimension_labels(doc, orig_x, orig_z, scale_x, scale_z, target_x, target_z)
     
     # Export STEP files (scaled versions) - with final validation
     export_success = True
@@ -441,8 +570,15 @@ def run():
     
     print(f"\n📊 FINAL SUMMARY:")
     print(f"   Original size: {orig_x:.1f} x {orig_z:.1f}mm")
-    print(f"   Scaled size: {TARGET_X:.0f} x {TARGET_Z:.0f}mm")
+    print(f"   Scaled size: {target_x:.0f} x {target_z:.0f}mm")
     print(f"   Scale factors: X={scale_x:.4f}, Z={scale_z:.4f}")
+    
+    # Print parsed parameters if available
+    if outline_params:
+        print(f"\n📋 Outline Parameters:")
+        for key, value in outline_params.items():
+            if not key.startswith('BoxSize_'):
+                print(f"   {key}: {value}")
     
     if export_success:
         print(f"\n✅ {BOAT_NAME} complete!")
