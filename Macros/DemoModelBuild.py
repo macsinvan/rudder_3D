@@ -28,7 +28,7 @@ VERSION = "2.5.2"  # Z-holes now use foam configuration
 
 # Stock Positioning (mm)
 STOCK_CONFIG = {
-    'post_center_x': 380,
+    'post_center_x': 330,
     'post_top_z': -65,
     'post_diameter': 44,
     'post_diameter_delta': 4,  # Difference for cutout

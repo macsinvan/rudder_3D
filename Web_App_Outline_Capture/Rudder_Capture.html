@@ -19,7 +19,7 @@
         }
         
         .app-container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
             background: white;
             border-radius: 12px;
@@ -44,284 +44,253 @@
             font-size: 1.1em;
         }
         
-        .content {
-            padding: 40px;
-        }
-        
-        /* Start Screen */
-        .start-screen {
-            text-align: center;
-            padding: 60px 20px;
-        }
-        
-        .start-screen h2 {
-            color: #333;
-            margin-bottom: 40px;
-        }
-        
-        .start-buttons {
+        .toolbar {
+            background: #f8f9fa;
+            padding: 15px;
+            border-bottom: 2px solid #e0e0e0;
             display: flex;
-            gap: 30px;
-            justify-content: center;
+            gap: 10px;
             flex-wrap: wrap;
         }
         
-        .start-button {
-            padding: 40px;
+        .toolbar button {
+            padding: 10px 20px;
             background: white;
-            border: 2px solid #e0e0e0;
-            border-radius: 12px;
+            color: #333;
+            border: 2px solid #ddd;
+            border-radius: 6px;
             cursor: pointer;
             transition: all 0.3s;
-            min-width: 200px;
+            font-weight: 500;
         }
         
-        .start-button:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        .toolbar button:hover {
+            background: #2196F3;
+            color: white;
             border-color: #2196F3;
         }
         
-        .start-button .icon {
-            font-size: 48px;
-            margin-bottom: 15px;
+        .toolbar button.primary {
+            background: #2196F3;
+            color: white;
+            border-color: #2196F3;
         }
         
-        .start-button .title {
-            font-size: 20px;
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 10px;
+        .toolbar button.danger {
+            background: #f44336;
+            color: white;
+            border-color: #f44336;
         }
         
-        .start-button .description {
-            font-size: 14px;
-            color: #666;
+        .content {
+            display: flex;
+            gap: 20px;
+            padding: 20px;
+            min-height: 600px;
         }
         
-        /* Form Screen */
-        .form-screen {
-            display: none;
+        .left-panel {
+            flex: 1;
+            min-width: 400px;
         }
         
-        .form-section {
-            margin-bottom: 30px;
+        .right-panel {
+            flex: 1;
+            min-width: 500px;
         }
         
-        .form-section h3 {
-            color: #333;
+        .panel-section {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
             margin-bottom: 20px;
+        }
+        
+        .panel-section h3 {
+            color: #333;
+            margin-bottom: 15px;
             padding-bottom: 10px;
             border-bottom: 2px solid #e0e0e0;
         }
         
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        
         .form-group {
-            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
         }
         
         .form-group label {
-            display: block;
             color: #555;
             font-weight: 500;
-            margin-bottom: 8px;
+            margin-bottom: 5px;
+            font-size: 14px;
         }
         
         .form-group input,
-        .form-group textarea,
         .form-group select {
-            width: 100%;
-            padding: 10px;
+            padding: 8px;
             border: 2px solid #e0e0e0;
-            border-radius: 6px;
+            border-radius: 4px;
             font-size: 14px;
             transition: border-color 0.3s;
         }
         
         .form-group input:focus,
-        .form-group textarea:focus,
         .form-group select:focus {
             outline: none;
             border-color: #2196F3;
         }
         
-        .form-group textarea {
-            resize: vertical;
-            min-height: 100px;
+        .box-size-input {
+            display: flex;
+            gap: 10px;
+            align-items: center;
         }
         
-        .form-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
+        .box-size-input input {
+            flex: 1;
         }
         
-        .error {
-            color: #f44336;
-            font-size: 12px;
-            margin-top: 5px;
-        }
-        
-        .success {
-            color: #4CAF50;
-            font-size: 12px;
-            margin-top: 5px;
-        }
-        
-        /* Image Upload Screen */
-        .image-screen {
-            display: none;
-        }
-        
-        .upload-area {
-            border: 3px dashed #2196F3;
-            border-radius: 12px;
-            padding: 60px 20px;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.3s;
-            background: #f8f9fa;
-        }
-        
-        .upload-area:hover {
-            background: #e3f2fd;
-            border-color: #1976D2;
-        }
-        
-        .upload-area.dragging {
-            background: #e3f2fd;
-            border-color: #1976D2;
-        }
-        
-        .upload-area .icon {
-            font-size: 64px;
-            color: #2196F3;
-            margin-bottom: 20px;
-        }
-        
-        .upload-area .text {
-            font-size: 18px;
-            color: #333;
-            margin-bottom: 10px;
-        }
-        
-        .upload-area .subtext {
-            font-size: 14px;
-            color: #666;
-        }
-        
-        #fileInput {
-            display: none;
-        }
-        
-        /* Canvas Preview */
-        .canvas-container {
-            display: none;
-            margin-top: 30px;
-            background: white;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            padding: 20px;
-        }
-        
-        #previewCanvas {
-            display: block;
-            margin: 0 auto;
+        .segments-container {
             border: 1px solid #e0e0e0;
-        }
-        
-        .canvas-info {
-            margin-top: 20px;
-            padding: 15px;
+            border-radius: 4px;
+            padding: 10px;
             background: #f8f9fa;
-            border-radius: 6px;
         }
         
-        .canvas-info .info-row {
+        .segment-block {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            padding: 10px;
+        }
+        
+        .segment-header {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 8px;
+            align-items: center;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #e0e0e0;
         }
         
-        .canvas-info .info-label {
-            font-weight: 500;
-            color: #555;
+        .segment-type {
+            font-weight: 600;
+            color: #2196F3;
         }
         
-        .canvas-info .info-value {
-            color: #333;
-        }
-        
-        .rudder-box {
-            background: #f0f7ff;
-            border: 2px solid #2196F3;
-            border-radius: 8px;
-            padding: 20px;
-            margin: 20px 0;
-        }
-        
-        .rudder-box h4 {
-            color: #1976D2;
-            margin-bottom: 15px;
-            font-size: 16px;
-        }
-        
-        /* Buttons */
-        .button-group {
+        .point-row {
             display: flex;
-            gap: 15px;
-            margin-top: 30px;
-            justify-content: flex-end;
+            gap: 10px;
+            margin-bottom: 8px;
+            align-items: center;
+            background: #f8f9fa;
+            padding: 6px;
+            border-radius: 3px;
         }
         
-        button {
-            padding: 12px 30px;
-            background: #2196F3;
+        .point-row input {
+            width: 80px;
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        
+        .point-row button {
+            padding: 5px 10px;
+            background: #f44336;
             color: white;
             border: none;
-            border-radius: 6px;
-            font-size: 16px;
-            font-weight: 500;
+            border-radius: 3px;
             cursor: pointer;
-            transition: all 0.3s;
         }
         
-        button:hover {
-            background: #1976D2;
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(33, 150, 243, 0.3);
+        .point-row button:hover {
+            background: #d32f2f;
         }
         
-        button:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-            transform: none;
+        .point-label {
+            font-size: 12px;
+            color: #666;
+            min-width: 40px;
         }
         
-        button.secondary {
-            background: #757575;
-        }
-        
-        button.secondary:hover {
-            background: #616161;
-        }
-        
-        button.success {
+        .add-segment-btn, .add-point-btn {
+            padding: 10px;
             background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 10px;
+            font-weight: 500;
         }
         
-        button.success:hover {
+        .add-segment-btn:hover, .add-point-btn:hover {
             background: #45a049;
         }
         
-        .hidden {
-            display: none !important;
+        .canvas-container {
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            background: white;
+            position: relative;
         }
         
-        /* Status Messages */
+        #rudderCanvas {
+            display: block;
+            margin: 0 auto;
+            border: 1px solid #ddd;
+            cursor: crosshair;
+            background: white;
+        }
+        
+        .canvas-info {
+            margin-top: 15px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #666;
+        }
+        
+        .canvas-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .canvas-controls button {
+            padding: 8px 15px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        .canvas-controls button:hover {
+            background: #f0f0f0;
+        }
+        
+        .canvas-controls button.active {
+            background: #2196F3;
+            color: white;
+        }
+        
         .status-message {
             padding: 15px;
             border-radius: 6px;
-            margin-top: 20px;
+            margin-bottom: 15px;
             display: none;
         }
         
@@ -338,509 +307,734 @@
             border: 1px solid #f5c6cb;
             display: block;
         }
+        
+        .status-message.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+        
+        /* File input styling */
+        .file-input-wrapper {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .file-input-wrapper input[type=file] {
+            position: absolute;
+            left: -9999px;
+        }
+        
+        .file-input-label {
+            padding: 10px 20px;
+            background: white;
+            color: #333;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 500;
+            display: inline-block;
+        }
+        
+        .file-input-label:hover {
+            background: #2196F3;
+            color: white;
+            border-color: #2196F3;
+        }
     </style>
 </head>
 <body>
     <div class="app-container">
         <div class="header">
             <h1>⚓ Rudder Outline Design Tool</h1>
-            <p>Create and edit rudder profile specifications</p>
+            <p>Create and edit rudder profile specifications with coordinate points</p>
         </div>
         
-        <div class="content">
-            <!-- Start Screen -->
-            <div class="start-screen" id="startScreen">
-                <h2>Welcome! Choose an option to begin:</h2>
-                <div class="start-buttons">
-                    <div class="start-button" onclick="startNewDesign()">
-                        <div class="icon">📐</div>
-                        <div class="title">New Design</div>
-                        <div class="description">Start from scratch with a new rudder outline</div>
+        <div class="toolbar">
+            <button onclick="clearAll()" class="danger">🗑️ Clear All</button>
+            <div class="file-input-wrapper">
+                <input type="file" id="importFile" accept=".csv,.txt" onchange="importFile(event)">
+                <label for="importFile" class="file-input-label">📁 Import CSV</label>
+            </div>
+            <button onclick="exportCSV()" class="primary">💾 Export CSV</button>
+            <button onclick="generateExamplePoints()">📐 Load Example</button>
+            <button onclick="toggleGridSnap()" id="gridSnapBtn">📏 Grid Snap: OFF</button>
+        </div>
+        
+        <div id="statusMessage" class="status-message" style="margin: 20px;"></div>
+        
+        <div class="content" style="display: block;">
+            <div class="panel-section" style="margin-bottom: 20px;">
+                <h3>Parameters</h3>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="customer">Customer*</label>
+                        <input type="text" id="customer" placeholder="Customer name">
                     </div>
-                    <div class="start-button" onclick="openExistingDesign()">
-                        <div class="icon">📂</div>
-                        <div class="title">Open Existing</div>
-                        <div class="description">Load and edit an existing design file</div>
+                    <div class="form-group">
+                        <label for="boatName">Boat Name*</label>
+                        <input type="text" id="boatName" placeholder="Boat name">
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="version">Version*</label>
+                        <input type="text" id="version" placeholder="1.0" value="1.0">
+                    </div>
+                    <div class="form-group">
+                        <label for="date">Date*</label>
+                        <input type="date" id="date">
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="brand">Brand*</label>
+                        <input type="text" id="brand" placeholder="e.g. Nautitech">
+                    </div>
+                    <div class="form-group">
+                        <label for="model">Model*</label>
+                        <input type="text" id="model" placeholder="e.g. 44 Open">
+                    </div>
+                    <div class="form-group">
+                        <label for="year">Year</label>
+                        <input type="number" id="year" placeholder="2024" min="1900" max="2100">
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="boxSize">Box Size (Width,Height in mm)*</label>
+                        <div class="box-size-input">
+                            <input type="number" id="boxWidth" placeholder="Width" min="0">
+                            <span>×</span>
+                            <input type="number" id="boxHeight" placeholder="Height" min="0">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="thicknessRatio">Thickness Ratio</label>
+                        <input type="number" id="thicknessRatio" placeholder="0.16" step="0.01" min="0" max="1">
                     </div>
                 </div>
             </div>
             
-            <!-- Form Screen -->
-            <div class="form-screen" id="formScreen">
-                <div class="form-section">
-                    <h3>Document & Owner Information</h3>
-                    
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="docVersion">Document Version*</label>
-                            <input type="text" id="docVersion" placeholder="e.g. 1.0" value="1.0">
-                            <span class="error" id="docVersionError"></span>
+            <div style="display: flex; gap: 20px;">
+                <div class="left-panel">
+                    <div class="panel-section">
+                        <h3>Outline Segments</h3>
+                        <div class="canvas-controls">
+                            <button onclick="closeLoop()">🔄 Close Loop</button>
                         </div>
-                        <div class="form-group">
-                            <label for="ownerName">Owner's Name*</label>
-                            <input type="text" id="ownerName" placeholder="Enter owner's full name">
-                            <span class="error" id="ownerNameError"></span>
+                        <div class="segments-container" id="segmentsContainer">
+                            <!-- Segments will be added here dynamically -->
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            <button class="add-segment-btn" onclick="addSegment('LINE')" style="flex: 1;">+ Add LINE Segment</button>
+                            <button class="add-segment-btn" onclick="addSegment('ARC')" style="flex: 1;">+ Add ARC Segment</button>
                         </div>
                     </div>
                 </div>
                 
-                <div class="form-section">
-                    <h3>Boat Information</h3>
-                    
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="boatName">Boat Name*</label>
-                            <input type="text" id="boatName" placeholder="Enter boat name">
-                            <span class="error" id="boatNameError"></span>
-                        </div>
-                        <div class="form-group">
-                            <label for="boatBrand">Boat Brand*</label>
-                            <input type="text" id="boatBrand" placeholder="e.g. Beneteau, Catalina, Jeanneau">
-                            <span class="error" id="boatBrandError"></span>
-                        </div>
-                    </div>
-                    
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="boatModel">Boat Model*</label>
-                            <input type="text" id="boatModel" placeholder="e.g. Oceanis 46.1, 445">
-                            <span class="error" id="boatModelError"></span>
-                        </div>
-                        <div class="form-group">
-                            <label for="boatYear">Boat Year</label>
-                            <input type="number" id="boatYear" placeholder="e.g. 2022" min="1900" max="2030">
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="form-section">
-                    <h3>Rudder Specifications</h3>
-                    
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="dimensions">Dimensions*</label>
-                            <select id="dimensions">
-                                <option value="mm">Millimeters (mm)</option>
-                                <option value="inches">Inches</option>
-                            </select>
-                        </div>
-                    </div>
-                    
-                    <div class="rudder-box">
-                        <h4>Rudder "Box" Dimensions</h4>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="rudderHeight">Height*</label>
-                                <input type="number" id="rudderHeight" placeholder="Height in selected units" step="0.1" min="0">
-                                <span class="error" id="rudderHeightError"></span>
-                            </div>
-                            <div class="form-group">
-                                <label for="rudderWidth">Width*</label>
-                                <input type="number" id="rudderWidth" placeholder="Width in selected units" step="0.1" min="0">
-                                <span class="error" id="rudderWidthError"></span>
+                <div class="right-panel">
+                    <div class="panel-section">
+                        <h3>Visual Preview</h3>
+                        <div class="canvas-container">
+                            <canvas id="rudderCanvas" width="800" height="800"></canvas>
+                            <div class="canvas-info">
+                                <strong>Info:</strong> Origin (0,0) is at top-left. LINE segments need 1 point. ARC segments need 2 points (apex, end).
+                                Grid size: 10mm. Total points: <span id="pointCount">0</span>
                             </div>
                         </div>
                     </div>
-                    
-                    <div class="form-group">
-                        <label for="nacaRatio">NACA Ratio (%)</label>
-                        <input type="number" id="nacaRatio" placeholder="e.g. 15 for NACA 0015" min="0" max="100" step="0.1">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="additionalNotes">Additional Notes</label>
-                        <textarea id="additionalNotes" placeholder="Any additional specifications, modifications, or important notes about this rudder..."></textarea>
-                    </div>
                 </div>
-                
-                <div class="button-group">
-                    <button class="secondary" onclick="backToStart()">Back</button>
-                    <button onclick="saveSpecifications()">Save Specifications</button>
-                    <button id="nextButton" class="success hidden" onclick="goToImageUpload()">Next: Upload Image →</button>
-                </div>
-                
-                <div class="status-message" id="formStatus"></div>
-            </div>
-            
-            <!-- Image Upload Screen -->
-            <div class="image-screen" id="imageScreen">
-                <h3>Upload Rudder Outline Image</h3>
-                <p style="color: #666; margin-bottom: 20px;">Upload an image of your rudder outline. It will be automatically scaled to match your specifications.</p>
-                
-                <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
-                    <div class="icon">📷</div>
-                    <div class="text">Click to upload or drag & drop</div>
-                    <div class="subtext">Supports JPG, PNG formats</div>
-                </div>
-                
-                <input type="file" id="fileInput" accept="image/jpeg,image/jpg,image/png">
-                
-                <div class="canvas-container" id="canvasContainer">
-                    <canvas id="previewCanvas"></canvas>
-                    <div class="canvas-info">
-                        <div class="info-row">
-                            <span class="info-label">Original Size:</span>
-                            <span class="info-value" id="originalSize">-</span>
-                        </div>
-                        <div class="info-row">
-                            <span class="info-label">Scaled Size:</span>
-                            <span class="info-value" id="scaledSize">-</span>
-                        </div>
-                        <div class="info-row">
-                            <span class="info-label">Scale Factor:</span>
-                            <span class="info-value" id="scaleFactor">-</span>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="button-group">
-                    <button class="secondary" onclick="backToForm()">Back</button>
-                    <button id="processButton" class="success hidden" onclick="processImage()">Process Outline</button>
-                </div>
-                
-                <div class="status-message" id="imageStatus"></div>
             </div>
         </div>
     </div>
     
     <script>
-        // State management
-        let currentScreen = 'start';
-        let specifications = {};
-        let uploadedImage = null;
-        let imageScale = 1;
+        // Global variables
+        let segments = [];  // Array of {type: 'LINE'|'ARC', points: []}
+        let gridSnap = false;
+        let scale = 1;
         
-        // Screen navigation
-        function showScreen(screenName) {
-            document.getElementById('startScreen').style.display = 'none';
-            document.getElementById('formScreen').style.display = 'none';
-            document.getElementById('imageScreen').style.display = 'none';
-            
-            switch(screenName) {
-                case 'start':
-                    document.getElementById('startScreen').style.display = 'block';
-                    break;
-                case 'form':
-                    document.getElementById('formScreen').style.display = 'block';
-                    break;
-                case 'image':
-                    document.getElementById('imageScreen').style.display = 'block';
-                    break;
-            }
-            currentScreen = screenName;
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('date').value = today;
+            drawCanvas();
+        });
+        
+        // Canvas setup
+        const canvas = document.getElementById('rudderCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        function toggleGridSnap() {
+            gridSnap = !gridSnap;
+            const btn = document.getElementById('gridSnapBtn');
+            btn.textContent = `📏 Grid Snap: ${gridSnap ? 'ON' : 'OFF'}`;
+            btn.classList.toggle('active', gridSnap);
+            drawCanvas();
         }
         
-        function startNewDesign() {
-            showScreen('form');
-        }
-        
-        function openExistingDesign() {
-            // Create a file input for CSV
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.csv,.txt';
-            input.onchange = function(e) {
-                const file = e.target.files[0];
-                if (file) {
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        parseExistingFile(e.target.result);
-                    };
-                    reader.readAsText(file);
-                }
-            };
-            input.click();
-        }
-        
-        function parseExistingFile(content) {
-            // Parse the CSV header to fill in the form
-            const lines = content.split('\n');
-            
-            // Parse header comments for our specific fields
-            for (let line of lines) {
-                if (line.startsWith('#')) {
-                    // Document Version
-                    if (line.includes('Document Version:')) {
-                        const match = line.match(/Document Version:\s*(.+)/i);
-                        if (match) document.getElementById('docVersion').value = match[1].trim();
-                    }
-                    // Owner's Name
-                    if (line.includes("Owner's Name:") || line.includes("Owners Name:")) {
-                        const match = line.match(/Owner['s]* Name:\s*(.+)/i);
-                        if (match) document.getElementById('ownerName').value = match[1].trim();
-                    }
-                    // Boat Name
-                    if (line.includes('Boat Name:') || line.includes('Boat name:')) {
-                        const match = line.match(/Boat [Nn]ame:\s*(.+)/i);
-                        if (match) document.getElementById('boatName').value = match[1].trim();
-                    }
-                    // Boat Brand
-                    if (line.includes('Boat Brand:')) {
-                        const match = line.match(/Boat Brand:\s*(.+)/i);
-                        if (match) document.getElementById('boatBrand').value = match[1].trim();
-                    }
-                    // Boat Model
-                    if (line.includes('Boat Model:')) {
-                        const match = line.match(/Boat Model:\s*(.+)/i);
-                        if (match) document.getElementById('boatModel').value = match[1].trim();
-                    }
-                    // Boat Year
-                    if (line.includes('Boat Year:')) {
-                        const match = line.match(/Boat Year:\s*(\d+)/i);
-                        if (match) document.getElementById('boatYear').value = match[1];
-                    }
-                    // Dimensions
-                    if (line.includes('Dimensions:')) {
-                        const match = line.match(/Dimensions:\s*(\w+)/i);
-                        if (match) {
-                            const unit = match[1].toLowerCase();
-                            if (unit.includes('mm')) document.getElementById('dimensions').value = 'mm';
-                            else if (unit.includes('inch')) document.getElementById('dimensions').value = 'inches';
-                        }
-                    }
-                    // Rudder Height
-                    if (line.includes('Height:')) {
-                        const match = line.match(/Height:\s*([\d.]+)/i);
-                        if (match) document.getElementById('rudderHeight').value = match[1];
-                    }
-                    // Rudder Width
-                    if (line.includes('Width:')) {
-                        const match = line.match(/Width:\s*([\d.]+)/i);
-                        if (match) document.getElementById('rudderWidth').value = match[1];
-                    }
-                    // NACA Ratio
-                    if (line.includes('NACA') && line.includes('%')) {
-                        const match = line.match(/NACA.*?([\d.]+)%/i);
-                        if (match) document.getElementById('nacaRatio').value = match[1];
-                    }
-                }
-            }
-            
-            showScreen('form');
-            
-            // Show success message
-            const status = document.getElementById('formStatus');
-            status.className = 'status-message success';
-            status.textContent = 'File loaded successfully. Review and update specifications as needed.';
-            status.style.display = 'block';
-        }
-        
-        function backToStart() {
-            showScreen('start');
-        }
-        
-        function backToForm() {
-            showScreen('form');
-        }
-        
-        function validateForm() {
-            let isValid = true;
-            const errors = {};
-            
-            // Validate required fields
-            const docVersion = document.getElementById('docVersion').value.trim();
-            if (!docVersion) {
-                errors.docVersion = 'Document version is required';
-                isValid = false;
-            }
-            
-            const ownerName = document.getElementById('ownerName').value.trim();
-            if (!ownerName) {
-                errors.ownerName = "Owner's name is required";
-                isValid = false;
-            }
-            
-            const boatName = document.getElementById('boatName').value.trim();
-            if (!boatName) {
-                errors.boatName = 'Boat name is required';
-                isValid = false;
-            }
-            
-            const boatBrand = document.getElementById('boatBrand').value.trim();
-            if (!boatBrand) {
-                errors.boatBrand = 'Boat brand is required';
-                isValid = false;
-            }
-            
-            const boatModel = document.getElementById('boatModel').value.trim();
-            if (!boatModel) {
-                errors.boatModel = 'Boat model is required';
-                isValid = false;
-            }
-            
-            const rudderHeight = document.getElementById('rudderHeight').value;
-            if (!rudderHeight || rudderHeight <= 0) {
-                errors.rudderHeight = 'Valid height is required';
-                isValid = false;
-            }
-            
-            const rudderWidth = document.getElementById('rudderWidth').value;
-            if (!rudderWidth || rudderWidth <= 0) {
-                errors.rudderWidth = 'Valid width is required';
-                isValid = false;
-            }
-            
-            // Display errors
-            document.getElementById('docVersionError').textContent = errors.docVersion || '';
-            document.getElementById('ownerNameError').textContent = errors.ownerName || '';
-            document.getElementById('boatNameError').textContent = errors.boatName || '';
-            document.getElementById('boatBrandError').textContent = errors.boatBrand || '';
-            document.getElementById('boatModelError').textContent = errors.boatModel || '';
-            document.getElementById('rudderHeightError').textContent = errors.rudderHeight || '';
-            document.getElementById('rudderWidthError').textContent = errors.rudderWidth || '';
-            
-            return isValid;
-        }
-        
-        function saveSpecifications() {
-            if (!validateForm()) {
-                const status = document.getElementById('formStatus');
-                status.className = 'status-message error';
-                status.textContent = 'Please correct the errors above before saving.';
-                status.style.display = 'block';
-                return;
-            }
-            
-            // Save specifications
-            specifications = {
-                docVersion: document.getElementById('docVersion').value.trim(),
-                ownerName: document.getElementById('ownerName').value.trim(),
-                boatName: document.getElementById('boatName').value.trim(),
-                boatBrand: document.getElementById('boatBrand').value.trim(),
-                boatModel: document.getElementById('boatModel').value.trim(),
-                boatYear: document.getElementById('boatYear').value || null,
-                dimensions: document.getElementById('dimensions').value,
-                rudderHeight: parseFloat(document.getElementById('rudderHeight').value),
-                rudderWidth: parseFloat(document.getElementById('rudderWidth').value),
-                nacaRatio: document.getElementById('nacaRatio').value ? parseFloat(document.getElementById('nacaRatio').value) : null,
-                additionalNotes: document.getElementById('additionalNotes').value.trim(),
-                timestamp: new Date().toISOString()
+        function addSegment(type) {
+            const segment = {
+                type: type,
+                points: []
             };
             
-            // Show success message
-            const status = document.getElementById('formStatus');
-            status.className = 'status-message success';
-            status.textContent = 'Specifications saved successfully!';
-            status.style.display = 'block';
+            if (type === 'LINE') {
+                segment.points.push({x: 0, y: 0});
+            } else if (type === 'ARC') {
+                segment.points.push({x: 0, y: 0}); // apex
+                segment.points.push({x: 0, y: 0}); // end
+            }
             
-            // Show next button
-            document.getElementById('nextButton').classList.remove('hidden');
+            segments.push(segment);
+            updateSegmentsList();
+            drawCanvas();
         }
         
-        function goToImageUpload() {
-            showScreen('image');
+        function removeSegment(index) {
+            segments.splice(index, 1);
+            updateSegmentsList();
+            drawCanvas();
         }
         
-        // Image upload handling
-        const uploadArea = document.getElementById('uploadArea');
-        const fileInput = document.getElementById('fileInput');
-        
-        // Drag and drop
-        uploadArea.addEventListener('dragover', function(e) {
-            e.preventDefault();
-            uploadArea.classList.add('dragging');
-        });
-        
-        uploadArea.addEventListener('dragleave', function(e) {
-            e.preventDefault();
-            uploadArea.classList.remove('dragging');
-        });
-        
-        uploadArea.addEventListener('drop', function(e) {
-            e.preventDefault();
-            uploadArea.classList.remove('dragging');
+        function updateSegmentsList() {
+            const container = document.getElementById('segmentsContainer');
+            container.innerHTML = '';
             
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                handleImageFile(files[0]);
-            }
-        });
+            segments.forEach((segment, segIndex) => {
+                const block = document.createElement('div');
+                block.className = 'segment-block';
+                
+                const header = document.createElement('div');
+                header.className = 'segment-header';
+                header.innerHTML = `
+                    <span class="segment-type">SEGMENT: ${segment.type}</span>
+                    <button onclick="removeSegment(${segIndex})" style="padding: 5px 10px; background: #f44336; color: white; border: none; border-radius: 3px;">Remove</button>
+                `;
+                block.appendChild(header);
+                
+                if (segment.type === 'LINE') {
+                    // LINE segment - single point
+                    const row = document.createElement('div');
+                    row.className = 'point-row';
+                    row.innerHTML = `
+                        <span class="point-label">End:</span>
+                        <input type="number" value="${segment.points[0].x}" step="0.1" placeholder="X" onchange="updatePoint(${segIndex}, 0, 'x', this.value)">
+                        <input type="number" value="${segment.points[0].y}" step="0.1" placeholder="Y" onchange="updatePoint(${segIndex}, 0, 'y', this.value)">
+                    `;
+                    block.appendChild(row);
+                } else if (segment.type === 'ARC') {
+                    // ARC segment - two points (apex, end)
+                    const apexRow = document.createElement('div');
+                    apexRow.className = 'point-row';
+                    apexRow.innerHTML = `
+                        <span class="point-label">Apex:</span>
+                        <input type="number" value="${segment.points[0].x}" step="0.1" placeholder="X" onchange="updatePoint(${segIndex}, 0, 'x', this.value)">
+                        <input type="number" value="${segment.points[0].y}" step="0.1" placeholder="Y" onchange="updatePoint(${segIndex}, 0, 'y', this.value)">
+                    `;
+                    block.appendChild(apexRow);
+                    
+                    const endRow = document.createElement('div');
+                    endRow.className = 'point-row';
+                    endRow.innerHTML = `
+                        <span class="point-label">End:</span>
+                        <input type="number" value="${segment.points[1].x}" step="0.1" placeholder="X" onchange="updatePoint(${segIndex}, 1, 'x', this.value)">
+                        <input type="number" value="${segment.points[1].y}" step="0.1" placeholder="Y" onchange="updatePoint(${segIndex}, 1, 'y', this.value)">
+                    `;
+                    block.appendChild(endRow);
+                }
+                
+                container.appendChild(block);
+            });
+            
+            updatePointCount();
+        }
         
-        fileInput.addEventListener('change', function(e) {
-            if (e.target.files.length > 0) {
-                handleImageFile(e.target.files[0]);
-            }
-        });
+        function updatePoint(segIndex, pointIndex, coord, value) {
+            segments[segIndex].points[pointIndex][coord] = parseFloat(value);
+            drawCanvas();
+        }
         
-        function handleImageFile(file) {
-            // Validate file type
-            if (!file.type.match(/image\/(jpeg|jpg|png)/)) {
-                const status = document.getElementById('imageStatus');
-                status.className = 'status-message error';
-                status.textContent = 'Please upload a JPG or PNG image.';
-                status.style.display = 'block';
-                return;
+        function updatePointCount() {
+            let count = 0;
+            segments.forEach(seg => {
+                count += seg.points.length;
+            });
+            document.getElementById('pointCount').textContent = count;
+        }
+        
+        function closeLoop() {
+            if (segments.length > 0) {
+                // Get the very first point
+                const firstX = 0;
+                const firstY = 0;
+                
+                // Get the last actual point
+                let lastX = 0, lastY = 0;
+                if (segments.length > 0) {
+                    const lastSeg = segments[segments.length - 1];
+                    const lastPoint = lastSeg.points[lastSeg.points.length - 1];
+                    lastX = lastPoint.x;
+                    lastY = lastPoint.y;
+                }
+                
+                // Add a LINE segment back to origin if not already there
+                if (lastX !== firstX || lastY !== firstY) {
+                    segments.push({
+                        type: 'LINE',
+                        points: [{x: firstX, y: firstY}]
+                    });
+                    updateSegmentsList();
+                    drawCanvas();
+                    showStatus('Loop closed successfully!', 'success');
+                } else {
+                    showStatus('Loop is already closed.', 'info');
+                }
             }
+        }
+        
+        function getAllPoints() {
+            let points = [];
+            let currentPos = {x: 0, y: 0}; // Start at origin
+            
+            segments.forEach(segment => {
+                if (segment.type === 'LINE') {
+                    points.push({...segment.points[0], type: 'LINE'});
+                    currentPos = {...segment.points[0]};
+                } else if (segment.type === 'ARC') {
+                    points.push({...segment.points[0], type: 'ARC_APEX'});
+                    points.push({...segment.points[1], type: 'ARC_END'});
+                    currentPos = {...segment.points[1]};
+                }
+            });
+            
+            return points;
+        }
+        
+        function drawCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Get box dimensions
+            const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 450;
+            const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
+            
+            // Calculate scale to fit canvas
+            const padding = 50;
+            scale = Math.min(
+                (canvas.width - 2 * padding) / boxWidth,
+                (canvas.height - 2 * padding) / boxHeight
+            );
+            
+            ctx.save();
+            ctx.translate(padding, padding);
+            
+            // Draw grid if snap is on
+            if (gridSnap) {
+                ctx.strokeStyle = '#f0f0f0';
+                ctx.lineWidth = 0.5;
+                for (let i = 0; i <= boxWidth; i += 10) {
+                    ctx.beginPath();
+                    ctx.moveTo(i * scale, 0);
+                    ctx.lineTo(i * scale, boxHeight * scale);
+                    ctx.stroke();
+                }
+                for (let i = 0; i <= boxHeight; i += 10) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, i * scale);
+                    ctx.lineTo(boxWidth * scale, i * scale);
+                    ctx.stroke();
+                }
+            }
+            
+            // Draw box outline
+            ctx.strokeStyle = '#ddd';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(0, 0, boxWidth * scale, boxHeight * scale);
+            
+            // Draw origin marker
+            ctx.fillStyle = '#ff0000';
+            ctx.beginPath();
+            ctx.arc(0, 0, 5, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.fillStyle = '#000';
+            ctx.font = '12px sans-serif';
+            ctx.fillText('(0,0)', 5, -5);
+            
+            // Draw rudder outline
+            if (segments.length > 0) {
+                ctx.strokeStyle = '#2196F3';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                
+                let currentPos = {x: 0, y: 0}; // Start at origin
+                ctx.moveTo(0, 0);
+                
+                segments.forEach((segment, index) => {
+                    if (segment.type === 'LINE') {
+                        const endPoint = segment.points[0];
+                        ctx.lineTo(endPoint.x * scale, endPoint.y * scale);
+                        currentPos = endPoint;
+                    } else if (segment.type === 'ARC') {
+                        const apexPoint = segment.points[0];
+                        const endPoint = segment.points[1];
+                        
+                        // Draw quadratic curve using apex as control point
+                        ctx.quadraticCurveTo(
+                            apexPoint.x * scale, 
+                            apexPoint.y * scale,
+                            endPoint.x * scale, 
+                            endPoint.y * scale
+                        );
+                        currentPos = endPoint;
+                    }
+                });
+                
+                ctx.stroke();
+                
+                // Draw points
+                let pointNum = 1;
+                currentPos = {x: 0, y: 0};
+                
+                segments.forEach((segment, segIndex) => {
+                    if (segment.type === 'LINE') {
+                        const point = segment.points[0];
+                        // Draw end point
+                        ctx.fillStyle = '#2196F3';
+                        ctx.beginPath();
+                        ctx.arc(point.x * scale, point.y * scale, 4, 0, 2 * Math.PI);
+                        ctx.fill();
+                        
+                        ctx.fillStyle = '#666';
+                        ctx.font = '10px sans-serif';
+                        ctx.fillText(`${pointNum}`, point.x * scale + 6, point.y * scale - 6);
+                        pointNum++;
+                        currentPos = point;
+                    } else if (segment.type === 'ARC') {
+                        // Draw apex point
+                        ctx.fillStyle = '#FFA500';  // Orange for apex
+                        ctx.beginPath();
+                        ctx.arc(segment.points[0].x * scale, segment.points[0].y * scale, 4, 0, 2 * Math.PI);
+                        ctx.fill();
+                        
+                        ctx.fillStyle = '#666';
+                        ctx.font = '10px sans-serif';
+                        ctx.fillText(`${pointNum}a`, segment.points[0].x * scale + 6, segment.points[0].y * scale - 6);
+                        
+                        // Draw end point
+                        ctx.fillStyle = '#2196F3';
+                        ctx.beginPath();
+                        ctx.arc(segment.points[1].x * scale, segment.points[1].y * scale, 4, 0, 2 * Math.PI);
+                        ctx.fill();
+                        
+                        ctx.fillText(`${pointNum}e`, segment.points[1].x * scale + 6, segment.points[1].y * scale - 6);
+                        pointNum++;
+                        currentPos = segment.points[1];
+                    }
+                });
+            }
+            
+            ctx.restore();
+        }
+        
+        function clearAll() {
+            if (confirm('Are you sure you want to clear all data?')) {
+                // Clear form
+                document.getElementById('customer').value = '';
+                document.getElementById('boatName').value = '';
+                document.getElementById('brand').value = '';
+                document.getElementById('model').value = '';
+                document.getElementById('year').value = '';
+                document.getElementById('version').value = '1.0';
+                document.getElementById('date').value = new Date().toISOString().split('T')[0];
+                document.getElementById('thicknessRatio').value = '';
+                document.getElementById('boxWidth').value = '';
+                document.getElementById('boxHeight').value = '';
+                
+                // Clear segments
+                segments = [];
+                
+                updateSegmentsList();
+                drawCanvas();
+                showStatus('All data cleared.', 'info');
+            }
+        }
+        
+        function importFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
             
             const reader = new FileReader();
             reader.onload = function(e) {
-                const img = new Image();
-                img.onload = function() {
-                    uploadedImage = img;
-                    displayScaledImage();
-                };
-                img.src = e.target.result;
+                parseCSV(e.target.result);
+                event.target.value = ''; // Reset file input
             };
-            reader.readAsDataURL(file);
+            reader.readAsText(file);
         }
         
-        function displayScaledImage() {
-            const canvas = document.getElementById('previewCanvas');
-            const ctx = canvas.getContext('2d');
-            const container = document.getElementById('canvasContainer');
+        function parseCSV(content) {
+            const lines = content.split('\n');
+            segments = [];
             
-            // Calculate scale factor based on rudder box dimensions
-            const targetHeight = specifications.rudderHeight;
-            const targetWidth = specifications.rudderWidth;
+            let inPoints = false;
+            let currentSegmentType = null;
+            let currentSegmentPoints = [];
             
-            // Scale to fit within the box while maintaining aspect ratio
-            const scaleHeight = targetHeight / uploadedImage.height;
-            const scaleWidth = targetWidth / uploadedImage.width;
-            
-            // Use the smaller scale to ensure it fits within both dimensions
-            imageScale = Math.min(scaleHeight, scaleWidth);
-            
-            // Set canvas size
-            const scaledWidth = uploadedImage.width * imageScale;
-            const scaledHeight = uploadedImage.height * imageScale;
-            
-            // Limit display size for preview
-            const maxDisplaySize = 600;
-            let displayScale = 1;
-            if (Math.max(scaledWidth, scaledHeight) > maxDisplaySize) {
-                displayScale = maxDisplaySize / Math.max(scaledWidth, scaledHeight);
+            for (let line of lines) {
+                line = line.trim();
+                
+                if (line === '# --- Outline Points (X,Z) ---' || line === 'X,Y') {
+                    inPoints = true;
+                    continue;
+                }
+                
+                if (!inPoints) {
+                    // Parse parameters
+                    if (!line.startsWith('#') && line.includes(',')) {
+                        const [key, ...valueParts] = line.split(',');
+                        const value = valueParts.join(',').trim();
+                        
+                        switch(key.trim()) {
+                            case 'Customer':
+                                document.getElementById('customer').value = value;
+                                break;
+                            case 'BoatName':
+                                document.getElementById('boatName').value = value;
+                                break;
+                            case 'Brand':
+                                document.getElementById('brand').value = value;
+                                break;
+                            case 'Model':
+                                document.getElementById('model').value = value;
+                                break;
+                            case 'Year':
+                                document.getElementById('year').value = value;
+                                break;
+                            case 'Version':
+                                document.getElementById('version').value = value;
+                                break;
+                            case 'Date':
+                                document.getElementById('date').value = value;
+                                break;
+                            case 'ThicknessRatio':
+                                document.getElementById('thicknessRatio').value = value;
+                                break;
+                            case 'BoxSize':
+                                const [width, height] = value.split(',');
+                                document.getElementById('boxWidth').value = width.trim();
+                                document.getElementById('boxHeight').value = height.trim();
+                                break;
+                        }
+                    }
+                } else {
+                    // Parse points
+                    if (line.startsWith('SEGMENT,')) {
+                        // Save previous segment if exists
+                        if (currentSegmentType && currentSegmentPoints.length > 0) {
+                            if (currentSegmentType === 'ARC') {
+                                // Group points in pairs for ARCs
+                                for (let i = 0; i < currentSegmentPoints.length; i += 2) {
+                                    if (i + 1 < currentSegmentPoints.length) {
+                                        segments.push({
+                                            type: 'ARC',
+                                            points: [currentSegmentPoints[i], currentSegmentPoints[i + 1]]
+                                        });
+                                    }
+                                }
+                            } else {
+                                // Each point is a separate LINE segment
+                                currentSegmentPoints.forEach(point => {
+                                    segments.push({
+                                        type: 'LINE',
+                                        points: [point]
+                                    });
+                                });
+                            }
+                        }
+                        
+                        // Start new segment
+                        currentSegmentType = line.split(',')[1].trim();
+                        currentSegmentPoints = [];
+                    } else if (line && !line.startsWith('#') && line.includes(',')) {
+                        const [x, y] = line.split(',').map(v => parseFloat(v.trim()));
+                        if (!isNaN(x) && !isNaN(y)) {
+                            currentSegmentPoints.push({x, y});
+                        }
+                    }
+                }
             }
             
-            canvas.width = scaledWidth * displayScale;
-            canvas.height = scaledHeight * displayScale;
+            // Save last segment
+            if (currentSegmentType && currentSegmentPoints.length > 0) {
+                if (currentSegmentType === 'ARC') {
+                    for (let i = 0; i < currentSegmentPoints.length; i += 2) {
+                        if (i + 1 < currentSegmentPoints.length) {
+                            segments.push({
+                                type: 'ARC',
+                                points: [currentSegmentPoints[i], currentSegmentPoints[i + 1]]
+                            });
+                        }
+                    }
+                } else {
+                    currentSegmentPoints.forEach(point => {
+                        segments.push({
+                            type: 'LINE',
+                            points: [point]
+                        });
+                    });
+                }
+            }
             
-            // Draw scaled image
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(uploadedImage, 0, 0, canvas.width, canvas.height);
-            
-            // Update info
-            document.getElementById('originalSize').textContent = `${uploadedImage.width} × ${uploadedImage.height} px`;
-            document.getElementById('scaledSize').textContent = `${scaledWidth.toFixed(1)} × ${scaledHeight.toFixed(1)} ${specifications.dimensions}`;
-            document.getElementById('scaleFactor').textContent = `${imageScale.toFixed(3)}×`;
-            
-            // Show canvas and process button
-            container.style.display = 'block';
-            document.getElementById('processButton').classList.remove('hidden');
-            
-            // Show success message
-            const status = document.getElementById('imageStatus');
-            status.className = 'status-message success';
-            status.textContent = 'Image uploaded and scaled successfully!';
-            status.style.display = 'block';
+            updateSegmentsList();
+            drawCanvas();
+            showStatus('File imported successfully!', 'success');
         }
         
-        function processImage() {
-            // This would be where we process the image to extract the outline
-            // For now, we'll just show a success message
-            const status = document.getElementById('imageStatus');
-            status.className = 'status-message success';
-            status.textContent = 'Ready for outline tracing! (Next step: implement edge detection and point extraction)';
-            status.style.display = 'block';
+        function exportCSV() {
+            // Validate required fields
+            const customer = document.getElementById('customer').value;
+            const boatName = document.getElementById('boatName').value;
+            const brand = document.getElementById('brand').value;
+            const model = document.getElementById('model').value;
+            const version = document.getElementById('version').value;
+            const date = document.getElementById('date').value;
+            const boxWidth = document.getElementById('boxWidth').value;
+            const boxHeight = document.getElementById('boxHeight').value;
+            
+            if (!customer || !boatName || !brand || !model || !version || !date || !boxWidth || !boxHeight) {
+                showStatus('Please fill in all required fields marked with *', 'error');
+                return;
+            }
+            
+            if (segments.length === 0) {
+                showStatus('Please add at least one segment to define the outline.', 'error');
+                return;
+            }
+            
+            // Build CSV content
+            let csv = `# Rudder Profile Specification for Core Model,
+# ,
+# UNITS: Millimeters (mm),
+# ORIGIN: (0,0) is the top leading edge of the rudder (top-left corner in side view)
+# DIRECTION: Outline points must proceed CLOCKWISE around the rudder,
+# STRUCTURE: ,
+#   - First section: parameter key-value pairs (optional),
+#   - Second section: a list of X,Y coordinates defining the 2D outline
+#   - The outline MUST form a closed loop (first and last points identical),
+# --- Parameters ---
+Customer,${customer}
+BoatName,${boatName}
+Brand,${brand}
+Model,${model}`;
+
+            if (document.getElementById('year').value) {
+                csv += `\nYear,${document.getElementById('year').value}`;
+            }
+            
+            csv += `\nVersion,${version}
+Date,${date}
+BoxSize,${boxWidth},${boxHeight}`;
+
+            if (document.getElementById('thicknessRatio').value) {
+                csv += `\nThicknessRatio,${document.getElementById('thicknessRatio').value}`;
+            }
+            
+            csv += `\n\n# --- Outline Points (X,Z) ---
+X,Y\n`;
+            
+            // Add the initial point (0,0)
+            let currentType = null;
+            let firstPoint = true;
+            
+            // Group consecutive segments of the same type
+            segments.forEach((segment, index) => {
+                if (segment.type !== currentType) {
+                    csv += `SEGMENT,${segment.type}\n`;
+                    currentType = segment.type;
+                    
+                    // For the first segment, add the origin point
+                    if (firstPoint) {
+                        csv += `0.0,0.0\n`;
+                        firstPoint = false;
+                    }
+                }
+                
+                // Add segment points
+                segment.points.forEach(point => {
+                    csv += `${point.x},${point.y}\n`;
+                });
+            });
+            
+            // Create download
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `rudder_${boatName}_v${version}_${date}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+            
+            showStatus('CSV exported successfully!', 'success');
+        }
+        
+        function generateExamplePoints() {
+            // Clear existing
+            segments = [];
+            
+            // Set example parameters
+            document.getElementById('customer').value = 'Andrew';
+            document.getElementById('boatName').value = 'MackenSea';
+            document.getElementById('brand').value = 'Nautitech';
+            document.getElementById('model').value = '44 Open';
+            document.getElementById('year').value = '2024';
+            document.getElementById('version').value = '1.5';
+            document.getElementById('date').value = '2025-08-15';
+            document.getElementById('boxWidth').value = '450';
+            document.getElementById('boxHeight').value = '1100';
+            document.getElementById('thicknessRatio').value = '0.16';
+            
+            // Add example segments - properly structured
+            segments = [
+                {type: 'LINE', points: [{x: 436.2, y: 0.0}]},
+                {type: 'LINE', points: [{x: 436.2, y: 89.3}]},
+                {type: 'LINE', points: [{x: 395.6, y: 564.0}]},
+                {type: 'ARC', points: [{x: 365.4, y: 775.9}, {x: 327.0, y: 971.1}]},
+                {type: 'ARC', points: [{x: 313.9, y: 1004.3}, {x: 301.3, y: 1027.3}]},
+                {type: 'ARC', points: [{x: 281.3, y: 1049.0}, {x: 261.3, y: 1065.5}]},
+                {type: 'ARC', points: [{x: 243.8, y: 1075.8}, {x: 220.0, y: 1083.0}]},
+                {type: 'ARC', points: [{x: 193.8, y: 1088.0}, {x: 170.0, y: 1090.0}]},
+                {type: 'LINE', points: [{x: 107.5, y: 1090.0}]},
+                {type: 'LINE', points: [{x: 36.9, y: 571.7}]},
+                {type: 'ARC', points: [{x: 19.6, y: 356.0}, {x: 4.8, y: 158.2}]},
+                {type: 'LINE', points: [{x: 0.0, y: 0.0}]}
+            ];
+            
+            updateSegmentsList();
+            drawCanvas();
+            showStatus('Example rudder loaded!', 'success');
+        }
+        
+        function showStatus(message, type) {
+            const statusEl = document.getElementById('statusMessage');
+            statusEl.textContent = message;
+            statusEl.className = `status-message ${type}`;
+            statusEl.style.display = 'block';
+            
+            setTimeout(() => {
+                statusEl.style.display = 'none';
+            }, 3000);
         }
     </script>
 </body>
