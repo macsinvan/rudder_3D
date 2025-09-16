@@ -95,8 +95,10 @@
         }
         
         .right-panel {
-            flex: 1;
-            min-width: 500px;
+            flex: 1.5;
+            min-width: 600px;
+            height: calc(100vh - 300px);
+            min-height: 600px;
         }
         
         .panel-section {
@@ -107,11 +109,30 @@
             margin-bottom: 20px;
         }
         
+        .right-panel .panel-section {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            height: calc(100% - 20px);
+            display: flex;
+            flex-direction: column;
+        }
+        
         .panel-section h3 {
             color: #333;
             margin-bottom: 15px;
             padding-bottom: 10px;
             border-bottom: 2px solid #e0e0e0;
+        }
+        
+        .right-panel .panel-section h3 {
+            color: #333;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e0e0e0;
+            flex-shrink: 0;
         }
         
         .form-row {
@@ -239,19 +260,21 @@
         }
         
         .canvas-container {
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            padding: 20px;
             background: white;
             position: relative;
+            flex-grow: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 500px;
         }
         
         #rudderCanvas {
             display: block;
-            margin: 0 auto;
-            border: 1px solid #ddd;
             cursor: crosshair;
             background: white;
+            max-width: 100%;
+            max-height: 100%;
         }
         
         .canvas-info {
@@ -459,14 +482,14 @@
                 </div>
                 
                 <div class="right-panel">
-                    <div class="panel-section">
+                    <div class="panel-section" style="height: 100%; display: flex; flex-direction: column;">
                         <h3>Visual Preview</h3>
-                        <div class="canvas-container">
-                            <canvas id="rudderCanvas" width="800" height="800"></canvas>
-                            <div class="canvas-info">
-                                <strong>Info:</strong> Origin (0,0) is at top-left. LINE segments need 1 point. ARC segments need 2 points (apex, end).
-                                Grid size: 10mm. Total points: <span id="pointCount">0</span>. Toggle image/grid with toolbar buttons.
-                            </div>
+                        <div class="canvas-container" id="canvasContainer" style="flex-grow: 1;">
+                            <canvas id="rudderCanvas"></canvas>
+                        </div>
+                        <div class="canvas-info" style="margin-top: 10px; flex-shrink: 0;">
+                            <strong>Info:</strong> Origin (0,0) is at top-left. LINE segments need 1 point. ARC segments need 2 points (apex, end).
+                            Grid size: 10mm. Total points: <span id="pointCount">0</span>. Toggle image/grid with toolbar buttons.
                         </div>
                     </div>
                 </div>
@@ -488,6 +511,11 @@
         document.addEventListener('DOMContentLoaded', function() {
             const today = new Date().toISOString().split('T')[0];
             document.getElementById('date').value = today;
+            setTimeout(drawCanvas, 100); // Delay to ensure container dimensions are set
+        });
+        
+        // Redraw on window resize
+        window.addEventListener('resize', function() {
             drawCanvas();
         });
         
@@ -536,7 +564,7 @@
                     document.getElementById('imagePath').value = imagePath;
                     
                     // Check aspect ratio
-                    const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 590;
+                    const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 450;
                     const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
                     
                     if (boxWidth > 0 && boxHeight > 0) {
@@ -555,7 +583,8 @@
                         }
                     }
                     
-                    drawCanvas();
+                    // Redraw canvas with proper scaling
+                    setTimeout(drawCanvas, 50);
                 };
                 img.src = e.target.result;
                 imageData = e.target.result;
@@ -692,37 +721,27 @@
             }
         }
         
-        function getAllPoints() {
-            let points = [];
-            let currentPos = {x: 0, y: 0}; // Start at origin
-            
-            segments.forEach(segment => {
-                if (segment.type === 'LINE') {
-                    points.push({...segment.points[0], type: 'LINE'});
-                    currentPos = {...segment.points[0]};
-                } else if (segment.type === 'ARC') {
-                    points.push({...segment.points[0], type: 'ARC_APEX'});
-                    points.push({...segment.points[1], type: 'ARC_END'});
-                    currentPos = {...segment.points[1]};
-                }
-            });
-            
-            return points;
-        }
-        
         function drawCanvas() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // Get box dimensions
-            const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 590;
+            const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 450;
             const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
             
-            // Calculate scale to fit canvas
-            const padding = 50;
+            // Get container dimensions to use maximum available space
+            const container = document.getElementById('canvasContainer');
+            const containerWidth = container.clientWidth || 800;
+            const containerHeight = container.clientHeight || 600;
+            
+            // Calculate scale to maximize canvas usage within container
+            const padding = 20; // Minimal padding
             scale = Math.min(
-                (canvas.width - 2 * padding) / boxWidth,
-                (canvas.height - 2 * padding) / boxHeight
+                (containerWidth - 2 * padding) / boxWidth,
+                (containerHeight - 2 * padding) / boxHeight
             );
+            
+            // Set actual canvas size based on box dimensions and scale
+            canvas.width = boxWidth * scale + 2 * padding;
+            canvas.height = boxHeight * scale + 2 * padding;
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
             
             ctx.save();
             ctx.translate(padding, padding);
@@ -730,6 +749,7 @@
             // Draw uploaded image if available
             if (uploadedImage && showImage) {
                 ctx.globalAlpha = 0.5; // Semi-transparent
+                // Scale image to fit exactly within the box dimensions
                 ctx.drawImage(uploadedImage, 0, 0, boxWidth * scale, boxHeight * scale);
                 ctx.globalAlpha = 1.0;
             }
@@ -1115,7 +1135,7 @@ X,Y\n`;
             document.getElementById('year').value = '2024';
             document.getElementById('version').value = '1.5';
             document.getElementById('date').value = '2025-08-15';
-            document.getElementById('boxWidth').value = '590';
+            document.getElementById('boxWidth').value = '450';
             document.getElementById('boxHeight').value = '1100';
             document.getElementById('thicknessRatio').value = '0.16';
             

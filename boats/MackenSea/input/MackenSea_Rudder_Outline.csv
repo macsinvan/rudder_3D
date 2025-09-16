@@ -15,7 +15,7 @@ Model,44 Open
 Year,2024
 Version,1.5
 Date,2025-08-15
-BoxSize,590,1100
+BoxSize,500,1100
 ThicknessRatio,0.16
 Image, ../<BoatName>/Input/<BoatName>_Rudder_Outline.png
 
