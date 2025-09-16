@@ -365,6 +365,7 @@
             <button onclick="exportCSV()" class="primary">💾 Export CSV</button>
             <button onclick="generateExamplePoints()">📐 Load Example</button>
             <button onclick="toggleGridSnap()" id="gridSnapBtn">📏 Grid Snap: OFF</button>
+            <button onclick="toggleImage()" id="imageToggleBtn" style="display: none;">🖼️ Image: ON</button>
         </div>
         
         <div id="statusMessage" class="status-message" style="margin: 20px;"></div>
@@ -380,7 +381,7 @@
                     </div>
                     <div class="form-group">
                         <label for="boatName">Boat Name*</label>
-                        <input type="text" id="boatName" placeholder="Boat name">
+                        <input type="text" id="boatName" placeholder="Boat name" onchange="updateImagePath()">
                     </div>
                 </div>
                 
@@ -414,14 +415,28 @@
                     <div class="form-group">
                         <label for="boxSize">Box Size (Width,Height in mm)*</label>
                         <div class="box-size-input">
-                            <input type="number" id="boxWidth" placeholder="Width" min="0">
+                            <input type="number" id="boxWidth" placeholder="Width" min="0" onchange="drawCanvas()">
                             <span>×</span>
-                            <input type="number" id="boxHeight" placeholder="Height" min="0">
+                            <input type="number" id="boxHeight" placeholder="Height" min="0" onchange="drawCanvas()">
                         </div>
                     </div>
                     <div class="form-group">
                         <label for="thicknessRatio">Thickness Ratio</label>
                         <input type="number" id="thicknessRatio" placeholder="0.16" step="0.01" min="0" max="1">
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="imageFile">Rudder Outline Image</label>
+                        <div style="display: flex; flex-direction: column; gap: 5px;">
+                            <input type="file" id="imageFile" accept="image/png,image/jpeg,image/jpg" onchange="handleImageUpload(event)" style="display: none;">
+                            <button onclick="document.getElementById('imageFile').click()" style="padding: 8px; background: white; border: 2px solid #e0e0e0; border-radius: 4px; cursor: pointer;">
+                                📷 Select Image
+                            </button>
+                            <input type="text" id="imagePath" placeholder="Image path will appear here" readonly style="padding: 8px; border: 2px solid #e0e0e0; border-radius: 4px; background: #f8f9fa;">
+                            <span id="imageStatus" style="font-size: 12px; color: #666;"></span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -450,7 +465,7 @@
                             <canvas id="rudderCanvas" width="800" height="800"></canvas>
                             <div class="canvas-info">
                                 <strong>Info:</strong> Origin (0,0) is at top-left. LINE segments need 1 point. ARC segments need 2 points (apex, end).
-                                Grid size: 10mm. Total points: <span id="pointCount">0</span>
+                                Grid size: 10mm. Total points: <span id="pointCount">0</span>. Toggle image/grid with toolbar buttons.
                             </div>
                         </div>
                     </div>
@@ -464,6 +479,10 @@
         let segments = [];  // Array of {type: 'LINE'|'ARC', points: []}
         let gridSnap = false;
         let scale = 1;
+        let uploadedImage = null;
+        let imageData = null;
+        let imagePath = '';
+        let showImage = true;
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
@@ -482,6 +501,75 @@
             btn.textContent = `📏 Grid Snap: ${gridSnap ? 'ON' : 'OFF'}`;
             btn.classList.toggle('active', gridSnap);
             drawCanvas();
+        }
+        
+        function toggleImage() {
+            showImage = !showImage;
+            const btn = document.getElementById('imageToggleBtn');
+            btn.textContent = `🖼️ Image: ${showImage ? 'ON' : 'OFF'}`;
+            btn.classList.toggle('active', showImage);
+            drawCanvas();
+        }
+        
+        function handleImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            // Check file type
+            if (!file.type.match(/image\/(png|jpeg|jpg)/)) {
+                showStatus('Please select a PNG or JPEG image.', 'error');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    uploadedImage = img;
+                    
+                    // Show image toggle button
+                    document.getElementById('imageToggleBtn').style.display = 'inline-block';
+                    
+                    // Generate path based on boat name
+                    const boatName = document.getElementById('boatName').value || 'BoatName';
+                    imagePath = `../${boatName}/Input/${boatName}_Rudder_Outline${file.name.substring(file.name.lastIndexOf('.'))}`;
+                    document.getElementById('imagePath').value = imagePath;
+                    
+                    // Check aspect ratio
+                    const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 590;
+                    const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
+                    
+                    if (boxWidth > 0 && boxHeight > 0) {
+                        const boxAspect = boxWidth / boxHeight;
+                        const imgAspect = img.width / img.height;
+                        const aspectDiff = Math.abs(boxAspect - imgAspect) / boxAspect;
+                        
+                        if (aspectDiff > 0.1) {  // 10% tolerance
+                            document.getElementById('imageStatus').textContent = 
+                                `⚠️ Warning: Image aspect ratio (${(imgAspect).toFixed(2)}) differs from box (${(boxAspect).toFixed(2)}) by ${(aspectDiff * 100).toFixed(1)}%`;
+                            document.getElementById('imageStatus').style.color = '#ff9800';
+                        } else {
+                            document.getElementById('imageStatus').textContent = 
+                                `✓ Image loaded: ${img.width}×${img.height}px`;
+                            document.getElementById('imageStatus').style.color = '#4CAF50';
+                        }
+                    }
+                    
+                    drawCanvas();
+                };
+                img.src = e.target.result;
+                imageData = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        function updateImagePath() {
+            if (imagePath && uploadedImage) {
+                const boatName = document.getElementById('boatName').value || 'BoatName';
+                const ext = imagePath.substring(imagePath.lastIndexOf('.'));
+                imagePath = `../${boatName}/Input/${boatName}_Rudder_Outline${ext}`;
+                document.getElementById('imagePath').value = imagePath;
+            }
         }
         
         function addSegment(type) {
@@ -626,7 +714,7 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             
             // Get box dimensions
-            const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 450;
+            const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 590;
             const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
             
             // Calculate scale to fit canvas
@@ -638,6 +726,13 @@
             
             ctx.save();
             ctx.translate(padding, padding);
+            
+            // Draw uploaded image if available
+            if (uploadedImage && showImage) {
+                ctx.globalAlpha = 0.5; // Semi-transparent
+                ctx.drawImage(uploadedImage, 0, 0, boxWidth * scale, boxHeight * scale);
+                ctx.globalAlpha = 1.0;
+            }
             
             // Draw grid if snap is on
             if (gridSnap) {
@@ -657,9 +752,9 @@
                 }
             }
             
-            // Draw box outline
-            ctx.strokeStyle = '#ddd';
-            ctx.lineWidth = 2;
+            // Draw box outline with lighter lines
+            ctx.strokeStyle = '#e8e8e8';
+            ctx.lineWidth = 1;
             ctx.strokeRect(0, 0, boxWidth * scale, boxHeight * scale);
             
             // Draw origin marker
@@ -761,6 +856,15 @@
                 document.getElementById('boxWidth').value = '';
                 document.getElementById('boxHeight').value = '';
                 
+                // Clear image
+                uploadedImage = null;
+                imageData = null;
+                imagePath = '';
+                document.getElementById('imagePath').value = '';
+                document.getElementById('imageStatus').textContent = '';
+                document.getElementById('imageFile').value = '';
+                document.getElementById('imageToggleBtn').style.display = 'none';
+                
                 // Clear segments
                 segments = [];
                 
@@ -833,6 +937,12 @@
                                 const [width, height] = value.split(',');
                                 document.getElementById('boxWidth').value = width.trim();
                                 document.getElementById('boxHeight').value = height.trim();
+                                break;
+                            case 'Image':
+                                imagePath = value;
+                                document.getElementById('imagePath').value = value;
+                                document.getElementById('imageStatus').textContent = '⚠️ Image path loaded from CSV - select actual file to display';
+                                document.getElementById('imageStatus').style.color = '#ff9800';
                                 break;
                         }
                     }
@@ -949,6 +1059,10 @@ BoxSize,${boxWidth},${boxHeight}`;
                 csv += `\nThicknessRatio,${document.getElementById('thicknessRatio').value}`;
             }
             
+            if (imagePath) {
+                csv += `\nImage,${imagePath}`;
+            }
+            
             csv += `\n\n# --- Outline Points (X,Z) ---
 X,Y\n`;
             
@@ -1001,9 +1115,15 @@ X,Y\n`;
             document.getElementById('year').value = '2024';
             document.getElementById('version').value = '1.5';
             document.getElementById('date').value = '2025-08-15';
-            document.getElementById('boxWidth').value = '450';
+            document.getElementById('boxWidth').value = '590';
             document.getElementById('boxHeight').value = '1100';
             document.getElementById('thicknessRatio').value = '0.16';
+            
+            // Set example image path
+            imagePath = '../MackenSea/Input/MackenSea_Rudder_Outline.png';
+            document.getElementById('imagePath').value = imagePath;
+            document.getElementById('imageStatus').textContent = '⚠️ Example image path - select actual file to display';
+            document.getElementById('imageStatus').style.color = '#ff9800';
             
             // Add example segments - properly structured
             segments = [
