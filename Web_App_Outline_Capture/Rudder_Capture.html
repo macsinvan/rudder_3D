@@ -190,22 +190,21 @@
             background: white;
             border: 1px solid #ddd;
             border-radius: 4px;
-            margin-bottom: 10px;
-            padding: 10px;
+            margin-bottom: 8px;
+            padding: 8px;
         }
         
-        .segment-header {
+        .segment-row {
             display: flex;
-            justify-content: space-between;
+            gap: 10px;
             align-items: center;
-            margin-bottom: 10px;
-            padding-bottom: 8px;
-            border-bottom: 1px solid #e0e0e0;
         }
         
         .segment-type {
             font-weight: 600;
             color: #2196F3;
+            min-width: 110px;
+            font-size: 13px;
         }
         
         .point-row {
@@ -263,9 +262,7 @@
             background: white;
             position: relative;
             flex-grow: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            overflow: auto;
             min-height: 500px;
         }
         
@@ -273,8 +270,6 @@
             display: block;
             cursor: crosshair;
             background: white;
-            max-width: 100%;
-            max-height: 100%;
         }
         
         .canvas-info {
@@ -484,6 +479,12 @@
                 <div class="right-panel">
                     <div class="panel-section" style="height: 100%; display: flex; flex-direction: column;">
                         <h3>Visual Preview</h3>
+                        <div class="canvas-controls" style="padding: 10px 0;">
+                            <button onclick="zoomIn()">🔍+ Zoom In</button>
+                            <button onclick="zoomOut()">🔍- Zoom Out</button>
+                            <button onclick="resetView()">🔄 Reset View</button>
+                            <span style="margin-left: 20px; font-size: 14px;">Zoom: <span id="zoomDisplay">100%</span> | Drag to pan</span>
+                        </div>
                         <div class="canvas-container" id="canvasContainer" style="flex-grow: 1;">
                             <canvas id="rudderCanvas"></canvas>
                         </div>
@@ -506,6 +507,14 @@
         let imageData = null;
         let imagePath = '';
         let showImage = true;
+        let zoomLevel = 1;
+        let panX = 0;
+        let panY = 0;
+        let isPanning = false;
+        let isDraggingPoint = false;
+        let selectedPoint = null; // {segIndex, pointIndex}
+        let lastMouseX = 0;
+        let lastMouseY = 0;
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
@@ -568,17 +577,17 @@
                     const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
                     
                     if (boxWidth > 0 && boxHeight > 0) {
-                        const boxAspect = boxWidth / boxHeight;
-                        const imgAspect = img.width / img.height;
-                        const aspectDiff = Math.abs(boxAspect - imgAspect) / boxAspect;
+                        const xScale = boxWidth / img.width;
+                        const yScale = boxHeight / img.height;
+                        const scaleDiff = Math.abs(xScale - yScale) / Math.max(xScale, yScale);
                         
-                        if (aspectDiff > 0.1) {  // 10% tolerance
+                        if (scaleDiff > 0.1) {  // 10% difference between X and Y scaling
                             document.getElementById('imageStatus').textContent = 
-                                `⚠️ Warning: Image aspect ratio (${(imgAspect).toFixed(2)}) differs from box (${(boxAspect).toFixed(2)}) by ${(aspectDiff * 100).toFixed(1)}%`;
+                                `⚠️ Warning: Image distortion expected - X scale: ${xScale.toFixed(2)}x, Y scale: ${yScale.toFixed(2)}x (${(scaleDiff * 100).toFixed(1)}% difference)`;
                             document.getElementById('imageStatus').style.color = '#ff9800';
                         } else {
                             document.getElementById('imageStatus').textContent = 
-                                `✓ Image loaded: ${img.width}×${img.height}px`;
+                                `✓ Image loaded: ${img.width}×${img.height}px | Scaling: X ${xScale.toFixed(2)}x, Y ${yScale.toFixed(2)}x`;
                             document.getElementById('imageStatus').style.color = '#4CAF50';
                         }
                     }
@@ -629,47 +638,43 @@
             const container = document.getElementById('segmentsContainer');
             container.innerHTML = '';
             
+            let pointNum = 1;
+            
             segments.forEach((segment, segIndex) => {
                 const block = document.createElement('div');
                 block.className = 'segment-block';
                 
-                const header = document.createElement('div');
-                header.className = 'segment-header';
-                header.innerHTML = `
-                    <span class="segment-type">SEGMENT: ${segment.type}</span>
-                    <button onclick="removeSegment(${segIndex})" style="padding: 5px 10px; background: #f44336; color: white; border: none; border-radius: 3px;">Remove</button>
-                `;
-                block.appendChild(header);
-                
                 if (segment.type === 'LINE') {
-                    // LINE segment - single point
-                    const row = document.createElement('div');
-                    row.className = 'point-row';
-                    row.innerHTML = `
-                        <span class="point-label">End:</span>
-                        <input type="number" value="${segment.points[0].x}" step="0.1" placeholder="X" onchange="updatePoint(${segIndex}, 0, 'x', this.value)">
-                        <input type="number" value="${segment.points[0].y}" step="0.1" placeholder="Y" onchange="updatePoint(${segIndex}, 0, 'y', this.value)">
+                    // LINE segment - single line display
+                    block.innerHTML = `
+                        <div class="segment-row">
+                            <span class="segment-type">SEGMENT: LINE</span>
+                            <span class="point-label">${pointNum}. End:</span>
+                            <input type="number" value="${segment.points[0].x}" step="0.1" placeholder="X" onchange="updatePoint(${segIndex}, 0, 'x', this.value)" style="width: 70px; padding: 4px;">
+                            <input type="number" value="${segment.points[0].y}" step="0.1" placeholder="Y" onchange="updatePoint(${segIndex}, 0, 'y', this.value)" style="width: 70px; padding: 4px;">
+                            <button onclick="removeSegment(${segIndex})" style="padding: 4px 8px; background: #f44336; color: white; border: none; border-radius: 3px; margin-left: auto;">Remove</button>
+                        </div>
                     `;
-                    block.appendChild(row);
+                    pointNum++;
                 } else if (segment.type === 'ARC') {
-                    // ARC segment - two points (apex, end)
-                    const apexRow = document.createElement('div');
-                    apexRow.className = 'point-row';
-                    apexRow.innerHTML = `
-                        <span class="point-label">Apex:</span>
-                        <input type="number" value="${segment.points[0].x}" step="0.1" placeholder="X" onchange="updatePoint(${segIndex}, 0, 'x', this.value)">
-                        <input type="number" value="${segment.points[0].y}" step="0.1" placeholder="Y" onchange="updatePoint(${segIndex}, 0, 'y', this.value)">
+                    // ARC segment - two-line display
+                    block.innerHTML = `
+                        <div style="display: flex; flex-direction: column; gap: 5px;">
+                            <div class="segment-row">
+                                <span class="segment-type">SEGMENT: ARC</span>
+                                <span class="point-label">${pointNum}a. Apex:</span>
+                                <input type="number" value="${segment.points[0].x}" step="0.1" placeholder="X" onchange="updatePoint(${segIndex}, 0, 'x', this.value)" style="width: 70px; padding: 4px;">
+                                <input type="number" value="${segment.points[0].y}" step="0.1" placeholder="Y" onchange="updatePoint(${segIndex}, 0, 'y', this.value)" style="width: 70px; padding: 4px;">
+                            </div>
+                            <div class="segment-row" style="padding-left: 120px;">
+                                <span class="point-label">${pointNum}e. End:</span>
+                                <input type="number" value="${segment.points[1].x}" step="0.1" placeholder="X" onchange="updatePoint(${segIndex}, 1, 'x', this.value)" style="width: 70px; padding: 4px;">
+                                <input type="number" value="${segment.points[1].y}" step="0.1" placeholder="Y" onchange="updatePoint(${segIndex}, 1, 'y', this.value)" style="width: 70px; padding: 4px;">
+                                <button onclick="removeSegment(${segIndex})" style="padding: 4px 8px; background: #f44336; color: white; border: none; border-radius: 3px; margin-left: auto;">Remove</button>
+                            </div>
+                        </div>
                     `;
-                    block.appendChild(apexRow);
-                    
-                    const endRow = document.createElement('div');
-                    endRow.className = 'point-row';
-                    endRow.innerHTML = `
-                        <span class="point-label">End:</span>
-                        <input type="number" value="${segment.points[1].x}" step="0.1" placeholder="X" onchange="updatePoint(${segIndex}, 1, 'x', this.value)">
-                        <input type="number" value="${segment.points[1].y}" step="0.1" placeholder="Y" onchange="updatePoint(${segIndex}, 1, 'y', this.value)">
-                    `;
-                    block.appendChild(endRow);
+                    pointNum++;
                 }
                 
                 container.appendChild(block);
@@ -725,26 +730,29 @@
             const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 500;
             const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
             
-            // Get container dimensions to use maximum available space
+            // Get container dimensions
             const container = document.getElementById('canvasContainer');
             const containerWidth = container.clientWidth || 800;
             const containerHeight = container.clientHeight || 600;
             
-            // Calculate scale to maximize canvas usage within container
-            const padding = 20; // Minimal padding
-            scale = Math.min(
+            // Calculate base scale
+            const padding = 20;
+            const baseScale = Math.min(
                 (containerWidth - 2 * padding) / boxWidth,
                 (containerHeight - 2 * padding) / boxHeight
             );
             
-            // Set actual canvas size based on box dimensions and scale
-            canvas.width = boxWidth * scale + 2 * padding;
-            canvas.height = boxHeight * scale + 2 * padding;
+            // Apply zoom level
+            scale = baseScale * zoomLevel;
+            
+            // Set canvas size to expand with zoom
+            canvas.width = (boxWidth * scale) + 2 * padding;
+            canvas.height = (boxHeight * scale) + 2 * padding;
             
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             
             ctx.save();
-            ctx.translate(padding, padding);
+            ctx.translate(padding + panX, padding + panY);
             
             // Draw uploaded image if available with independent X and Y scaling
             if (uploadedImage && showImage) {
@@ -835,10 +843,14 @@
                 segments.forEach((segment, segIndex) => {
                     if (segment.type === 'LINE') {
                         const point = segment.points[0];
+                        
+                        // Check if this point is selected
+                        const isSelected = selectedPoint && selectedPoint.segIndex === segIndex && selectedPoint.pointIndex === 0;
+                        
                         // Draw end point
-                        ctx.fillStyle = '#2196F3';
+                        ctx.fillStyle = isSelected ? '#ff0000' : '#2196F3';
                         ctx.beginPath();
-                        ctx.arc(point.x * scale, point.y * scale, 4, 0, 2 * Math.PI);
+                        ctx.arc(point.x * scale, point.y * scale, isSelected ? 6 : 4, 0, 2 * Math.PI);
                         ctx.fill();
                         
                         ctx.fillStyle = '#666';
@@ -848,9 +860,10 @@
                         currentPos = point;
                     } else if (segment.type === 'ARC') {
                         // Draw apex point
-                        ctx.fillStyle = '#FFA500';  // Orange for apex
+                        const isApexSelected = selectedPoint && selectedPoint.segIndex === segIndex && selectedPoint.pointIndex === 0;
+                        ctx.fillStyle = isApexSelected ? '#ff0000' : '#FFA500';  // Orange for apex
                         ctx.beginPath();
-                        ctx.arc(segment.points[0].x * scale, segment.points[0].y * scale, 4, 0, 2 * Math.PI);
+                        ctx.arc(segment.points[0].x * scale, segment.points[0].y * scale, isApexSelected ? 6 : 4, 0, 2 * Math.PI);
                         ctx.fill();
                         
                         ctx.fillStyle = '#666';
@@ -858,9 +871,10 @@
                         ctx.fillText(`${pointNum}a`, segment.points[0].x * scale + 6, segment.points[0].y * scale - 6);
                         
                         // Draw end point
-                        ctx.fillStyle = '#2196F3';
+                        const isEndSelected = selectedPoint && selectedPoint.segIndex === segIndex && selectedPoint.pointIndex === 1;
+                        ctx.fillStyle = isEndSelected ? '#ff0000' : '#2196F3';
                         ctx.beginPath();
-                        ctx.arc(segment.points[1].x * scale, segment.points[1].y * scale, 4, 0, 2 * Math.PI);
+                        ctx.arc(segment.points[1].x * scale, segment.points[1].y * scale, isEndSelected ? 6 : 4, 0, 2 * Math.PI);
                         ctx.fill();
                         
                         ctx.fillText(`${pointNum}e`, segment.points[1].x * scale + 6, segment.points[1].y * scale - 6);
@@ -872,6 +886,155 @@
             
             ctx.restore();
         }
+        
+        function zoomIn() {
+            zoomLevel = Math.min(zoomLevel * 1.2, 5);
+            document.getElementById('zoomDisplay').textContent = Math.round(zoomLevel * 100) + '%';
+            drawCanvas();
+        }
+        
+        function zoomOut() {
+            zoomLevel = Math.max(zoomLevel / 1.2, 0.2);
+            document.getElementById('zoomDisplay').textContent = Math.round(zoomLevel * 100) + '%';
+            drawCanvas();
+        }
+        
+        function resetView() {
+            zoomLevel = 1;
+            panX = 0;
+            panY = 0;
+            document.getElementById('zoomDisplay').textContent = '100%';
+            drawCanvas();
+        }
+        
+        // Mouse event handlers for panning and point dragging
+        function getMousePosition(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left - 20 - panX;
+            const y = e.clientY - rect.top - 20 - panY;
+            return { x: x / scale, y: y / scale };
+        }
+        
+        function findPointAtPosition(x, y) {
+            const threshold = 10 / scale; // 10 pixel threshold scaled
+            let foundPoint = null;
+            
+            segments.forEach((segment, segIndex) => {
+                segment.points.forEach((point, pointIndex) => {
+                    const dist = Math.sqrt(Math.pow(point.x - x, 2) + Math.pow(point.y - y, 2));
+                    if (dist < threshold) {
+                        foundPoint = { segIndex, pointIndex };
+                    }
+                });
+            });
+            
+            return foundPoint;
+        }
+        
+        canvas.addEventListener('mousedown', function(e) {
+            const mousePos = getMousePosition(e);
+            
+            if (e.shiftKey) {
+                // Shift key held - start panning
+                isPanning = true;
+                lastMouseX = e.clientX;
+                lastMouseY = e.clientY;
+                canvas.style.cursor = 'grabbing';
+            } else {
+                // No shift key - check for point dragging
+                const point = findPointAtPosition(mousePos.x, mousePos.y);
+                if (point) {
+                    isDraggingPoint = true;
+                    selectedPoint = point;
+                    canvas.style.cursor = 'move';
+                    drawCanvas();
+                }
+            }
+        });
+        
+        canvas.addEventListener('mousemove', function(e) {
+            const mousePos = getMousePosition(e);
+            
+            if (isPanning) {
+                // Pan the canvas
+                const deltaX = e.clientX - lastMouseX;
+                const deltaY = e.clientY - lastMouseY;
+                panX += deltaX;
+                panY += deltaY;
+                lastMouseX = e.clientX;
+                lastMouseY = e.clientY;
+                drawCanvas();
+            } else if (isDraggingPoint && selectedPoint) {
+                // Drag the selected point
+                let newX = mousePos.x;
+                let newY = mousePos.y;
+                
+                // Apply grid snap if enabled
+                if (gridSnap) {
+                    newX = Math.round(newX / 10) * 10;
+                    newY = Math.round(newY / 10) * 10;
+                }
+                
+                // Update the point position
+                segments[selectedPoint.segIndex].points[selectedPoint.pointIndex].x = newX;
+                segments[selectedPoint.segIndex].points[selectedPoint.pointIndex].y = newY;
+                
+                // Update the input fields
+                updateSegmentsList();
+                drawCanvas();
+            } else {
+                // Check if hovering over a point
+                const point = findPointAtPosition(mousePos.x, mousePos.y);
+                if (point && !e.shiftKey) {
+                    canvas.style.cursor = 'pointer';
+                } else if (e.shiftKey) {
+                    canvas.style.cursor = 'grab';
+                } else {
+                    canvas.style.cursor = 'crosshair';
+                }
+            }
+        });
+        
+        canvas.addEventListener('mouseup', function(e) {
+            isPanning = false;
+            isDraggingPoint = false;
+            selectedPoint = null;
+            canvas.style.cursor = 'crosshair';
+            drawCanvas();
+        });
+        
+        canvas.addEventListener('mouseleave', function() {
+            isPanning = false;
+            isDraggingPoint = false;
+            canvas.style.cursor = 'crosshair';
+        });
+        
+        // Update cursor when shift key is pressed/released
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Shift' && !isDraggingPoint) {
+                canvas.style.cursor = 'grab';
+            }
+        });
+        
+        document.addEventListener('keyup', function(e) {
+            if (e.key === 'Shift' && !isPanning && !isDraggingPoint) {
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left - 20 - panX;
+                const mouseY = e.clientY - rect.top - 20 - panY;
+                const point = findPointAtPosition(mouseX / scale, mouseY / scale);
+                canvas.style.cursor = point ? 'pointer' : 'crosshair';
+            }
+        });
+        
+        // Mouse wheel zoom
+        canvas.addEventListener('wheel', function(e) {
+            e.preventDefault();
+            if (e.deltaY < 0) {
+                zoomIn();
+            } else {
+                zoomOut();
+            }
+        });
         
         function clearAll() {
             if (confirm('Are you sure you want to clear all data?')) {
@@ -895,6 +1058,12 @@
                 document.getElementById('imageStatus').textContent = '';
                 document.getElementById('imageFile').value = '';
                 document.getElementById('imageToggleBtn').style.display = 'none';
+                
+                // Reset zoom and pan
+                zoomLevel = 1;
+                panX = 0;
+                panY = 0;
+                document.getElementById('zoomDisplay').textContent = '100%';
                 
                 // Clear segments
                 segments = [];
