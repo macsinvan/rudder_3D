@@ -564,7 +564,7 @@
                     document.getElementById('imagePath').value = imagePath;
                     
                     // Check aspect ratio
-                    const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 450;
+                    const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 500;
                     const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
                     
                     if (boxWidth > 0 && boxHeight > 0) {
@@ -722,7 +722,7 @@
         }
         
         function drawCanvas() {
-            const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 450;
+            const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 500;
             const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
             
             // Get container dimensions to use maximum available space
@@ -746,12 +746,23 @@
             ctx.save();
             ctx.translate(padding, padding);
             
-            // Draw uploaded image if available
+            // Draw uploaded image if available with independent X and Y scaling
             if (uploadedImage && showImage) {
+                ctx.save();
+                
+                // Calculate separate X and Y scale factors
+                const imageScaleX = boxWidth / uploadedImage.width;
+                const imageScaleY = boxHeight / uploadedImage.height;
+                
                 ctx.globalAlpha = 0.5; // Semi-transparent
-                // Scale image to fit exactly within the box dimensions
-                ctx.drawImage(uploadedImage, 0, 0, boxWidth * scale, boxHeight * scale);
-                ctx.globalAlpha = 1.0;
+                
+                // Scale the context independently for X and Y
+                ctx.scale(imageScaleX * scale, imageScaleY * scale);
+                
+                // Draw the image at its original size (the scaling is done by context)
+                ctx.drawImage(uploadedImage, 0, 0);
+                
+                ctx.restore();
             }
             
             // Draw grid if snap is on
@@ -1135,7 +1146,7 @@ X,Y\n`;
             document.getElementById('year').value = '2024';
             document.getElementById('version').value = '1.5';
             document.getElementById('date').value = '2025-08-15';
-            document.getElementById('boxWidth').value = '450';
+            document.getElementById('boxWidth').value = '500';
             document.getElementById('boxHeight').value = '1100';
             document.getElementById('thicknessRatio').value = '0.16';
             
