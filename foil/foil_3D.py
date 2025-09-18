@@ -32,12 +32,12 @@ CONFIG = {
     'apex_at_top': 64.0,        # mm measured thickness at top
     'naca_points': max(20, 80 // COMPLEXITY_REDUCTION),  # Points per section
     'base_slice_spacing': 3.0 * COMPLEXITY_REDUCTION,  # Base spacing
-    'min_slice_spacing': 2.0,    # mm minimum spacing even in high curvature
-    'max_slice_spacing': 15.0,   # mm maximum spacing in straight sections
-    'curvature_samples': 50,     # Number of points to sample for curvature analysis
+    'min_slice_spacing': 1.0,    # mm minimum spacing even in high curvature
+    'max_slice_spacing': 5.0,   # mm maximum spacing in straight sections
+    'curvature_samples': 100,     # Number of points to sample for curvature analysis
     'min_chord_length': 10.0,    # mm minimum chord to include
     'stl_tolerance': min(0.2, 0.05 * COMPLEXITY_REDUCTION),  # STL tolerance
-    'plane_size': 1000,          # mm sectioning plane size
+    'plane_size': 1100,          # mm sectioning plane size
 }
 
 print(f"🔧 Complexity reduction: {COMPLEXITY_REDUCTION}x")
@@ -322,11 +322,8 @@ def build_foil_from_step(doc):
     
     print(f"✅ Found {len(chords)} chords")
     
-    # Calculate NACA thickness from apex measurement
-    top_chord = max(chords, key=lambda c: c[0][1])
-    top_chord_length = top_chord[1][0] - top_chord[0][0]
-    thickness_percent = (CONFIG['apex_at_top'] / top_chord_length) * 100.0
-    thickness_percent = max(5.0, min(25.0, thickness_percent))  # Clamp 5-25%
+    # Use fixed NACA thickness ratio
+    thickness_percent = 16.0  # Fixed 16% thickness for all sections
     
     print(f"🎯 NACA 00{int(thickness_percent):02d} ({thickness_percent:.1f}% thick)")
     

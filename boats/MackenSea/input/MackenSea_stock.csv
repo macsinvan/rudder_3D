@@ -1,12 +1,14 @@
 # Rudder Stock Configuration
 # This defines the rudder stock. The top reference point (0) is the point that the stock enters the rudder.
-# Units: All measurements in millimeters, angles in degrees
+# Units: All measurements in millimetres, angles in degrees
 
 # OVERVIEW
 boat_name,MackenSea
 version,1.0.0
 style,wedge
 cutout_mm,2
+x_position,364
+y_position, 66
 
 # POST SECTIONS
 # Posts define the main shaft segments (cylinder or tapered)

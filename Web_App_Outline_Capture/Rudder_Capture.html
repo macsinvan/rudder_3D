@@ -371,7 +371,7 @@
     <div class="app-container">
         <div class="header">
             <h1>⚓ Rudder Outline Design Tool</h1>
-            <p>Create and edit rudder profile specifications with coordinate points</p>
+            <p>Create and edit rudder profile specifications with coordinate points (Circular Arc Version)</p>
         </div>
         
         <div class="toolbar">
@@ -478,7 +478,7 @@
                 
                 <div class="right-panel">
                     <div class="panel-section" style="height: 100%; display: flex; flex-direction: column;">
-                        <h3>Visual Preview</h3>
+                        <h3>Visual Preview (Circular Arcs)</h3>
                         <div class="canvas-controls" style="padding: 10px 0;">
                             <button onclick="zoomIn()">🔍+ Zoom In</button>
                             <button onclick="zoomOut()">🔍- Zoom Out</button>
@@ -490,7 +490,7 @@
                         </div>
                         <div class="canvas-info" style="margin-top: 10px; flex-shrink: 0;">
                             <strong>Info:</strong> Origin (0,0) is at top-left. LINE segments need 1 point. ARC segments need 2 points (apex, end).
-                            Grid size: 10mm. Total points: <span id="pointCount">0</span>. Toggle image/grid with toolbar buttons.
+                            Arcs are drawn as circular segments matching FreeCAD. Grid size: 10mm. Total points: <span id="pointCount">0</span>.
                         </div>
                     </div>
                 </div>
@@ -726,6 +726,78 @@
             }
         }
         
+        // Calculate circle center from three points
+        function calculateCircleCenter(p1, p2, p3) {
+            const ax = p1.x;
+            const ay = p1.y;
+            const bx = p2.x;
+            const by = p2.y;
+            const cx = p3.x;
+            const cy = p3.y;
+            
+            const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+            
+            if (Math.abs(d) < 0.001) {
+                // Points are collinear, return null
+                return null;
+            }
+            
+            const ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d;
+            const uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d;
+            
+            return {x: ux, y: uy};
+        }
+        
+        // Draw circular arc through three points
+        function drawCircularArc(ctx, startPoint, apexPoint, endPoint, scale) {
+            // Calculate center and radius
+            const center = calculateCircleCenter(startPoint, apexPoint, endPoint);
+            
+            if (!center) {
+                // Points are collinear, draw straight lines
+                ctx.lineTo(apexPoint.x * scale, apexPoint.y * scale);
+                ctx.lineTo(endPoint.x * scale, endPoint.y * scale);
+                return;
+            }
+            
+            const radius = Math.sqrt(Math.pow(startPoint.x - center.x, 2) + Math.pow(startPoint.y - center.y, 2));
+            
+            // Calculate angles
+            let startAngle = Math.atan2(startPoint.y - center.y, startPoint.x - center.x);
+            let apexAngle = Math.atan2(apexPoint.y - center.y, apexPoint.x - center.x);
+            let endAngle = Math.atan2(endPoint.y - center.y, endPoint.x - center.x);
+            
+            // Determine if we should draw clockwise or counterclockwise
+            // by checking if apex is on the correct side of the arc
+            let counterClockwise = false;
+            
+            // Normalize angles to [0, 2π]
+            const normalize = (angle) => {
+                while (angle < 0) angle += 2 * Math.PI;
+                while (angle >= 2 * Math.PI) angle -= 2 * Math.PI;
+                return angle;
+            };
+            
+            startAngle = normalize(startAngle);
+            apexAngle = normalize(apexAngle);
+            endAngle = normalize(endAngle);
+            
+            // Check if we need to go counterclockwise to pass through apex
+            if (startAngle <= endAngle) {
+                // Normal case
+                counterClockwise = (apexAngle < startAngle || apexAngle > endAngle);
+            } else {
+                // Wrapped case
+                counterClockwise = (apexAngle < startAngle && apexAngle > endAngle);
+            }
+            
+            // Draw the arc
+            ctx.arc(center.x * scale, center.y * scale, radius * scale, 
+                   Math.atan2(startPoint.y - center.y, startPoint.x - center.x),
+                   Math.atan2(endPoint.y - center.y, endPoint.x - center.x),
+                   counterClockwise);
+        }
+        
         function drawCanvas() {
             const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 500;
             const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
@@ -823,13 +895,8 @@
                         const apexPoint = segment.points[0];
                         const endPoint = segment.points[1];
                         
-                        // Draw quadratic curve using apex as control point
-                        ctx.quadraticCurveTo(
-                            apexPoint.x * scale, 
-                            apexPoint.y * scale,
-                            endPoint.x * scale, 
-                            endPoint.y * scale
-                        );
+                        // Draw circular arc through three points
+                        drawCircularArc(ctx, currentPos, apexPoint, endPoint, scale);
                         currentPos = endPoint;
                     }
                 });
@@ -1266,21 +1333,13 @@ BoxSize,${boxWidth},${boxHeight}`;
             csv += `\n\n# --- Outline Points (X,Z) ---
 X,Y\n`;
             
-            // Add the initial point (0,0)
-            let currentType = null;
-            let firstPoint = true;
-            
-            // Group consecutive segments of the same type
+            // Add segments without grouping - each segment gets its own declaration
             segments.forEach((segment, index) => {
-                if (segment.type !== currentType) {
-                    csv += `SEGMENT,${segment.type}\n`;
-                    currentType = segment.type;
-                    
-                    // For the first segment, add the origin point
-                    if (firstPoint) {
-                        csv += `0.0,0.0\n`;
-                        firstPoint = false;
-                    }
+                csv += `SEGMENT,${segment.type}\n`;
+                
+                // For the first segment, add the origin point before the segment points
+                if (index === 0) {
+                    csv += `0.0,0.0\n`;
                 }
                 
                 // Add segment points
@@ -1325,20 +1384,18 @@ X,Y\n`;
             document.getElementById('imageStatus').textContent = '⚠️ Example image path - select actual file to display';
             document.getElementById('imageStatus').style.color = '#ff9800';
             
-            // Add example segments - properly structured
+            // Add example segments from the actual CSV data
             segments = [
-                {type: 'LINE', points: [{x: 436.2, y: 0.0}]},
-                {type: 'LINE', points: [{x: 436.2, y: 89.3}]},
-                {type: 'LINE', points: [{x: 395.6, y: 564.0}]},
-                {type: 'ARC', points: [{x: 365.4, y: 775.9}, {x: 327.0, y: 971.1}]},
-                {type: 'ARC', points: [{x: 313.9, y: 1004.3}, {x: 301.3, y: 1027.3}]},
-                {type: 'ARC', points: [{x: 281.3, y: 1049.0}, {x: 261.3, y: 1065.5}]},
-                {type: 'ARC', points: [{x: 243.8, y: 1075.8}, {x: 220.0, y: 1083.0}]},
-                {type: 'ARC', points: [{x: 193.8, y: 1088.0}, {x: 170.0, y: 1090.0}]},
-                {type: 'LINE', points: [{x: 107.5, y: 1090.0}]},
+                {type: 'LINE', points: [{x: 500, y: 0}]},
+                {type: 'LINE', points: [{x: 500, y: 89.4347680133322}]},
+                {type: 'LINE', points: [{x: 449.17654286260193, y: 574.8695506220279}]},
+                {type: 'ARC', points: [{x: 426.50170436291944, y: 802.1755974841772}, {x: 372.6548037321671, y: 976.6086810568105}]},
+                {type: 'ARC', points: [{x: 337.18490988778655, y: 1053.2687072173183}, {x: 279.46862989222757, y: 1078.3017395934542}]},
+                {type: 'ARC', points: [{x: 250.68833502125707, y: 1085.154190753209}, {x: 219.9154534478972, y: 1087.2885310216889}]},
+                {type: 'LINE', points: [{x: 122.85328333696499, y: 1097.8596584595132}]},
                 {type: 'LINE', points: [{x: 36.9, y: 571.7}]},
-                {type: 'ARC', points: [{x: 19.6, y: 356.0}, {x: 4.8, y: 158.2}]},
-                {type: 'LINE', points: [{x: 0.0, y: 0.0}]}
+                {type: 'ARC', points: [{x: 19.6, y: 356}, {x: 4.8, y: 158.2}]},
+                {type: 'LINE', points: [{x: 0, y: 0}]}
             ];
             
             updateSegmentsList();

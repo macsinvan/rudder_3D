@@ -1,0 +1,497 @@
+# -*- coding: utf-8 -*-
+"""
+Lewmar T2 Traveler Track Profile Generator for FreeCAD
+Creates the MALE track with protruding center section
+"""
+
+import FreeCAD as App
+import Part
+from FreeCAD import Base
+import math
+from PySide import QtGui, QtCore
+
+class TrackProfileDialog(QtGui.QDialog):
+    """Dialog for entering track profile parameters"""
+    
+    def __init__(self):
+        super(TrackProfileDialog, self).__init__()
+        self.initUI()
+        
+    def initUI(self):
+        self.setWindowTitle("Lewmar MALE Track Profile Generator")
+        self.setMinimumWidth(450)
+        
+        layout = QtGui.QVBoxLayout()
+        
+        # Add description
+        desc = QtGui.QLabel("<b>Lewmar MALE Track Generator</b><br>"
+                           "Creates track with protruding center section that the car rides over.<br>"
+                           "The track has raised features, not hollow channels!")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+        
+        # Create form layout for parameters
+        formLayout = QtGui.QFormLayout()
+        
+        # Base plate dimensions
+        self.baseWidth = self.createSpinBox(30.0, 20.0, 50.0, 0.1, " mm")
+        self.baseHeight = self.createSpinBox(3.0, 2.0, 6.0, 0.1, " mm")
+        self.trackLength = self.createSpinBox(200.0, 50.0, 3000.0, 1.0, " mm")
+        
+        # Protruding center section dimensions
+        self.ridgeWidth = self.createSpinBox(18.0, 12.0, 25.0, 0.1, " mm")
+        self.ridgeHeight = self.createSpinBox(12.0, 8.0, 20.0, 0.1, " mm")
+        self.topWidth = self.createSpinBox(16.0, 10.0, 22.0, 0.1, " mm")
+        
+        # Neck/stem dimensions (connects ridge to base)
+        self.neckWidth = self.createSpinBox(14.0, 8.0, 20.0, 0.1, " mm")
+        self.neckHeight = self.createSpinBox(2.0, 1.0, 4.0, 0.1, " mm")
+        
+        # Ball bearing race parameters
+        self.ballDiameter = self.createSpinBox(7.8, 5.0, 10.0, 0.1, " mm")
+        self.raceRadius = self.createSpinBox(4.2, 3.0, 6.0, 0.1, " mm")
+        self.raceHeight = self.createSpinBox(8.0, 5.0, 12.0, 0.1, " mm")
+        self.raceInset = self.createSpinBox(1.5, 0.5, 3.0, 0.1, " mm")
+        
+        # Chamfer/Fillet parameters
+        self.chamferSize = self.createSpinBox(0.8, 0.2, 2.0, 0.1, " mm")
+        self.raceFillet = self.createSpinBox(0.3, 0.1, 1.0, 0.1, " mm")
+        
+        # Mounting holes
+        self.holeSpacing = self.createSpinBox(100.0, 50.0, 200.0, 1.0, " mm")
+        self.holeDiameter = self.createSpinBox(6.0, 4.0, 10.0, 0.5, " mm")
+        
+        # Add to form
+        formLayout.addRow(QtGui.QLabel("<b>Base Plate Dimensions</b>"))
+        formLayout.addRow("Base Width:", self.baseWidth)
+        formLayout.addRow("Base Height:", self.baseHeight)
+        formLayout.addRow("Track Length:", self.trackLength)
+        
+        formLayout.addRow(QtGui.QLabel("<b>Protruding Ridge (Male Part)</b>"))
+        formLayout.addRow("Ridge Bottom Width:", self.ridgeWidth)
+        formLayout.addRow("Ridge Height:", self.ridgeHeight)
+        formLayout.addRow("Ridge Top Width:", self.topWidth)
+        
+        formLayout.addRow(QtGui.QLabel("<b>Neck Section</b>"))
+        formLayout.addRow("Neck Width:", self.neckWidth)
+        formLayout.addRow("Neck Height:", self.neckHeight)
+        
+        formLayout.addRow(QtGui.QLabel("<b>Ball Bearing Races</b>"))
+        formLayout.addRow("Ball Diameter:", self.ballDiameter)
+        formLayout.addRow("Race Radius:", self.raceRadius)
+        formLayout.addRow("Race Center Height:", self.raceHeight)
+        formLayout.addRow("Race Inset from Edge:", self.raceInset)
+        
+        formLayout.addRow(QtGui.QLabel("<b>Edge Treatment</b>"))
+        formLayout.addRow("Chamfer Size:", self.chamferSize)
+        formLayout.addRow("Race Fillet Radius:", self.raceFillet)
+        
+        formLayout.addRow(QtGui.QLabel("<b>Mounting Holes</b>"))
+        formLayout.addRow("Hole Spacing:", self.holeSpacing)
+        formLayout.addRow("Hole Diameter:", self.holeDiameter)
+        
+        layout.addLayout(formLayout)
+        
+        # Buttons
+        buttonBox = QtGui.QDialogButtonBox()
+        buttonBox.setStandardButtons(QtGui.QDialogButtonBox.Ok | QtGui.QDialogButtonBox.Cancel)
+        buttonBox.accepted.connect(self.accept)
+        buttonBox.rejected.connect(self.reject)
+        
+        layout.addWidget(buttonBox)
+        
+        info = QtGui.QLabel("\n<b>Remember:</b> This creates the MALE track.\n"
+                           "The car (female) slides OVER this protruding section.")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+        
+        self.setLayout(layout)
+        
+    def createSpinBox(self, value, minimum, maximum, step, suffix):
+        spinBox = QtGui.QDoubleSpinBox()
+        spinBox.setValue(value)
+        spinBox.setMinimum(minimum)
+        spinBox.setMaximum(maximum)
+        spinBox.setSingleStep(step)
+        spinBox.setSuffix(suffix)
+        spinBox.setDecimals(2)
+        return spinBox
+    
+    def getParameters(self):
+        return {
+            'baseWidth': self.baseWidth.value(),
+            'baseHeight': self.baseHeight.value(),
+            'trackLength': self.trackLength.value(),
+            'ridgeWidth': self.ridgeWidth.value(),
+            'ridgeHeight': self.ridgeHeight.value(),
+            'topWidth': self.topWidth.value(),
+            'neckWidth': self.neckWidth.value(),
+            'neckHeight': self.neckHeight.value(),
+            'ballDiameter': self.ballDiameter.value(),
+            'raceRadius': self.raceRadius.value(),
+            'raceHeight': self.raceHeight.value(),
+            'raceInset': self.raceInset.value(),
+            'chamferSize': self.chamferSize.value(),
+            'raceFillet': self.raceFillet.value(),
+            'holeSpacing': self.holeSpacing.value(),
+            'holeDiameter': self.holeDiameter.value()
+        }
+
+def createMaleTrack(params):
+    """Create the MALE track with protruding center section"""
+    
+    # Extract parameters
+    baseW = params['baseWidth']
+    baseH = params['baseHeight']
+    L = params['trackLength']
+    ridgeW = params['ridgeWidth']
+    ridgeH = params['ridgeHeight']
+    topW = params['topWidth']
+    neckW = params['neckWidth']
+    neckH = params['neckHeight']
+    ballD = params['ballDiameter']
+    raceR = params['raceRadius']
+    raceHeight = params['raceHeight']
+    raceInset = params['raceInset']
+    chamferSize = params['chamferSize']
+    raceFillet = params['raceFillet']
+    holeSpacing = params['holeSpacing']
+    holeD = params['holeDiameter']
+    
+    # Create new document if needed
+    if App.ActiveDocument is None:
+        App.newDocument("LewmarTrack")
+    doc = App.ActiveDocument
+    
+    # Clear existing objects
+    for obj_name in ["LewmarMaleTrack", "TrackProfile2D", "BallBearings", "CountersinkDebug"]:
+        obj = doc.getObject(obj_name)
+        if obj:
+            doc.removeObject(obj)
+    
+    # Build the track from bottom up
+    
+    # 1. Create the base plate
+    base = Part.makeBox(baseW, baseH, L)
+    base.translate(Base.Vector(-baseW/2, 0, 0))
+    
+    # 2. Create the neck section (narrower part that connects to base)
+    neck = Part.makeBox(neckW, neckH, L)
+    neck.translate(Base.Vector(-neckW/2, baseH, 0))
+    
+    # 3. Create the main ridge (wider section with ball races)
+    # This is a tapered section - wider at bottom, narrower at top
+    ridge_points = [
+        Base.Vector(-ridgeW/2, baseH + neckH, 0),
+        Base.Vector(ridgeW/2, baseH + neckH, 0),
+        Base.Vector(topW/2, baseH + neckH + ridgeH, 0),
+        Base.Vector(-topW/2, baseH + neckH + ridgeH, 0),
+        Base.Vector(-ridgeW/2, baseH + neckH, 0)
+    ]
+    
+    ridge_wire = Part.makePolygon(ridge_points)
+    ridge_face = Part.Face(ridge_wire)
+    ridge = ridge_face.extrude(Base.Vector(0, 0, L))
+    
+    # Combine all parts
+    track = base.fuse(neck).fuse(ridge)
+    
+    # 4. Add the ball bearing races (grooves cut into the sides of the ridge)
+    # Left race - cuts into left side of ridge
+    left_race_x = -ridgeW/2 + raceInset
+    left_race_cyl = Part.makeCylinder(
+        raceR,
+        L * 1.1,
+        Base.Vector(left_race_x, raceHeight, -L * 0.05),
+        Base.Vector(0, 0, 1)
+    )
+    
+    # Right race - cuts into right side of ridge
+    right_race_x = ridgeW/2 - raceInset
+    right_race_cyl = Part.makeCylinder(
+        raceR,
+        L * 1.1,
+        Base.Vector(right_race_x, raceHeight, -L * 0.05),
+        Base.Vector(0, 0, 1)
+    )
+    
+    # Cut the races
+    track = track.cut(left_race_cyl)
+    track = track.cut(right_race_cyl)
+    
+    # 4.5. Add chamfers to smooth the sharp edges
+    try:
+        # Collect edges to chamfer
+        edges_to_chamfer = []
+        
+        # Define height levels for better edge detection
+        top_level = baseH + neckH + ridgeH
+        ridge_base_level = baseH + neckH
+        neck_base_level = baseH
+        
+        # Find edges to chamfer based on their position
+        for edge in track.Edges:
+            edge_center = edge.CenterOfMass
+            edge_length = edge.Length
+            
+            # Skip very short edges (likely artifacts)
+            if edge_length < 1:
+                continue
+                
+            # Top edges of the ridge (both lengthwise and width-wise)
+            if abs(edge_center.y - top_level) < 0.5:
+                edges_to_chamfer.append(edge)
+            # Vertical edges at ridge corners
+            elif abs(edge_center.x) > (topW/2 - 1) and \
+                 edge_center.y > ridge_base_level and edge_center.y < top_level:
+                edges_to_chamfer.append(edge)
+            # Transition edges between ridge and neck
+            elif abs(edge_center.y - ridge_base_level) < 0.5 and \
+                 abs(edge_center.x) < ridgeW/2 + 1:
+                edges_to_chamfer.append(edge)
+            # Vertical edges at neck corners
+            elif abs(edge_center.x) > (neckW/2 - 1) and abs(edge_center.x) < (ridgeW/2 + 1) and \
+                 edge_center.y > neck_base_level and edge_center.y < ridge_base_level:
+                edges_to_chamfer.append(edge)
+            # BASE PLATE EDGES - top edges where base meets air
+            elif abs(edge_center.y - baseH) < 0.5 and \
+                 abs(edge_center.x) > (neckW/2 + 1):
+                edges_to_chamfer.append(edge)
+            # BASE PLATE EDGES - outer vertical edges
+            elif abs(edge_center.x - baseW/2) < 0.5 and \
+                 edge_center.y < baseH:
+                edges_to_chamfer.append(edge)
+            elif abs(edge_center.x + baseW/2) < 0.5 and \
+                 edge_center.y < baseH:
+                edges_to_chamfer.append(edge)
+        
+        # Apply chamfers
+        if edges_to_chamfer:
+            # Sort edges by length to prioritize longer edges
+            edges_to_chamfer.sort(key=lambda e: e.Length, reverse=True)
+            # Apply chamfer to up to 24 edges (increased to include base edges)
+            num_to_chamfer = min(24, len(edges_to_chamfer))
+            track = track.makeChamfer(chamferSize, edges_to_chamfer[:num_to_chamfer])
+            print(f"Applied {chamferSize}mm chamfers to {num_to_chamfer} edges")
+        
+        # Try to add fillets to the race edges for smoother ball movement
+        race_edges = []
+        for edge in track.Edges:
+            # Find edges around the race cuts
+            if (abs(edge.CenterOfMass.x - left_race_x) < raceR or 
+                abs(edge.CenterOfMass.x - right_race_x) < raceR) and \
+               abs(edge.CenterOfMass.y - raceHeight) < raceR:
+                if edge.Length < 10:  # Only short edges that are part of the race
+                    race_edges.append(edge)
+        
+        if race_edges:
+            track = track.makeFillet(raceFillet, race_edges[:min(8, len(race_edges))])
+            print(f"Applied {raceFillet}mm fillets to {min(8, len(race_edges))} race edges")
+            
+    except Exception as e:
+        print(f"Warning: Could not apply all chamfers/fillets: {e}")
+        print("Continuing with partially chamfered model...")
+    
+    # 5. Add mounting holes through the base
+    num_holes = max(2, int(L / holeSpacing))
+    actual_spacing = L / (num_holes + 1)
+    
+    total_height = baseH + neckH + ridgeH
+    
+    for i in range(1, num_holes + 1):
+        z_pos = i * actual_spacing
+        
+        # Hole through entire track height
+        hole = Part.makeCylinder(holeD/2, total_height * 1.2, 
+                                Base.Vector(0, -total_height * 0.1, z_pos), 
+                                Base.Vector(0, 1, 0))
+        track = track.cut(hole)
+        
+        # Countersink at TOP of track - lowered to cut into material
+        cs_cone = Part.makeCone(holeD/2, holeD, 1.5, 
+                               Base.Vector(0, total_height - 1.0, z_pos), 
+                               Base.Vector(0, 1, 0))
+        track = track.cut(cs_cone)
+    
+    # Add to document
+    track_obj = doc.addObject("Part::Feature", "LewmarMaleTrack")
+    track_obj.Shape = track
+    track_obj.ViewObject.ShapeColor = (0.3, 0.35, 0.4)
+    track_obj.ViewObject.DisplayMode = "Shaded"
+    
+    doc.recompute()
+    
+    # Create 2D profile
+    create2DProfile(params, doc)
+    
+    # Create sample balls
+    createSampleBalls(params, doc)
+    
+    # Zoom to fit
+    try:
+        import FreeCADGui as Gui
+        Gui.ActiveDocument.ActiveView.viewAxometric()
+        Gui.SendMsgToActiveView("ViewFit")
+    except:
+        pass
+    
+    print("="*60)
+    print("MALE Track created successfully!")
+    print("="*60)
+    print(f"Base plate: {baseW}mm x {baseH}mm")
+    print(f"Protruding ridge: {ridgeW}mm wide x {ridgeH}mm high")
+    print(f"Total height: {baseH + neckH + ridgeH}mm")
+    print(f"Ball races: {raceR}mm radius on sides of ridge")
+    print(f"Edge treatment: {chamferSize}mm chamfers, {raceFillet}mm race fillets")
+    print("\nThis is the MALE track with:")
+    print("✓ Flat base for mounting")
+    print("✓ Protruding center ridge")
+    print("✓ Ball races on the OUTSIDE of the ridge")
+    print("✓ Chamfered edges for smooth operation")
+    print("✓ Car slides OVER this ridge")
+    
+    return doc
+
+def create2DProfile(params, doc):
+    """Create 2D cross-section of the MALE track"""
+    
+    baseW = params['baseWidth']
+    baseH = params['baseHeight']
+    ridgeW = params['ridgeWidth']
+    ridgeH = params['ridgeHeight']
+    topW = params['topWidth']
+    neckW = params['neckWidth']
+    neckH = params['neckHeight']
+    raceR = params['raceRadius']
+    raceHeight = params['raceHeight']
+    raceInset = params['raceInset']
+    ballD = params['ballDiameter']
+    
+    # Create profile outline
+    profile_points = []
+    
+    # Base (from left to right)
+    profile_points.append(Base.Vector(-baseW/2, 0, 0))
+    profile_points.append(Base.Vector(baseW/2, 0, 0))
+    profile_points.append(Base.Vector(baseW/2, baseH, 0))
+    
+    # Right side transition to neck
+    profile_points.append(Base.Vector(neckW/2, baseH, 0))
+    profile_points.append(Base.Vector(neckW/2, baseH + neckH, 0))
+    
+    # Right side transition to ridge
+    profile_points.append(Base.Vector(ridgeW/2, baseH + neckH, 0))
+    profile_points.append(Base.Vector(topW/2, baseH + neckH + ridgeH, 0))
+    
+    # Top of ridge
+    profile_points.append(Base.Vector(-topW/2, baseH + neckH + ridgeH, 0))
+    
+    # Left side down
+    profile_points.append(Base.Vector(-ridgeW/2, baseH + neckH, 0))
+    profile_points.append(Base.Vector(-neckW/2, baseH + neckH, 0))
+    profile_points.append(Base.Vector(-neckW/2, baseH, 0))
+    profile_points.append(Base.Vector(-baseW/2, baseH, 0))
+    profile_points.append(Base.Vector(-baseW/2, 0, 0))
+    
+    profile_wire = Part.makePolygon(profile_points)
+    
+    # Ball race circles on the sides
+    left_race_x = -ridgeW/2 + raceInset
+    left_race = Part.makeCircle(raceR, Base.Vector(left_race_x, raceHeight, 0))
+    
+    right_race_x = ridgeW/2 - raceInset
+    right_race = Part.makeCircle(raceR, Base.Vector(right_race_x, raceHeight, 0))
+    
+    # Ball positions
+    left_ball = Part.makeCircle(ballD/2, Base.Vector(left_race_x, raceHeight, 0))
+    right_ball = Part.makeCircle(ballD/2, Base.Vector(right_race_x, raceHeight, 0))
+    
+    # Combine all elements
+    compound = Part.Compound([profile_wire, left_race, right_race, left_ball, right_ball])
+    
+    # Create object
+    profile_2d = doc.addObject("Part::Feature", "TrackProfile2D")
+    profile_2d.Shape = compound
+    profile_2d.ViewObject.LineColor = (0.0, 0.0, 1.0)
+    profile_2d.ViewObject.LineWidth = 2.0
+    
+    # Position below 3D model
+    profile_2d.Placement = App.Placement(App.Vector(0, -(baseH + ridgeH) * 2, 0), App.Rotation())
+    
+    return profile_2d
+
+def createSampleBalls(params, doc):
+    """Create sample balls on the OUTSIDE of the ridge"""
+    
+    ridgeW = params['ridgeWidth']
+    raceHeight = params['raceHeight']
+    raceInset = params['raceInset']
+    ballD = params['ballDiameter']
+    L = params['trackLength']
+    
+    balls = []
+    num_balls = 8
+    ball_spacing = L / (num_balls + 1)
+    
+    # Position balls on the OUTSIDE of the ridge
+    left_ball_x = -ridgeW/2 + raceInset
+    right_ball_x = ridgeW/2 - raceInset
+    
+    for i in range(1, num_balls + 1):
+        z_pos = i * ball_spacing
+        
+        # Left race ball
+        left_ball = Part.makeSphere(ballD/2, Base.Vector(left_ball_x, raceHeight, z_pos))
+        # Right race ball
+        right_ball = Part.makeSphere(ballD/2, Base.Vector(right_ball_x, raceHeight, z_pos))
+        
+        balls.append(left_ball)
+        balls.append(right_ball)
+    
+    # Combine all balls
+    if balls:
+        all_balls = balls[0]
+        for ball in balls[1:]:
+            all_balls = all_balls.fuse(ball)
+        
+        balls_obj = doc.addObject("Part::Feature", "BallBearings")
+        balls_obj.Shape = all_balls
+        balls_obj.ViewObject.ShapeColor = (0.9, 0.9, 0.1)
+        balls_obj.ViewObject.Transparency = 20
+    
+    return balls_obj
+
+# Main execution
+def main():
+    # Show dialog
+    dialog = TrackProfileDialog()
+    
+    if dialog.exec_():
+        params = dialog.getParameters()
+        
+        try:
+            doc = createMaleTrack(params)
+            
+            print("\n" + "="*60)
+            print("SUCCESS! MALE track profile created!")
+            print("="*60)
+            print("\nKey points:")
+            print("• This is the MALE track (not the car)")
+            print("• Has protruding ridge in the center")
+            print("• Ball races on the OUTSIDE of the ridge")
+            print("• Car (female) slides OVER this ridge")
+            print("• Mounting holes through the base")
+            print("\nComponents:")
+            print("- LewmarMaleTrack: The track with protruding ridge")
+            print("- TrackProfile2D: Cross-section view")
+            print("- BallBearings: Balls on the ridge sides")
+            
+        except Exception as e:
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print("Cancelled")
+
+if __name__ == "__main__":
+    main()
