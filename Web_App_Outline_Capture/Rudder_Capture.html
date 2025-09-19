@@ -380,7 +380,7 @@
                 <input type="file" id="importFile" accept=".csv,.txt" onchange="importFile(event)">
                 <label for="importFile" class="file-input-label">📁 Import CSV</label>
             </div>
-            <button onclick="exportCSV()" class="primary">💾 Export CSV</button>
+            <button onclick="exportCSV()">💾 Export CSV</button>
             <button onclick="generateExamplePoints()">📐 Load Example</button>
             <button onclick="toggleGridSnap()" id="gridSnapBtn">📏 Grid Snap: OFF</button>
             <button onclick="toggleImage()" id="imageToggleBtn" style="display: none;">🖼️ Image: ON</button>
@@ -617,10 +617,10 @@
             };
             
             if (type === 'LINE') {
-                segment.points.push({x: 0, y: 0});
+                segment.points.push({x: 0.0, y: 0.0});
             } else if (type === 'ARC') {
-                segment.points.push({x: 0, y: 0}); // apex
-                segment.points.push({x: 0, y: 0}); // end
+                segment.points.push({x: 0.0, y: 0.0}); // apex
+                segment.points.push({x: 0.0, y: 0.0}); // end
             }
             
             segments.push(segment);
@@ -649,9 +649,9 @@
                     block.innerHTML = `
                         <div class="segment-row">
                             <span class="segment-type">SEGMENT: LINE</span>
-                            <span class="point-label">${pointNum}. End:</span>
-                            <input type="number" value="${segment.points[0].x}" step="0.1" placeholder="X" onchange="updatePoint(${segIndex}, 0, 'x', this.value)" style="width: 70px; padding: 4px;">
-                            <input type="number" value="${segment.points[0].y}" step="0.1" placeholder="Y" onchange="updatePoint(${segIndex}, 0, 'y', this.value)" style="width: 70px; padding: 4px;">
+                            <span class="point-label" style="min-width: 65px; display: inline-block;">${pointNum}. End:</span>
+                            <input type="number" value="${segment.points[0].x.toFixed(1)}" step="0.5" placeholder="X" onchange="updatePoint(${segIndex}, 0, 'x', this.value)" style="width: 70px; padding: 4px;">
+                            <input type="number" value="${segment.points[0].y.toFixed(1)}" step="0.5" placeholder="Y" onchange="updatePoint(${segIndex}, 0, 'y', this.value)" style="width: 70px; padding: 4px;">
                             <button onclick="removeSegment(${segIndex})" style="padding: 4px 8px; background: #f44336; color: white; border: none; border-radius: 3px; margin-left: auto;">Remove</button>
                         </div>
                     `;
@@ -662,14 +662,14 @@
                         <div style="display: flex; flex-direction: column; gap: 5px;">
                             <div class="segment-row">
                                 <span class="segment-type">SEGMENT: ARC</span>
-                                <span class="point-label">${pointNum}a. Apex:</span>
-                                <input type="number" value="${segment.points[0].x}" step="0.1" placeholder="X" onchange="updatePoint(${segIndex}, 0, 'x', this.value)" style="width: 70px; padding: 4px;">
-                                <input type="number" value="${segment.points[0].y}" step="0.1" placeholder="Y" onchange="updatePoint(${segIndex}, 0, 'y', this.value)" style="width: 70px; padding: 4px;">
+                                <span class="point-label" style="min-width: 65px; display: inline-block;">${pointNum}a. Apex:</span>
+                                <input type="number" value="${segment.points[0].x.toFixed(1)}" step="0.5" placeholder="X" onchange="updatePoint(${segIndex}, 0, 'x', this.value)" style="width: 70px; padding: 4px;">
+                                <input type="number" value="${segment.points[0].y.toFixed(1)}" step="0.5" placeholder="Y" onchange="updatePoint(${segIndex}, 0, 'y', this.value)" style="width: 70px; padding: 4px;">
                             </div>
                             <div class="segment-row" style="padding-left: 120px;">
-                                <span class="point-label">${pointNum}e. End:</span>
-                                <input type="number" value="${segment.points[1].x}" step="0.1" placeholder="X" onchange="updatePoint(${segIndex}, 1, 'x', this.value)" style="width: 70px; padding: 4px;">
-                                <input type="number" value="${segment.points[1].y}" step="0.1" placeholder="Y" onchange="updatePoint(${segIndex}, 1, 'y', this.value)" style="width: 70px; padding: 4px;">
+                                <span class="point-label" style="min-width: 65px; display: inline-block;">${pointNum}e. End:</span>
+                                <input type="number" value="${segment.points[1].x.toFixed(1)}" step="0.5" placeholder="X" onchange="updatePoint(${segIndex}, 1, 'x', this.value)" style="width: 70px; padding: 4px;">
+                                <input type="number" value="${segment.points[1].y.toFixed(1)}" step="0.5" placeholder="Y" onchange="updatePoint(${segIndex}, 1, 'y', this.value)" style="width: 70px; padding: 4px;">
                                 <button onclick="removeSegment(${segIndex})" style="padding: 4px 8px; background: #f44336; color: white; border: none; border-radius: 3px; margin-left: auto;">Remove</button>
                             </div>
                         </div>
@@ -684,7 +684,22 @@
         }
         
         function updatePoint(segIndex, pointIndex, coord, value) {
-            segments[segIndex].points[pointIndex][coord] = parseFloat(value);
+            const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 500;
+            const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
+            
+            let val = parseFloat(value);
+            
+            // Clamp values within box bounds
+            if (coord === 'x') {
+                val = Math.max(0, Math.min(val, boxWidth));
+            } else if (coord === 'y') {
+                val = Math.max(0, Math.min(val, boxHeight));
+            }
+            
+            // Round to 1 decimal place
+            val = Math.round(val * 10) / 10;
+            
+            segments[segIndex].points[pointIndex][coord] = val;
             drawCanvas();
         }
         
@@ -1033,14 +1048,25 @@
                 drawCanvas();
             } else if (isDraggingPoint && selectedPoint) {
                 // Drag the selected point
+                const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 500;
+                const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
+                
                 let newX = mousePos.x;
                 let newY = mousePos.y;
                 
-                // Apply grid snap if enabled
+                // Apply grid snap if enabled (0.5mm increments)
                 if (gridSnap) {
-                    newX = Math.round(newX / 10) * 10;
-                    newY = Math.round(newY / 10) * 10;
+                    newX = Math.round(newX * 2) / 2;  // Round to nearest 0.5
+                    newY = Math.round(newY * 2) / 2;  // Round to nearest 0.5
                 }
+                
+                // Clamp values within box bounds
+                newX = Math.max(0, Math.min(newX, boxWidth));
+                newY = Math.max(0, Math.min(newY, boxHeight));
+                
+                // Round to 1 decimal place
+                newX = Math.round(newX * 10) / 10;
+                newY = Math.round(newY * 10) / 10;
                 
                 // Update the point position
                 segments[selectedPoint.segIndex].points[selectedPoint.pointIndex].x = newX;
@@ -1245,7 +1271,11 @@
                     } else if (line && !line.startsWith('#') && line.includes(',')) {
                         const [x, y] = line.split(',').map(v => parseFloat(v.trim()));
                         if (!isNaN(x) && !isNaN(y)) {
-                            currentSegmentPoints.push({x, y});
+                            // Round to 1 decimal place
+                            currentSegmentPoints.push({
+                                x: Math.round(x * 10) / 10,
+                                y: Math.round(y * 10) / 10
+                            });
                         }
                     }
                 }
@@ -1338,13 +1368,17 @@ X,Y\n`;
                 csv += `SEGMENT,${segment.type}\n`;
                 
                 // For the first segment, add the origin point before the segment points
+                // ONLY if the segment doesn't already start at 0,0
                 if (index === 0) {
-                    csv += `0.0,0.0\n`;
+                    const firstPoint = segment.points[0];
+                    if (!(firstPoint.x === 0 && firstPoint.y === 0)) {
+                        csv += `0.0,0.0\n`;
+                    }
                 }
                 
-                // Add segment points
+                // Add segment points (all rounded to 1 decimal)
                 segment.points.forEach(point => {
-                    csv += `${point.x},${point.y}\n`;
+                    csv += `${point.x.toFixed(1)},${point.y.toFixed(1)}\n`;
                 });
             });
             
