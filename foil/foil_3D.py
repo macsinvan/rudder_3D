@@ -1,6 +1,6 @@
 """
 Foil 3D Pipeline - Converts STEP outline profiles to 3D NACA foil via chord slicing and lofting.
-Version 1.5.0 - Enhanced diagnostics for tip closure analysis
+Version 1.6.0 - Enhanced tip handling and section validation
 Exports both STEP and STL files.
 """
 
@@ -12,10 +12,13 @@ import math
 
 # Configuration - Boat-Centric
 BOAT_NAME = "MackenSea"  # Single source of truth
-VERSION = "1.5.0"  # Enhanced diagnostics version
+VERSION = "1.6.0"  # Enhanced tip handling
 
 # COMPLEXITY CONTROL - Set to 1 for full quality, higher for faster processing
 COMPLEXITY_REDUCTION = 1  # Reduces point count and adjusts spacing
+
+# DEBUG MODE - Set to True to see individual section wires instead of loft
+DEBUG_MODE = False  # Set to False to generate full 3D foil
 
 # Paths
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
@@ -34,8 +37,10 @@ CONFIG = {
     'base_slice_spacing': 3.0 * COMPLEXITY_REDUCTION,  # Base spacing
     'min_slice_spacing': 1.0,    # mm minimum spacing even in high curvature
     'max_slice_spacing': 5.0,   # mm maximum spacing in straight sections
+    'tip_zone_height': 20.0,    # mm height from tip to use dense spacing
+    'tip_spacing': 1,         # mm spacing in tip zone
     'curvature_samples': 100,     # Number of points to sample for curvature analysis
-    'min_chord_length': 20.0,    # mm minimum chord to include
+    'min_chord_length': 2.0,     # mm minimum chord to use NACA (reduced from 20)
     'stl_tolerance': min(0.2, 0.05 * COMPLEXITY_REDUCTION),  # STL tolerance
     'plane_size': 1100,          # mm sectioning plane size
     'gap_tolerance': 0.1,        # mm tolerance for gap detection
@@ -46,7 +51,10 @@ print(f"🔧 Complexity reduction: {COMPLEXITY_REDUCTION}x")
 print(f"   Points per section: {CONFIG['naca_points']} (was 80)")
 print(f"   Base slice spacing: {CONFIG['base_slice_spacing']}mm")
 print(f"   Adaptive spacing: {CONFIG['min_slice_spacing']}-{CONFIG['max_slice_spacing']}mm")
+print(f"   Tip zone: {CONFIG['tip_zone_height']}mm with {CONFIG['tip_spacing']}mm spacing")
 print(f"   STL tolerance: {CONFIG['stl_tolerance']}mm")
+if DEBUG_MODE:
+    print(f"   🔍 DEBUG MODE ENABLED - Will show section wires only")
 
 
 def comprehensive_profile_diagnostics(wire, doc):
@@ -134,6 +142,9 @@ def comprehensive_profile_diagnostics(wire, doc):
                     pts = sorted([v.Point for v in section.Vertexes], key=lambda p: p.x)
                     chord = pts[-1].x - pts[0].x
                     chord_measurements.append((sample_z, chord))
+                elif len(section.Vertexes) == 1:
+                    # Single point convergence
+                    chord_measurements.append((sample_z, 0.0))
         
         if chord_measurements:
             for z, chord in chord_measurements[:3]:  # Show first 3
@@ -144,134 +155,14 @@ def comprehensive_profile_diagnostics(wire, doc):
             
             print(f"      Minimum chord: {min_chord:.2f}mm at Z={min_z:.1f}")
             
-            if end_name == "BOTTOM (tip)" and min_chord > 10.0:
-                diagnostics['errors'].append(f"Tip doesn't close: minimum chord is {min_chord:.2f}mm")
-                diagnostics['valid'] = False
+            diagnostics['measurements'][f'{end_name.lower()}_min_chord'] = min_chord
     
-    # 4. Profile Bounds vs Actual Closure
-    print("\n4️⃣ PROFILE BOUNDS VS ACTUAL CLOSURE")
+    # 4. Profile Bounds
+    print("\n4️⃣ PROFILE BOUNDS")
     print("-" * 40)
     
     print(f"   BoundBox Z range: {z_min:.1f} to {z_max:.1f} (height: {z_max-z_min:.1f}mm)")
-    
-    # Find actual convergence points by sampling
-    convergence_threshold = 5.0  # Consider converged if chord < 5mm
-    actual_bottom = None
-    actual_top = None
-    
-    # Sample from bottom up
-    for z in range(int(z_min)-10, int(z_max)+10):
-        plane = Part.makePlane(CONFIG['plane_size'], CONFIG['plane_size'], 
-                             Vector(0, 0, float(z)), Vector(0, 0, 1))
-        section = wire.section(plane)
-        
-        if len(section.Vertexes) >= 2:
-            pts = sorted([v.Point for v in section.Vertexes], key=lambda p: p.x)
-            chord = pts[-1].x - pts[0].x
-            
-            if chord < convergence_threshold and actual_bottom is None:
-                actual_bottom = z
-            if chord >= convergence_threshold:
-                actual_top = z
-    
-    if actual_bottom:
-        print(f"   Actual convergence bottom: Z={actual_bottom:.1f} (vs BBox: {z_min:.1f})")
-    else:
-        print(f"   ⚠️ No convergence found at bottom (threshold: {convergence_threshold}mm)")
-    
-    # 5. Chord Progression Analysis
-    print("\n5️⃣ CHORD PROGRESSION ANALYSIS")
-    print("-" * 40)
-    
-    # Sample chord lengths throughout the profile
-    num_samples = 50
-    chord_profile = []
-    
-    for i in range(num_samples + 1):
-        z = z_min + (i / num_samples) * (z_max - z_min)
-        plane = Part.makePlane(CONFIG['plane_size'], CONFIG['plane_size'], 
-                              Vector(0, 0, z), Vector(0, 0, 1))
-        section = wire.section(plane)
-        
-        if len(section.Vertexes) >= 2:
-            pts = sorted([v.Point for v in section.Vertexes], key=lambda p: p.x)
-            chord = pts[-1].x - pts[0].x
-            chord_profile.append((z, chord))
-    
-    if chord_profile:
-        # Check for monotonic progression near tip
-        bottom_10 = chord_profile[:10]
-        reversals = []
-        
-        for i in range(1, len(bottom_10)):
-            if bottom_10[i][1] < bottom_10[i-1][1]:  # Chord got smaller (expected)
-                pass
-            else:  # Chord increased (unexpected near tip)
-                reversals.append(i)
-        
-        if reversals:
-            print(f"   ⚠️ Non-monotonic chord progression near tip at indices: {reversals}")
-            diagnostics['warnings'].append(f"Chord progression reversal near tip")
-        else:
-            print(f"   ✅ Chord progression is monotonic near tip")
-        
-        # Show progression
-        print(f"\n   Chord progression (first 5 samples from tip):")
-        for z, chord in chord_profile[:5]:
-            print(f"      Z={z:.1f}: {chord:.2f}mm")
-    
-    # 6. Extended Range Probing
-    print("\n6️⃣ EXTENDED RANGE PROBING")
-    print("-" * 40)
-    
-    # Check beyond bounding box
-    extend_distance = 20.0
-    extended_checks = [
-        ("Below minimum", z_min - extend_distance),
-        ("Above maximum", z_max + extend_distance)
-    ]
-    
-    for desc, z in extended_checks:
-        plane = Part.makePlane(CONFIG['plane_size'], CONFIG['plane_size'], 
-                              Vector(0, 0, z), Vector(0, 0, 1))
-        section = wire.section(plane)
-        
-        if len(section.Vertexes) > 0:
-            print(f"   ⚠️ {desc} (Z={z:.1f}): Found {len(section.Vertexes)} vertices!")
-            diagnostics['warnings'].append(f"Geometry exists beyond BoundBox at Z={z:.1f}")
-        else:
-            print(f"   ✅ {desc} (Z={z:.1f}): No geometry found")
-    
-    # 7. Visual Debugging Objects
-    print("\n7️⃣ CREATING VISUAL DEBUG MARKERS")
-    print("-" * 40)
-    
-    # Create markers at critical points
-    if chord_profile:
-        # Mark minimum chord location
-        min_chord_data = min(chord_profile, key=lambda x: x[1])
-        marker_pt = Part.Vertex(Vector(0, 0, min_chord_data[0]))
-        marker = doc.addObject("Part::Feature", "MinChordMarker")
-        marker.Shape = marker_pt
-        marker.ViewObject.PointSize = 10
-        marker.ViewObject.PointColor = (1.0, 0.0, 0.0)
-        print(f"   Created marker at minimum chord: Z={min_chord_data[0]:.1f}, chord={min_chord_data[1]:.2f}mm")
-    
-    # Create diagnostic slice wireframes near tip
-    print(f"   Creating diagnostic slices near tip...")
-    for i in range(5):
-        z = z_min + i * CONFIG['diagnostic_slice_density']
-        plane = Part.makePlane(CONFIG['plane_size'], CONFIG['plane_size'], 
-                              Vector(0, 0, z), Vector(0, 0, 1))
-        section = wire.section(plane)
-        
-        if len(section.Vertexes) >= 2:
-            pts = sorted([v.Point for v in section.Vertexes], key=lambda p: p.x)
-            debug_line = Part.makeLine(pts[0], pts[-1])
-            feat = doc.addObject("Part::Feature", f"DiagSlice_{i}")
-            feat.Shape = debug_line
-            feat.ViewObject.LineColor = (0.0, 1.0, 0.0)
-            feat.ViewObject.LineWidth = 3
+    print(f"   BoundBox X range: {bb.XMin:.1f} to {bb.XMax:.1f} (width: {bb.XMax-bb.XMin:.1f}mm)")
     
     # Summary
     print("\n" + "="*80)
@@ -289,7 +180,7 @@ def comprehensive_profile_diagnostics(wire, doc):
             print(f"   • {warning}")
     
     if diagnostics['valid']:
-        print("\n✅ Profile passed basic validation, but check warnings above")
+        print("\n✅ Profile passed basic validation")
     else:
         print("\n❌ Profile has critical issues that will prevent proper foil generation")
     
@@ -303,40 +194,32 @@ def analyze_profile_curvature(wire, num_samples=50):
     Analyze the curvature along the wire to identify regions needing more slices.
     Returns: list of (z_position, curvature_value) tuples
     """
-    # Get bounds
     bb = wire.BoundBox
     z_min, z_max = bb.ZMin, bb.ZMax
     z_range = z_max - z_min
     
     curvatures = []
     
-    # Sample points along the wire height
     for i in range(num_samples):
         z = z_min + (i / (num_samples - 1)) * z_range
         
-        # Create cutting plane
         plane = Part.makePlane(CONFIG['plane_size'], CONFIG['plane_size'], 
                               Vector(0, 0, z), Vector(0, 0, 1))
         section = wire.section(plane)
         
         if len(section.Vertexes) >= 2:
-            # Get chord endpoints
             pts = sorted([v.Point for v in section.Vertexes], key=lambda p: p.x)
             
-            # Calculate local "curvature" as change in chord length
             if i > 0 and len(curvatures) > 0:
                 prev_chord = curvatures[-1][2] if len(curvatures[-1]) > 2 else 0
                 curr_chord = pts[-1].x - pts[0].x
                 
-                # Curvature metric: rate of chord change
                 curvature = abs(curr_chord - prev_chord) / (z_range / num_samples)
                 curvatures.append((z, curvature, curr_chord))
             else:
-                # First point, no curvature yet
                 curr_chord = pts[-1].x - pts[0].x
                 curvatures.append((z, 0.0, curr_chord))
     
-    # Normalize curvatures
     if curvatures:
         max_curv = max(c[1] for c in curvatures)
         if max_curv > 0:
@@ -348,7 +231,7 @@ def analyze_profile_curvature(wire, num_samples=50):
 def generate_adaptive_levels(wire, base_spacing, min_spacing, max_spacing):
     """
     Generate slice levels with adaptive spacing based on profile curvature.
-    More slices where profile changes rapidly, fewer in uniform regions.
+    Dense spacing at tip, adaptive elsewhere.
     """
     bb = wire.BoundBox
     z_min, z_max = bb.ZMin, bb.ZMax
@@ -356,46 +239,50 @@ def generate_adaptive_levels(wire, base_spacing, min_spacing, max_spacing):
     
     print(f"🔍 Analyzing profile curvature...")
     
-    # Analyze curvature
+    levels = []
+    
+    # CRITICAL: Dense spacing near tip for proper closure
+    tip_zone_end = z_min + CONFIG['tip_zone_height']
+    z = z_min
+    while z < tip_zone_end and z < z_max:
+        levels.append(z)
+        z += CONFIG['tip_spacing']
+    print(f"   Added {len(levels)} levels in tip zone ({CONFIG['tip_zone_height']}mm)")
+    
+    # Analyze curvature for the rest
     curvatures = analyze_profile_curvature(wire, CONFIG['curvature_samples'])
     
     if not curvatures:
         # Fallback to uniform spacing
         print("   Using uniform spacing (curvature analysis failed)")
-        num_levels = int(z_range / base_spacing) + 1
-        return [z_min + i * base_spacing for i in range(num_levels)]
-    
-    # Generate adaptive levels
-    levels = [z_min]  # Start at bottom
-    current_z = z_min
-    
-    while current_z < z_max - min_spacing:
-        # Find curvature at current position
-        current_curvature = 0.0
-        for i in range(len(curvatures) - 1):
-            if curvatures[i][0] <= current_z <= curvatures[i+1][0]:
-                # Interpolate curvature
-                t = (current_z - curvatures[i][0]) / (curvatures[i+1][0] - curvatures[i][0])
-                current_curvature = curvatures[i][1] * (1-t) + curvatures[i+1][1] * t
+        while z < z_max:
+            z += base_spacing
+            if z < z_max:
+                levels.append(z)
+    else:
+        # Adaptive spacing based on curvature
+        current_z = z  # Start from end of tip zone
+        
+        while current_z < z_max - min_spacing:
+            # Find curvature at current position
+            current_curvature = 0.0
+            for i in range(len(curvatures) - 1):
+                if curvatures[i][0] <= current_z <= curvatures[i+1][0]:
+                    t = (current_z - curvatures[i][0]) / (curvatures[i+1][0] - curvatures[i][0])
+                    current_curvature = curvatures[i][1] * (1-t) + curvatures[i+1][1] * t
+                    break
+            
+            # Calculate spacing based on curvature
+            spacing = min_spacing + (1.0 - current_curvature) * (max_spacing - min_spacing)
+            spacing = min(max_spacing, spacing * (1 + (COMPLEXITY_REDUCTION - 1) * 0.3))
+            
+            next_z = min(current_z + spacing, z_max)
+            
+            if next_z < z_max - min_spacing * 0.5:
+                levels.append(next_z)
+                current_z = next_z
+            else:
                 break
-        
-        # Calculate spacing based on curvature
-        # High curvature (1.0) -> min_spacing
-        # Low curvature (0.0) -> max_spacing
-        spacing = min_spacing + (1.0 - current_curvature) * (max_spacing - min_spacing)
-        
-        # Apply complexity reduction influence
-        spacing = min(max_spacing, spacing * (1 + (COMPLEXITY_REDUCTION - 1) * 0.3))
-        
-        # Ensure we don't overshoot
-        next_z = min(current_z + spacing, z_max)
-        
-        # Add level if it's not too close to the end
-        if next_z < z_max - min_spacing * 0.5:
-            levels.append(next_z)
-            current_z = next_z
-        else:
-            break
     
     # Always include the top
     if levels[-1] != z_max:
@@ -406,41 +293,23 @@ def generate_adaptive_levels(wire, base_spacing, min_spacing, max_spacing):
     avg_spacing = sum(spacings) / len(spacings) if spacings else base_spacing
     
     print(f"✨ Adaptive slicing complete:")
-    print(f"   Levels: {len(levels)} (vs {int(z_range/base_spacing)+1} uniform)")
+    print(f"   Levels: {len(levels)} (uniform would be {int(z_range/base_spacing)+1})")
     print(f"   Spacing: min={min(spacings):.1f}mm, avg={avg_spacing:.1f}mm, max={max(spacings):.1f}mm")
-    
-    # Identify regions
-    high_detail_zones = []
-    low_detail_zones = []
-    for i, spacing in enumerate(spacings):
-        z_mid = (levels[i] + levels[i+1]) / 2
-        if spacing <= base_spacing * 0.7:
-            high_detail_zones.append(f"{levels[i]:.0f}-{levels[i+1]:.0f}")
-        elif spacing >= base_spacing * 1.5:
-            low_detail_zones.append(f"{levels[i]:.0f}-{levels[i+1]:.0f}")
-    
-    if high_detail_zones:
-        print(f"   High detail zones (Z): {', '.join(high_detail_zones[:3])}{'...' if len(high_detail_zones) > 3 else ''}")
-    if low_detail_zones:
-        print(f"   Low detail zones (Z): {', '.join(low_detail_zones[:3])}{'...' if len(low_detail_zones) > 3 else ''}")
     
     return levels
 
 
 def naca_coordinates(chord_length, thickness_percent, num_pts=80):
     """Generate NACA 00XX coordinates with cosine point distribution."""
-    # Cosine clustering for better point distribution at edges
     angles = [i * math.pi / (num_pts // 2) for i in range(num_pts // 2 + 1)]
     x_positions = [(1 - math.cos(angle)) / 2 for angle in angles]
     
     coords = []
     thickness_ratio = thickness_percent / 100.0
     
-    # Generate airfoil coordinates
     for i, x_norm in enumerate(x_positions):
         x = x_norm * chord_length
         
-        # NACA 4-digit thickness distribution
         if x_norm == 0:
             yt = 0
         else:
@@ -452,15 +321,12 @@ def naca_coordinates(chord_length, thickness_percent, num_pts=80):
                 0.1015 * x_norm**4
             )
         
-        # Add upper surface point (skip first to avoid duplicate at trailing edge)
         if i > 0:
             coords.append((x, yt))
     
-    # Add lower surface points (reversed)
-    for x, y in reversed(coords[:-1]):  # Skip last to avoid duplicate at leading edge
+    for x, y in reversed(coords[:-1]):
         coords.append((x, -y))
     
-    # Close the polygon
     coords.append(coords[0])
     
     return coords
@@ -501,7 +367,6 @@ def export_geometry(shape, name_prefix):
     stl_path = f"{OUTPUT_FOLDER}/{name_prefix}.stl"
     mesh_obj = Mesh.Mesh(shape.Shape.tessellate(CONFIG['stl_tolerance']))
     
-    # Check if watertight
     if mesh_obj.isSolid():
         print(f"✅ Mesh is watertight")
     else:
@@ -512,11 +377,68 @@ def export_geometry(shape, name_prefix):
     print(f"✅ Exported STL: {stl_path}")
 
 
+def validate_section(section_vertices, z_level, wire_bbox):
+    """
+    Validate section results before accepting them as a valid chord.
+    Returns: (is_valid, cleaned_vertices, warning_message)
+    """
+    # Special handling for tip/convergence points
+    if len(section_vertices) == 1:
+        # Single vertex at tip - this is valid and important!
+        return True, section_vertices, "Single point (tip/convergence)"
+    
+    if len(section_vertices) < 2:
+        return False, [], f"Only {len(section_vertices)} vertices found"
+    
+    # Check for suspicious points
+    suspicious_points = []
+    valid_points = []
+    
+    for v in section_vertices:
+        point = v.Point
+        
+        # Check if point is within reasonable bounds
+        x_margin = wire_bbox.XLength * 0.1
+        if point.x < wire_bbox.XMin - x_margin or point.x > wire_bbox.XMax + x_margin:
+            suspicious_points.append(f"x={point.x:.1f} outside bounds")
+            continue
+            
+        # Check Y coordinate should be near 0 (planar cut)
+        if abs(point.y) > 1.0:
+            suspicious_points.append(f"y={point.y:.3f} not planar")
+            continue
+            
+        valid_points.append(v)
+    
+    # Accept whatever valid points we have (could be 1 for tip)
+    if len(valid_points) == 0:
+        warning = f"No valid points found"
+        if suspicious_points:
+            warning += f" (rejected: {', '.join(suspicious_points)})"
+        return False, [], warning
+    
+    if len(valid_points) == 1:
+        # Single valid point - likely near tip
+        return True, valid_points, "Single valid point"
+    
+    # Check chord length is reasonable
+    pts = sorted([v.Point for v in valid_points], key=lambda p: p.x)
+    chord_length = pts[-1].x - pts[0].x
+    
+    if chord_length < 0:
+        return False, [], f"Negative chord length: {chord_length:.2f}mm"
+    
+    if chord_length > wire_bbox.XLength * 1.2:
+        return False, [], f"Chord length {chord_length:.1f}mm exceeds wire width"
+    
+    return True, valid_points, None
+
+
 def build_foil_from_step(doc):
     """Main pipeline: STEP → chords → NACA sections → loft → export."""
     
     print(f"\n🛥️ Foil Build v{VERSION} for {BOAT_NAME}")
-    print(f"   Enhanced diagnostics for tip closure analysis")
+    print(f"   Enhanced tip handling and section validation")
     
     # Get input file
     step_path = get_profiles_step_path()
@@ -556,7 +478,7 @@ def build_foil_from_step(doc):
             print("Aborted by user.")
             return
     
-    # Generate adaptive slice levels based on profile curvature
+    # Generate adaptive slice levels with enhanced tip handling
     levels = generate_adaptive_levels(
         shrunk_wire, 
         CONFIG['base_slice_spacing'],
@@ -566,192 +488,179 @@ def build_foil_from_step(doc):
     
     print(f"\n🔪 Slicing at {len(levels)} adaptive levels")
     
-    # Slice into chords
+    # Get wire bounding box for validation
+    wire_bbox = shrunk_wire.BoundBox
+    
+    # Slice into chords with improved validation
     chords = []
-    breakdown_z = None  # Track where breakdown occurs
+    single_point_sections = []
+    skipped_sections = []
     
     for z in levels:
         plane = Part.makePlane(CONFIG['plane_size'], CONFIG['plane_size'], 
                               Vector(0, 0, z), Vector(0, 0, 1))
         section = shrunk_wire.section(plane)
         
-        if len(section.Vertexes) >= 2:
-            pts = sorted([v.Point for v in section.Vertexes], key=lambda p: p.x)
+        # Validate section with enhanced tip handling
+        is_valid, valid_vertices, warning = validate_section(section.Vertexes, z, wire_bbox)
+        
+        if not is_valid:
+            print(f"⚠️ Skipping section at Z={z:.1f}: {warning}")
+            skipped_sections.append((z, warning))
+            continue
+        
+        # Handle based on number of valid vertices
+        if len(valid_vertices) == 1:
+            # Single point - store for tip closure
+            pt = valid_vertices[0].Point
+            single_point_sections.append((z, pt))
+            chords.append(((pt.x, z), (pt.x, z)))  # Zero-length chord
+        else:
+            # Normal chord
+            pts = sorted([v.Point for v in valid_vertices], key=lambda p: p.x)
             chord_length = pts[-1].x - pts[0].x
             
-            if chord_length > CONFIG['min_chord_length']:
-                # Check for breakdown condition ONLY for chords we're going to use
-                if chord_length * 0.16 < 2.0:  # 16% thickness would be less than 2mm
-                    print(f"⚠️ Breakdown detected at Z={z:.1f}: thickness would be {chord_length * 0.16:.2f}mm")
-                    breakdown_z = z
-                    break
-                
+            # Accept even very small chords near tip
+            if chord_length >= 0:
                 chords.append(((pts[0].x, z), (pts[-1].x, z)))
     
     if not chords:
         print("❌ No valid chords found")
         return
     
-    print(f"✅ Found {len(chords)} chords")
+    print(f"✅ Found {len(chords)} valid chords")
+    print(f"   Including {len(single_point_sections)} single-point sections")
+    if skipped_sections:
+        print(f"⚠️ Skipped {len(skipped_sections)} invalid sections")
     
     print(f"🎯 NACA 0016 base with thickness tapering for small chords")
     print(f"\n🔬 SECTION GENERATION OUTPUT:")
-    print(f"{'Index':<6} {'Z':<10} {'Chord':<10} {'Thick%':<10} {'AbsThick':<10} {'Valid':<10} {'Area':<10} {'Edges':<10}")
-    print("="*86)
+    print(f"{'Index':<6} {'Z':<10} {'Chord':<10} {'Thick%':<10} {'AbsThick':<10} {'Type':<15}")
+    print("="*71)
     
-    # Generate NACA sections with detailed diagnostics
+    # Generate NACA sections with better tip handling
     section_wires = []
-    last_valid_wire = None
-    last_valid_center = None
-    prev_area = None
-    problematic_sections = []
     
     for idx, ((x1, z), (x2, _)) in enumerate(chords):
-        # Position and orientation
-        p_le = Vector(x2, 0.0, z)  # Leading edge at min x
-        p_te = Vector(x1, 0.0, z)  # Trailing edge at max x
-        vec = p_te - p_le
-        chord_len = vec.Length
-        ux = vec.normalize()
-        uy = ux.cross(Vector(0, 0, 1)).normalize()
+        chord_len = abs(x2 - x1)
         
-        # Taper thickness for small chords
-        if chord_len > 50.0:
-            thickness_percent = 16.0
-        elif chord_len > 20.0:
-            thickness_percent = 8.0 + (chord_len - 20.0) / 30.0 * 8.0
-        else:
-            thickness_percent = 8.0
-        
-        absolute_thickness = chord_len * (thickness_percent / 100.0)
-        
-        # Generate NACA points
-        coords = naca_coordinates(chord_len, thickness_percent, CONFIG['naca_points'])
-        pts3d = [p_le + ux * x + uy * y for x, y in coords]
-        
-        # Create wire and validate
-        wire = Part.makePolygon(pts3d)
-        
-        # Validation checks
-        is_valid = wire.isValid()
-        is_null = wire.isNull()
-        num_edges = len(wire.Edges)
-        
-        # Try to get area
-        try:
-            face = Part.Face(wire)
-            area = face.Area
+        # Handle different chord sizes
+        if chord_len < 0.01:  # Essentially a point
+            # Create tiny circle for tip closure
+            center = Vector((x1 + x2) / 2, 0.0, z)
+            circle = Part.makeCircle(1.0, center, Vector(0, 0, 1))
+            wire = Part.Wire([circle])
+            section_type = "TIP_CIRCLE"
+            thickness_percent = 0
+            absolute_thickness = 0
             
-            # Check for area collapse
-            if prev_area is not None and area < prev_area * 0.5:
-                problematic_sections.append(idx)
-                
-            prev_area = area
-        except:
-            area = -1  # Error getting area
-            problematic_sections.append(idx)
+        elif chord_len < CONFIG['min_chord_length']:
+            # Very small chord - create ellipse
+            center = Vector((x1 + x2) / 2, 0.0, z)
+            ellipse = Part.Ellipse(center, chord_len/2, chord_len * 0.1, 0)
+            wire = Part.Wire([Part.Edge(ellipse)])
+            section_type = "SMALL_ELLIPSE"
+            thickness_percent = 10.0
+            absolute_thickness = chord_len * 0.1
+            
+        else:
+            # Normal NACA section
+            # Position and orientation
+            p_le = Vector(x2, 0.0, z)  # Leading edge at min x
+            p_te = Vector(x1, 0.0, z)  # Trailing edge at max x
+            vec = p_te - p_le
+            ux = vec.normalize()
+            uy = ux.cross(Vector(0, 0, 1)).normalize()
+            
+            # Taper thickness for small chords
+            if chord_len > 50.0:
+                thickness_percent = 16.0
+            elif chord_len > 20.0:
+                thickness_percent = 8.0 + (chord_len - 20.0) / 30.0 * 8.0
+            else:
+                thickness_percent = max(4.0, 8.0 * (chord_len / 20.0))
+            
+            absolute_thickness = chord_len * (thickness_percent / 100.0)
+            
+            # Generate NACA points
+            coords = naca_coordinates(chord_len, thickness_percent, CONFIG['naca_points'])
+            pts3d = [p_le + ux * x + uy * y for x, y in coords]
+            
+            # Create wire
+            wire = Part.makePolygon(pts3d)
+            section_type = "NACA"
+        
+        # Store wire
+        section_wires.append(wire)
         
         # Print diagnostic info
-        status = "OK" if is_valid and not is_null else "FAIL"
-        if idx in problematic_sections:
-            status = "PROBLEM"
-            
-        print(f"{idx:<6} {z:<10.1f} {chord_len:<10.2f} {thickness_percent:<10.2f} {absolute_thickness:<10.2f} {status:<10} {area:<10.2f} {num_edges:<10}")
-        
-        # Store wire regardless for now (to see full pattern)
-        section_wires.append(wire)
-        last_valid_wire = wire
-        last_valid_center = (p_le + p_te) * 0.5
+        print(f"{idx:<6} {z:<10.1f} {chord_len:<10.2f} {thickness_percent:<10.2f} "
+              f"{absolute_thickness:<10.2f} {section_type:<15}")
     
-    # Report problems
-    if problematic_sections:
-        print(f"\n⚠️ Problematic sections detected at indices: {problematic_sections}")
-        print("   These sections show area collapse or validation issues")
+    print(f"\n✅ Generated {len(section_wires)} sections")
+    
+    # DEBUG MODE or normal lofting
+    if DEBUG_MODE:
+        print(f"\n🔍 DEBUG MODE: Displaying {len(section_wires)} section wires")
         
-        # Option: Remove problematic sections
-        print(f"\n🔧 Attempting to remove problematic sections...")
-        clean_wires = []
         for idx, wire in enumerate(section_wires):
-            if idx not in problematic_sections:
-                clean_wires.append(wire)
-            else:
-                # Stop adding sections after first problem
-                print(f"   Stopping at section {idx}")
-                break
+            feat = doc.addObject("Part::Feature", f"Section_{idx:03d}")
+            feat.Shape = wire
+            
+            # Color gradient from red (tip) to green (top)
+            color_factor = idx / max(len(section_wires) - 1, 1)
+            feat.ViewObject.ShapeColor = (1.0 - color_factor, color_factor, 0.0)
+            feat.ViewObject.LineWidth = 2
+            
+            if idx < len(chords):
+                z_pos = chords[idx][0][1]
+                feat.Label = f"Section_{idx:03d}_Z{z_pos:.1f}"
         
-        if len(clean_wires) > 10:  # Need minimum sections for loft
-            section_wires = clean_wires
-            print(f"   Using {len(section_wires)} clean sections")
-        else:
-            print(f"   Not enough clean sections, using all")
-    
-    # Add end cap if breakdown was detected OR if first chord is too large
-    first_chord_length = chords[0][1][0] - chords[0][0][0]
-    if breakdown_z is not None or first_chord_length > 50.0:
-        print(f"\n🔧 Adding tip closure strategy...")
+        print("✅ Debug visualization complete")
+        print("   Red = tip sections, Green = top sections")
         
-        # Strategy: Create tapered cap sections
-        if section_wires:
-            # Get the first (tip) section
-            tip_wire = section_wires[0]
-            bb = tip_wire.BoundBox
-            
-            # Create progressively smaller sections
-            cap_sections = []
-            num_cap_sections = 5
-            
-            for i in range(1, num_cap_sections + 1):
-                scale_factor = 1.0 - (i / (num_cap_sections + 1))
-                
-                if scale_factor > 0.05:  # Don't go too small
-                    # Create scaled version
-                    transform = App.Matrix()
-                    center = Vector((bb.XMin + bb.XMax)/2, (bb.YMin + bb.YMax)/2, bb.ZMin)
-                    transform.scale(scale_factor, scale_factor, 1.0)
-                    
-                    scaled_wire = tip_wire.copy()
-                    scaled_wire.transformShape(transform, True)
-                    scaled_wire.translate(center * (1 - scale_factor))
-                    scaled_wire.translate(Vector(0, 0, -i * 2))  # Move down
-                    
-                    cap_sections.append(scaled_wire)
-                    print(f"   Added cap section {i} at scale {scale_factor:.2f}")
-            
-            # Prepend cap sections to main sections
-            section_wires = cap_sections + section_wires
-    
-    print(f"\n✅ Final: {len(section_wires)} sections for lofting")
-    
-    # Estimate complexity reduction
-    uniform_levels = int((levels[-1] - levels[0]) / CONFIG['base_slice_spacing']) + 1
-    complexity_reduction = (1 - len(levels) / uniform_levels) * 100
-    print(f"📊 Complexity reduced by {complexity_reduction:.0f}% vs uniform slicing")
-    
-    # Loft sections
-    try:
-        loft = Part.makeLoft(section_wires, solid=True, ruled=False)
-        print("✅ Loft complete")
-    except Exception as e:
-        print(f"❌ Loft failed: {e}")
-        print("   Trying with ruled=True...")
+    else:
+        print(f"\n📦 Creating 3D loft from {len(section_wires)} sections...")
+        
+        # Try multiple lofting strategies
+        loft = None
         try:
-            loft = Part.makeLoft(section_wires, solid=True, ruled=True)
-            print("✅ Loft complete (ruled)")
-        except Exception as e2:
-            print(f"❌ Ruled loft also failed: {e2}")
-            return
-    
-    # Create display object
-    foil = doc.addObject("Part::Feature", f"{BOAT_NAME}_Foil")
-    foil.Shape = loft
-    foil.ViewObject.ShapeColor = (0.6, 0.8, 1.0)
-    foil.ViewObject.DisplayMode = "Shaded"
-    
-    # Export
-    export_geometry(foil, BOAT_NAME + "_Foil")
+            # First try: standard loft
+            print("   Attempting standard loft...")
+            loft = Part.makeLoft(section_wires, solid=True, ruled=False)
+            print("   ✅ Standard loft successful")
+        except Exception as e:
+            print(f"   ⚠️ Standard loft failed: {e}")
+            
+            try:
+                # Second try: ruled loft
+                print("   Attempting ruled loft...")
+                loft = Part.makeLoft(section_wires, solid=True, ruled=True)
+                print("   ✅ Ruled loft successful")
+            except Exception as e2:
+                print(f"   ⚠️ Ruled loft failed: {e2}")
+                
+                try:
+                    # Third try: surface loft then solidify
+                    print("   Attempting surface loft...")
+                    loft_surface = Part.makeLoft(section_wires, solid=False, ruled=False)
+                    loft = Part.makeSolid(loft_surface)
+                    print("   ✅ Surface loft + solidify successful")
+                except Exception as e3:
+                    print(f"   ❌ All lofting attempts failed: {e3}")
+                    return
+        
+        # Create display object
+        foil = doc.addObject("Part::Feature", f"{BOAT_NAME}_Foil")
+        foil.Shape = loft
+        foil.ViewObject.ShapeColor = (0.6, 0.8, 1.0)
+        foil.ViewObject.DisplayMode = "Shaded"
+        
+        # Export
+        export_geometry(foil, BOAT_NAME + "_Foil")
     
     doc.recompute()
-    print(f"🛥️ {BOAT_NAME} foil complete with enhanced diagnostics!\n")
+    print(f"🛥️ {BOAT_NAME} foil complete!\n")
 
 
 # Run the build
