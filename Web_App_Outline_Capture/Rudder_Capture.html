@@ -184,6 +184,67 @@
             border-radius: 4px;
             padding: 10px;
             background: #f8f9fa;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .corners-container {
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            padding: 10px;
+            background: #f8f9fa;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .corner-item {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 8px;
+        }
+        
+        .corner-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        
+        .corner-types {
+            font-size: 12px;
+            color: #666;
+            background: #f0f0f0;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        
+        .corner-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .corner-controls input {
+            width: 80px;
+            padding: 4px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        
+        .corner-controls button {
+            padding: 4px 10px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
+        .corner-controls button:hover {
+            background: #45a049;
         }
         
         .segment-block {
@@ -371,7 +432,7 @@
     <div class="app-container">
         <div class="header">
             <h1>⚓ Rudder Outline Design Tool</h1>
-            <p>Create and edit rudder profile specifications with coordinate points (Circular Arc Version)</p>
+            <p>Create and edit rudder profile specifications with coordinate points and corner rounding</p>
         </div>
         
         <div class="toolbar">
@@ -384,6 +445,8 @@
             <button onclick="generateExamplePoints()">📐 Load Example</button>
             <button onclick="toggleGridSnap()" id="gridSnapBtn">📏 Grid Snap: OFF</button>
             <button onclick="toggleImage()" id="imageToggleBtn" style="display: none;">🖼️ Image: ON</button>
+            <button onclick="detectCorners()" class="primary">🔍 Detect Corners</button>
+            <button onclick="roundAllCorners()">⭕ Round All Corners</button>
         </div>
         
         <div id="statusMessage" class="status-message" style="margin: 20px;"></div>
@@ -446,6 +509,17 @@
                 
                 <div class="form-row">
                     <div class="form-group">
+                        <label for="defaultRadius">Default Corner Radius (mm)</label>
+                        <input type="number" id="defaultRadius" placeholder="10" value="10" min="0.5" step="0.5">
+                    </div>
+                    <div class="form-group">
+                        <label for="angleThreshold">Corner Angle Threshold (°)</label>
+                        <input type="number" id="angleThreshold" placeholder="30" value="30" min="1" max="180">
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
                         <label for="imageFile">Rudder Outline Image</label>
                         <div style="display: flex; flex-direction: column; gap: 5px;">
                             <input type="file" id="imageFile" accept="image/png,image/jpeg,image/jpg" onchange="handleImageUpload(event)" style="display: none;">
@@ -474,6 +548,13 @@
                             <button class="add-segment-btn" onclick="addSegment('ARC')" style="flex: 1;">+ Add ARC Segment</button>
                         </div>
                     </div>
+                    
+                    <div class="panel-section">
+                        <h3>Detected Corners</h3>
+                        <div class="corners-container" id="cornersContainer">
+                            <p style="color: #999; text-align: center; padding: 20px;">No corners detected. Click "Detect Corners" to find corners.</p>
+                        </div>
+                    </div>
                 </div>
                 
                 <div class="right-panel">
@@ -483,14 +564,15 @@
                             <button onclick="zoomIn()">🔍+ Zoom In</button>
                             <button onclick="zoomOut()">🔍- Zoom Out</button>
                             <button onclick="resetView()">🔄 Reset View</button>
+                            <button onclick="toggleCornerDisplay()" id="cornerDisplayBtn" class="active">👁️ Show Corners</button>
                             <span style="margin-left: 20px; font-size: 14px;">Zoom: <span id="zoomDisplay">100%</span> | Drag to pan</span>
                         </div>
                         <div class="canvas-container" id="canvasContainer" style="flex-grow: 1;">
                             <canvas id="rudderCanvas"></canvas>
                         </div>
                         <div class="canvas-info" style="margin-top: 10px; flex-shrink: 0;">
-                            <strong>Info:</strong> Origin (0,0) is at top-left. LINE segments need 1 point. ARC segments need 2 points (apex, end).
-                            Arcs are drawn as circular segments matching FreeCAD. Grid size: 10mm. Total points: <span id="pointCount">0</span>.
+                            <strong>Info:</strong> Origin (0,0) is at top-left. Total points: <span id="pointCount">0</span>. 
+                            Corners detected: <span id="cornerCount">0</span>. Grid size: 10mm.
                         </div>
                     </div>
                 </div>
@@ -500,19 +582,21 @@
     
     <script>
         // Global variables
-        let segments = [];  // Array of {type: 'LINE'|'ARC', points: []}
+        let segments = [];  // Array of {type: 'LINE'|'ARC', points: [], rounded: false}
+        let corners = [];   // Array of detected corners
         let gridSnap = false;
         let scale = 1;
         let uploadedImage = null;
         let imageData = null;
         let imagePath = '';
         let showImage = true;
+        let showCorners = true;
         let zoomLevel = 1;
         let panX = 0;
         let panY = 0;
         let isPanning = false;
         let isDraggingPoint = false;
-        let selectedPoint = null; // {segIndex, pointIndex}
+        let selectedPoint = null;
         let lastMouseX = 0;
         let lastMouseY = 0;
         
@@ -520,7 +604,7 @@
         document.addEventListener('DOMContentLoaded', function() {
             const today = new Date().toISOString().split('T')[0];
             document.getElementById('date').value = today;
-            setTimeout(drawCanvas, 100); // Delay to ensure container dimensions are set
+            setTimeout(drawCanvas, 100);
         });
         
         // Redraw on window resize
@@ -548,11 +632,18 @@
             drawCanvas();
         }
         
+        function toggleCornerDisplay() {
+            showCorners = !showCorners;
+            const btn = document.getElementById('cornerDisplayBtn');
+            btn.textContent = `👁️ ${showCorners ? 'Show' : 'Hide'} Corners`;
+            btn.classList.toggle('active', showCorners);
+            drawCanvas();
+        }
+        
         function handleImageUpload(event) {
             const file = event.target.files[0];
             if (!file) return;
             
-            // Check file type
             if (!file.type.match(/image\/(png|jpeg|jpg)/)) {
                 showStatus('Please select a PNG or JPEG image.', 'error');
                 return;
@@ -563,16 +654,12 @@
                 const img = new Image();
                 img.onload = function() {
                     uploadedImage = img;
-                    
-                    // Show image toggle button
                     document.getElementById('imageToggleBtn').style.display = 'inline-block';
                     
-                    // Generate path based on boat name
                     const boatName = document.getElementById('boatName').value || 'BoatName';
                     imagePath = `../${boatName}/Input/${boatName}_Rudder_Outline${file.name.substring(file.name.lastIndexOf('.'))}`;
                     document.getElementById('imagePath').value = imagePath;
                     
-                    // Check aspect ratio
                     const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 500;
                     const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
                     
@@ -581,7 +668,7 @@
                         const yScale = boxHeight / img.height;
                         const scaleDiff = Math.abs(xScale - yScale) / Math.max(xScale, yScale);
                         
-                        if (scaleDiff > 0.1) {  // 10% difference between X and Y scaling
+                        if (scaleDiff > 0.1) {
                             document.getElementById('imageStatus').textContent = 
                                 `⚠️ Warning: Image distortion expected - X scale: ${xScale.toFixed(2)}x, Y scale: ${yScale.toFixed(2)}x (${(scaleDiff * 100).toFixed(1)}% difference)`;
                             document.getElementById('imageStatus').style.color = '#ff9800';
@@ -592,7 +679,6 @@
                         }
                     }
                     
-                    // Redraw canvas with proper scaling
                     setTimeout(drawCanvas, 50);
                 };
                 img.src = e.target.result;
@@ -610,10 +696,359 @@
             }
         }
         
+        // Corner Detection Functions
+        function getSegmentDirection(segment, atEnd) {
+            if (segment.type === 'LINE') {
+                // For LINE segments, direction is from start to end
+                if (segment.rounded && segment.originalPoints) {
+                    // Use original points if segment has been rounded
+                    const endPoint = segment.originalPoints[0];
+                    return atEnd ? 
+                        {x: endPoint.x, y: endPoint.y} : 
+                        {x: endPoint.x, y: endPoint.y};
+                } else {
+                    const endPoint = segment.points[0];
+                    return {x: endPoint.x, y: endPoint.y};
+                }
+            } else if (segment.type === 'ARC') {
+                // For ARC segments, use apex to determine direction
+                const apex = segment.points[0];
+                const end = segment.points[1];
+                if (atEnd) {
+                    // Direction from apex to end
+                    return {x: end.x - apex.x, y: end.y - apex.y};
+                } else {
+                    // Direction to apex (from previous end)
+                    return {x: apex.x, y: apex.y};
+                }
+            }
+            return {x: 0, y: 0};
+        }
+        
+        function detectCorners() {
+            corners = [];
+            const angleThreshold = parseFloat(document.getElementById('angleThreshold').value) || 30;
+            
+            if (segments.length < 2) {
+                updateCornersDisplay();
+                showStatus('Need at least 2 segments to detect corners.', 'info');
+                return;
+            }
+            
+            let currentPos = {x: 0, y: 0}; // Start at origin
+            
+            for (let i = 0; i < segments.length - 1; i++) {
+                const seg1 = segments[i];
+                const seg2 = segments[i + 1];
+                
+                // Get end point of current segment (corner location)
+                let cornerPoint;
+                if (seg1.type === 'LINE') {
+                    cornerPoint = seg1.points[0];
+                } else if (seg1.type === 'ARC') {
+                    cornerPoint = seg1.points[1]; // End point of arc
+                }
+                
+                // Calculate incoming direction (into the corner)
+                let incomingDir;
+                if (seg1.type === 'LINE') {
+                    incomingDir = {
+                        x: cornerPoint.x - currentPos.x,
+                        y: cornerPoint.y - currentPos.y
+                    };
+                } else if (seg1.type === 'ARC') {
+                    // Direction from apex to end
+                    incomingDir = {
+                        x: cornerPoint.x - seg1.points[0].x,
+                        y: cornerPoint.y - seg1.points[0].y
+                    };
+                }
+                
+                // Calculate outgoing direction (from the corner)
+                let outgoingDir;
+                if (seg2.type === 'LINE') {
+                    outgoingDir = {
+                        x: seg2.points[0].x - cornerPoint.x,
+                        y: seg2.points[0].y - cornerPoint.y
+                    };
+                } else if (seg2.type === 'ARC') {
+                    // Direction from corner to apex
+                    outgoingDir = {
+                        x: seg2.points[0].x - cornerPoint.x,
+                        y: seg2.points[0].y - cornerPoint.y
+                    };
+                }
+                
+                // Normalize directions
+                const inLen = Math.sqrt(incomingDir.x ** 2 + incomingDir.y ** 2);
+                const outLen = Math.sqrt(outgoingDir.x ** 2 + outgoingDir.y ** 2);
+                
+                if (inLen > 0 && outLen > 0) {
+                    incomingDir.x /= inLen;
+                    incomingDir.y /= inLen;
+                    outgoingDir.x /= outLen;
+                    outgoingDir.y /= outLen;
+                    
+                    // Calculate angle between directions
+                    const dotProduct = incomingDir.x * outgoingDir.x + incomingDir.y * outgoingDir.y;
+                    const angle = Math.acos(Math.max(-1, Math.min(1, dotProduct))) * (180 / Math.PI);
+                    
+                    if (angle > angleThreshold) {
+                        corners.push({
+                            index: i,
+                            point: cornerPoint,
+                            angle: angle,
+                            segmentTypes: `${seg1.type}-${seg2.type}`,
+                            radius: parseFloat(document.getElementById('defaultRadius').value) || 10,
+                            incomingDir: incomingDir,
+                            outgoingDir: outgoingDir,
+                            rounded: false
+                        });
+                    }
+                }
+                
+                // Update current position
+                currentPos = cornerPoint;
+            }
+            
+            updateCornersDisplay();
+            drawCanvas();
+            
+            if (corners.length > 0) {
+                showStatus(`Found ${corners.length} corner(s) with angles > ${angleThreshold}°`, 'success');
+            } else {
+                showStatus(`No corners found with angles > ${angleThreshold}°`, 'info');
+            }
+        }
+        
+        function updateCornersDisplay() {
+            const container = document.getElementById('cornersContainer');
+            container.innerHTML = '';
+            
+            if (corners.length === 0) {
+                container.innerHTML = '<p style="color: #999; text-align: center; padding: 20px;">No corners detected. Click "Detect Corners" to find corners.</p>';
+                document.getElementById('cornerCount').textContent = '0';
+                return;
+            }
+            
+            document.getElementById('cornerCount').textContent = corners.length;
+            
+            corners.forEach((corner, index) => {
+                const div = document.createElement('div');
+                div.className = 'corner-item';
+                
+                const statusIcon = corner.rounded ? '✅' : '⚪';
+                
+                div.innerHTML = `
+                    <div class="corner-header">
+                        <div>
+                            <strong>${statusIcon} Corner ${index + 1}</strong>
+                            <span class="corner-types">${corner.segmentTypes}</span>
+                        </div>
+                        <div style="font-size: 12px; color: #666;">
+                            Angle: ${corner.angle.toFixed(1)}°
+                        </div>
+                    </div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 8px;">
+                        Position: (${corner.point.x.toFixed(1)}, ${corner.point.y.toFixed(1)})
+                    </div>
+                    <div class="corner-controls">
+                        <label style="font-size: 12px;">Radius (mm):</label>
+                        <input type="number" value="${corner.radius}" min="0.5" step="0.5" 
+                               onchange="updateCornerRadius(${index}, this.value)">
+                        <button onclick="roundCorner(${index})" ${corner.rounded ? 'disabled' : ''}>
+                            ${corner.rounded ? 'Rounded' : 'Round'}
+                        </button>
+                        ${corner.rounded ? `<button onclick="unroundCorner(${index})" style="background: #f44336;">Undo</button>` : ''}
+                    </div>
+                `;
+                
+                container.appendChild(div);
+            });
+        }
+        
+        function updateCornerRadius(index, value) {
+            corners[index].radius = parseFloat(value) || 10;
+        }
+        
+        function roundCorner(cornerIndex) {
+            const corner = corners[cornerIndex];
+            if (corner.rounded) return;
+            
+            const segIndex = corner.index;
+            const radius = corner.radius;
+            
+            // Get the segments involved
+            const seg1 = segments[segIndex];
+            const seg2 = segments[segIndex + 1];
+            
+            // Store original points before rounding
+            if (!seg1.originalPoints) {
+                seg1.originalPoints = JSON.parse(JSON.stringify(seg1.points));
+            }
+            if (!seg2.originalPoints) {
+                seg2.originalPoints = JSON.parse(JSON.stringify(seg2.points));
+            }
+            
+            // Calculate tangent points based on segment types
+            let currentPos = {x: 0, y: 0};
+            for (let i = 0; i < segIndex; i++) {
+                if (segments[i].type === 'LINE') {
+                    currentPos = segments[i].points[0];
+                } else {
+                    currentPos = segments[i].points[1];
+                }
+            }
+            
+            // Calculate tangent points for the corner rounding
+            const tangentDist = radius / Math.tan((Math.PI - corner.angle * Math.PI / 180) / 2);
+            
+            // Tangent point on incoming segment
+            const tangent1 = {
+                x: corner.point.x - corner.incomingDir.x * tangentDist,
+                y: corner.point.y - corner.incomingDir.y * tangentDist
+            };
+            
+            // Tangent point on outgoing segment
+            const tangent2 = {
+                x: corner.point.x + corner.outgoingDir.x * tangentDist,
+                y: corner.point.y + corner.outgoingDir.y * tangentDist
+            };
+            
+            // Calculate arc apex for INWARD rounding (fillet)
+            // The bisector points inward, so we need to reverse it
+            const bisectorAngle = Math.atan2(
+                -(corner.incomingDir.y + corner.outgoingDir.y),
+                -(corner.incomingDir.x + corner.outgoingDir.x)
+            );
+            
+            // For a proper fillet, the apex should be closer to the corner
+            // Calculate the proper distance for the arc apex
+            const halfAngle = (corner.angle * Math.PI / 180) / 2;
+            const apexDist = radius * Math.tan(halfAngle / 2);
+            
+            const apex = {
+                x: (tangent1.x + tangent2.x) / 2,
+                y: (tangent1.y + tangent2.y) / 2
+            };
+            
+            // Modify segments
+            if (seg1.type === 'LINE') {
+                seg1.points[0] = tangent1;
+            } else if (seg1.type === 'ARC') {
+                seg1.points[1] = tangent1;
+            }
+            
+            // Insert rounding arc
+            const roundingArc = {
+                type: 'ARC',
+                points: [apex, tangent2],
+                rounded: true,
+                cornerIndex: cornerIndex
+            };
+            
+            segments.splice(segIndex + 1, 0, roundingArc);
+            
+            // Adjust the next segment's starting point
+            if (seg2.type === 'ARC') {
+                // For ARC segments, we need to adjust the apex position
+                const originalDist = Math.sqrt(
+                    Math.pow(seg2.originalPoints[0].x - corner.point.x, 2) + 
+                    Math.pow(seg2.originalPoints[0].y - corner.point.y, 2)
+                );
+                const newDist = Math.sqrt(
+                    Math.pow(seg2.originalPoints[0].x - tangent2.x, 2) + 
+                    Math.pow(seg2.originalPoints[0].y - tangent2.y, 2)
+                );
+                const scale = newDist / originalDist;
+                
+                seg2.points[0] = {
+                    x: tangent2.x + corner.outgoingDir.x * (originalDist - tangentDist),
+                    y: tangent2.y + corner.outgoingDir.y * (originalDist - tangentDist)
+                };
+            }
+            
+            corner.rounded = true;
+            seg1.rounded = true;
+            seg2.rounded = true;
+            
+            // Update all corner indices after this one
+            for (let i = cornerIndex + 1; i < corners.length; i++) {
+                corners[i].index++;
+            }
+            
+            updateSegmentsList();
+            updateCornersDisplay();
+            drawCanvas();
+            showStatus(`Corner ${cornerIndex + 1} rounded with radius ${radius}mm`, 'success');
+        }
+        
+        function unroundCorner(cornerIndex) {
+            const corner = corners[cornerIndex];
+            if (!corner.rounded) return;
+            
+            const segIndex = corner.index;
+            
+            // Remove the rounding arc
+            const roundingArcIndex = segIndex + 1;
+            segments.splice(roundingArcIndex, 1);
+            
+            // Restore original points
+            const seg1 = segments[segIndex];
+            const seg2 = segments[segIndex + 1];
+            
+            if (seg1.originalPoints) {
+                seg1.points = JSON.parse(JSON.stringify(seg1.originalPoints));
+                seg1.rounded = false;
+                delete seg1.originalPoints;
+            }
+            
+            if (seg2.originalPoints) {
+                seg2.points = JSON.parse(JSON.stringify(seg2.originalPoints));
+                seg2.rounded = false;
+                delete seg2.originalPoints;
+            }
+            
+            corner.rounded = false;
+            
+            // Update all corner indices after this one
+            for (let i = cornerIndex + 1; i < corners.length; i++) {
+                corners[i].index--;
+            }
+            
+            updateSegmentsList();
+            updateCornersDisplay();
+            drawCanvas();
+            showStatus(`Corner ${cornerIndex + 1} rounding removed`, 'info');
+        }
+        
+        function roundAllCorners() {
+            if (corners.length === 0) {
+                showStatus('No corners detected. Click "Detect Corners" first.', 'info');
+                return;
+            }
+            
+            let roundedCount = 0;
+            // Round corners in reverse order to maintain indices
+            for (let i = corners.length - 1; i >= 0; i--) {
+                if (!corners[i].rounded) {
+                    roundCorner(i);
+                    roundedCount++;
+                }
+            }
+            
+            if (roundedCount > 0) {
+                showStatus(`Rounded ${roundedCount} corner(s)`, 'success');
+            } else {
+                showStatus('All corners are already rounded', 'info');
+            }
+        }
+        
         function addSegment(type) {
             const segment = {
                 type: type,
-                points: []
+                points: [],
+                rounded: false
             };
             
             if (type === 'LINE') {
@@ -630,7 +1065,10 @@
         
         function removeSegment(index) {
             segments.splice(index, 1);
+            // Clear corners when segments change
+            corners = [];
             updateSegmentsList();
+            updateCornersDisplay();
             drawCanvas();
         }
         
@@ -644,11 +1082,14 @@
                 const block = document.createElement('div');
                 block.className = 'segment-block';
                 
+                const isRoundingArc = segment.rounded && segment.cornerIndex !== undefined;
+                const segmentLabel = isRoundingArc ? 'CORNER ARC' : `SEGMENT: ${segment.type}`;
+                const labelColor = isRoundingArc ? '#FFA500' : '#2196F3';
+                
                 if (segment.type === 'LINE') {
-                    // LINE segment - single line display
                     block.innerHTML = `
                         <div class="segment-row">
-                            <span class="segment-type">SEGMENT: LINE</span>
+                            <span class="segment-type" style="color: ${labelColor};">${segmentLabel}</span>
                             <span class="point-label" style="min-width: 65px; display: inline-block;">${pointNum}. End:</span>
                             <input type="number" value="${segment.points[0].x.toFixed(1)}" step="0.5" placeholder="X" onchange="updatePoint(${segIndex}, 0, 'x', this.value)" style="width: 70px; padding: 4px;">
                             <input type="number" value="${segment.points[0].y.toFixed(1)}" step="0.5" placeholder="Y" onchange="updatePoint(${segIndex}, 0, 'y', this.value)" style="width: 70px; padding: 4px;">
@@ -657,11 +1098,10 @@
                     `;
                     pointNum++;
                 } else if (segment.type === 'ARC') {
-                    // ARC segment - two-line display
                     block.innerHTML = `
                         <div style="display: flex; flex-direction: column; gap: 5px;">
                             <div class="segment-row">
-                                <span class="segment-type">SEGMENT: ARC</span>
+                                <span class="segment-type" style="color: ${labelColor};">${segmentLabel}</span>
                                 <span class="point-label" style="min-width: 65px; display: inline-block;">${pointNum}a. Apex:</span>
                                 <input type="number" value="${segment.points[0].x.toFixed(1)}" step="0.5" placeholder="X" onchange="updatePoint(${segIndex}, 0, 'x', this.value)" style="width: 70px; padding: 4px;">
                                 <input type="number" value="${segment.points[0].y.toFixed(1)}" step="0.5" placeholder="Y" onchange="updatePoint(${segIndex}, 0, 'y', this.value)" style="width: 70px; padding: 4px;">
@@ -689,17 +1129,20 @@
             
             let val = parseFloat(value);
             
-            // Clamp values within box bounds
             if (coord === 'x') {
                 val = Math.max(0, Math.min(val, boxWidth));
             } else if (coord === 'y') {
                 val = Math.max(0, Math.min(val, boxHeight));
             }
             
-            // Round to 1 decimal place
             val = Math.round(val * 10) / 10;
             
             segments[segIndex].points[pointIndex][coord] = val;
+            
+            // Clear corners when points change
+            corners = [];
+            updateCornersDisplay();
+            
             drawCanvas();
         }
         
@@ -713,11 +1156,9 @@
         
         function closeLoop() {
             if (segments.length > 0) {
-                // Get the very first point
                 const firstX = 0;
                 const firstY = 0;
                 
-                // Get the last actual point
                 let lastX = 0, lastY = 0;
                 if (segments.length > 0) {
                     const lastSeg = segments[segments.length - 1];
@@ -726,11 +1167,11 @@
                     lastY = lastPoint.y;
                 }
                 
-                // Add a LINE segment back to origin if not already there
                 if (lastX !== firstX || lastY !== firstY) {
                     segments.push({
                         type: 'LINE',
-                        points: [{x: firstX, y: firstY}]
+                        points: [{x: firstX, y: firstY}],
+                        rounded: false
                     });
                     updateSegmentsList();
                     drawCanvas();
@@ -753,7 +1194,6 @@
             const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
             
             if (Math.abs(d) < 0.001) {
-                // Points are collinear, return null
                 return null;
             }
             
@@ -765,11 +1205,9 @@
         
         // Draw circular arc through three points
         function drawCircularArc(ctx, startPoint, apexPoint, endPoint, scale) {
-            // Calculate center and radius
             const center = calculateCircleCenter(startPoint, apexPoint, endPoint);
             
             if (!center) {
-                // Points are collinear, draw straight lines
                 ctx.lineTo(apexPoint.x * scale, apexPoint.y * scale);
                 ctx.lineTo(endPoint.x * scale, endPoint.y * scale);
                 return;
@@ -777,16 +1215,12 @@
             
             const radius = Math.sqrt(Math.pow(startPoint.x - center.x, 2) + Math.pow(startPoint.y - center.y, 2));
             
-            // Calculate angles
             let startAngle = Math.atan2(startPoint.y - center.y, startPoint.x - center.x);
             let apexAngle = Math.atan2(apexPoint.y - center.y, apexPoint.x - center.x);
             let endAngle = Math.atan2(endPoint.y - center.y, endPoint.x - center.x);
             
-            // Determine if we should draw clockwise or counterclockwise
-            // by checking if apex is on the correct side of the arc
             let counterClockwise = false;
             
-            // Normalize angles to [0, 2π]
             const normalize = (angle) => {
                 while (angle < 0) angle += 2 * Math.PI;
                 while (angle >= 2 * Math.PI) angle -= 2 * Math.PI;
@@ -797,16 +1231,12 @@
             apexAngle = normalize(apexAngle);
             endAngle = normalize(endAngle);
             
-            // Check if we need to go counterclockwise to pass through apex
             if (startAngle <= endAngle) {
-                // Normal case
                 counterClockwise = (apexAngle < startAngle || apexAngle > endAngle);
             } else {
-                // Wrapped case
                 counterClockwise = (apexAngle < startAngle && apexAngle > endAngle);
             }
             
-            // Draw the arc
             ctx.arc(center.x * scale, center.y * scale, radius * scale, 
                    Math.atan2(startPoint.y - center.y, startPoint.x - center.x),
                    Math.atan2(endPoint.y - center.y, endPoint.x - center.x),
@@ -817,22 +1247,18 @@
             const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 500;
             const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
             
-            // Get container dimensions
             const container = document.getElementById('canvasContainer');
             const containerWidth = container.clientWidth || 800;
             const containerHeight = container.clientHeight || 600;
             
-            // Calculate base scale
             const padding = 20;
             const baseScale = Math.min(
                 (containerWidth - 2 * padding) / boxWidth,
                 (containerHeight - 2 * padding) / boxHeight
             );
             
-            // Apply zoom level
             scale = baseScale * zoomLevel;
             
-            // Set canvas size to expand with zoom
             canvas.width = (boxWidth * scale) + 2 * padding;
             canvas.height = (boxHeight * scale) + 2 * padding;
             
@@ -841,22 +1267,14 @@
             ctx.save();
             ctx.translate(padding + panX, padding + panY);
             
-            // Draw uploaded image if available with independent X and Y scaling
+            // Draw uploaded image
             if (uploadedImage && showImage) {
                 ctx.save();
-                
-                // Calculate separate X and Y scale factors
                 const imageScaleX = boxWidth / uploadedImage.width;
                 const imageScaleY = boxHeight / uploadedImage.height;
-                
-                ctx.globalAlpha = 0.5; // Semi-transparent
-                
-                // Scale the context independently for X and Y
+                ctx.globalAlpha = 0.5;
                 ctx.scale(imageScaleX * scale, imageScaleY * scale);
-                
-                // Draw the image at its original size (the scaling is done by context)
                 ctx.drawImage(uploadedImage, 0, 0);
-                
                 ctx.restore();
             }
             
@@ -878,7 +1296,7 @@
                 }
             }
             
-            // Draw box outline with lighter lines
+            // Draw box outline
             ctx.strokeStyle = '#e8e8e8';
             ctx.lineWidth = 1;
             ctx.strokeRect(0, 0, boxWidth * scale, boxHeight * scale);
@@ -898,10 +1316,17 @@
                 ctx.lineWidth = 2;
                 ctx.beginPath();
                 
-                let currentPos = {x: 0, y: 0}; // Start at origin
+                let currentPos = {x: 0, y: 0};
                 ctx.moveTo(0, 0);
                 
                 segments.forEach((segment, index) => {
+                    if (segment.rounded && segment.cornerIndex !== undefined) {
+                        // This is a corner rounding arc
+                        ctx.strokeStyle = '#FFA500'; // Orange for rounded corners
+                    } else {
+                        ctx.strokeStyle = '#2196F3';
+                    }
+                    
                     if (segment.type === 'LINE') {
                         const endPoint = segment.points[0];
                         ctx.lineTo(endPoint.x * scale, endPoint.y * scale);
@@ -909,8 +1334,6 @@
                     } else if (segment.type === 'ARC') {
                         const apexPoint = segment.points[0];
                         const endPoint = segment.points[1];
-                        
-                        // Draw circular arc through three points
                         drawCircularArc(ctx, currentPos, apexPoint, endPoint, scale);
                         currentPos = endPoint;
                     }
@@ -918,39 +1341,60 @@
                 
                 ctx.stroke();
                 
+                // Draw corner indicators
+                if (showCorners && corners.length > 0) {
+                    corners.forEach((corner, index) => {
+                        if (!corner.rounded) {
+                            // Draw corner highlight
+                            ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+                            ctx.beginPath();
+                            ctx.arc(corner.point.x * scale, corner.point.y * scale, 8, 0, 2 * Math.PI);
+                            ctx.fill();
+                            
+                            // Draw corner number
+                            ctx.fillStyle = '#ff0000';
+                            ctx.font = 'bold 11px sans-serif';
+                            ctx.fillText(`C${index + 1}`, corner.point.x * scale + 10, corner.point.y * scale - 10);
+                        }
+                    });
+                }
+                
                 // Draw points
                 let pointNum = 1;
                 currentPos = {x: 0, y: 0};
                 
                 segments.forEach((segment, segIndex) => {
+                    const isRoundingArc = segment.rounded && segment.cornerIndex !== undefined;
+                    
                     if (segment.type === 'LINE') {
                         const point = segment.points[0];
-                        
-                        // Check if this point is selected
                         const isSelected = selectedPoint && selectedPoint.segIndex === segIndex && selectedPoint.pointIndex === 0;
                         
-                        // Draw end point
                         ctx.fillStyle = isSelected ? '#ff0000' : '#2196F3';
                         ctx.beginPath();
                         ctx.arc(point.x * scale, point.y * scale, isSelected ? 6 : 4, 0, 2 * Math.PI);
                         ctx.fill();
                         
-                        ctx.fillStyle = '#666';
-                        ctx.font = '10px sans-serif';
-                        ctx.fillText(`${pointNum}`, point.x * scale + 6, point.y * scale - 6);
-                        pointNum++;
+                        if (!isRoundingArc) {
+                            ctx.fillStyle = '#666';
+                            ctx.font = '10px sans-serif';
+                            ctx.fillText(`${pointNum}`, point.x * scale + 6, point.y * scale - 6);
+                            pointNum++;
+                        }
                         currentPos = point;
                     } else if (segment.type === 'ARC') {
                         // Draw apex point
                         const isApexSelected = selectedPoint && selectedPoint.segIndex === segIndex && selectedPoint.pointIndex === 0;
-                        ctx.fillStyle = isApexSelected ? '#ff0000' : '#FFA500';  // Orange for apex
+                        ctx.fillStyle = isApexSelected ? '#ff0000' : (isRoundingArc ? '#FF8C00' : '#FFA500');
                         ctx.beginPath();
                         ctx.arc(segment.points[0].x * scale, segment.points[0].y * scale, isApexSelected ? 6 : 4, 0, 2 * Math.PI);
                         ctx.fill();
                         
-                        ctx.fillStyle = '#666';
-                        ctx.font = '10px sans-serif';
-                        ctx.fillText(`${pointNum}a`, segment.points[0].x * scale + 6, segment.points[0].y * scale - 6);
+                        if (!isRoundingArc) {
+                            ctx.fillStyle = '#666';
+                            ctx.font = '10px sans-serif';
+                            ctx.fillText(`${pointNum}a`, segment.points[0].x * scale + 6, segment.points[0].y * scale - 6);
+                        }
                         
                         // Draw end point
                         const isEndSelected = selectedPoint && selectedPoint.segIndex === segIndex && selectedPoint.pointIndex === 1;
@@ -959,8 +1403,10 @@
                         ctx.arc(segment.points[1].x * scale, segment.points[1].y * scale, isEndSelected ? 6 : 4, 0, 2 * Math.PI);
                         ctx.fill();
                         
-                        ctx.fillText(`${pointNum}e`, segment.points[1].x * scale + 6, segment.points[1].y * scale - 6);
-                        pointNum++;
+                        if (!isRoundingArc) {
+                            ctx.fillText(`${pointNum}e`, segment.points[1].x * scale + 6, segment.points[1].y * scale - 6);
+                            pointNum++;
+                        }
                         currentPos = segment.points[1];
                     }
                 });
@@ -989,7 +1435,7 @@
             drawCanvas();
         }
         
-        // Mouse event handlers for panning and point dragging
+        // Mouse event handlers
         function getMousePosition(e) {
             const rect = canvas.getBoundingClientRect();
             const x = e.clientX - rect.left - 20 - panX;
@@ -998,7 +1444,7 @@
         }
         
         function findPointAtPosition(x, y) {
-            const threshold = 10 / scale; // 10 pixel threshold scaled
+            const threshold = 10 / scale;
             let foundPoint = null;
             
             segments.forEach((segment, segIndex) => {
@@ -1017,13 +1463,11 @@
             const mousePos = getMousePosition(e);
             
             if (e.shiftKey) {
-                // Shift key held - start panning
                 isPanning = true;
                 lastMouseX = e.clientX;
                 lastMouseY = e.clientY;
                 canvas.style.cursor = 'grabbing';
             } else {
-                // No shift key - check for point dragging
                 const point = findPointAtPosition(mousePos.x, mousePos.y);
                 if (point) {
                     isDraggingPoint = true;
@@ -1038,7 +1482,6 @@
             const mousePos = getMousePosition(e);
             
             if (isPanning) {
-                // Pan the canvas
                 const deltaX = e.clientX - lastMouseX;
                 const deltaY = e.clientY - lastMouseY;
                 panX += deltaX;
@@ -1047,36 +1490,31 @@
                 lastMouseY = e.clientY;
                 drawCanvas();
             } else if (isDraggingPoint && selectedPoint) {
-                // Drag the selected point
                 const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 500;
                 const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
                 
                 let newX = mousePos.x;
                 let newY = mousePos.y;
                 
-                // Apply grid snap if enabled (0.5mm increments)
                 if (gridSnap) {
-                    newX = Math.round(newX * 2) / 2;  // Round to nearest 0.5
-                    newY = Math.round(newY * 2) / 2;  // Round to nearest 0.5
+                    newX = Math.round(newX * 2) / 2;
+                    newY = Math.round(newY * 2) / 2;
                 }
                 
-                // Clamp values within box bounds
                 newX = Math.max(0, Math.min(newX, boxWidth));
                 newY = Math.max(0, Math.min(newY, boxHeight));
                 
-                // Round to 1 decimal place
                 newX = Math.round(newX * 10) / 10;
                 newY = Math.round(newY * 10) / 10;
                 
-                // Update the point position
                 segments[selectedPoint.segIndex].points[selectedPoint.pointIndex].x = newX;
                 segments[selectedPoint.segIndex].points[selectedPoint.pointIndex].y = newY;
                 
-                // Update the input fields
+                corners = [];
                 updateSegmentsList();
+                updateCornersDisplay();
                 drawCanvas();
             } else {
-                // Check if hovering over a point
                 const point = findPointAtPosition(mousePos.x, mousePos.y);
                 if (point && !e.shiftKey) {
                     canvas.style.cursor = 'pointer';
@@ -1102,7 +1540,6 @@
             canvas.style.cursor = 'crosshair';
         });
         
-        // Update cursor when shift key is pressed/released
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Shift' && !isDraggingPoint) {
                 canvas.style.cursor = 'grab';
@@ -1119,7 +1556,6 @@
             }
         });
         
-        // Mouse wheel zoom
         canvas.addEventListener('wheel', function(e) {
             e.preventDefault();
             if (e.deltaY < 0) {
@@ -1131,7 +1567,6 @@
         
         function clearAll() {
             if (confirm('Are you sure you want to clear all data?')) {
-                // Clear form
                 document.getElementById('customer').value = '';
                 document.getElementById('boatName').value = '';
                 document.getElementById('brand').value = '';
@@ -1142,8 +1577,9 @@
                 document.getElementById('thicknessRatio').value = '';
                 document.getElementById('boxWidth').value = '';
                 document.getElementById('boxHeight').value = '';
+                document.getElementById('defaultRadius').value = '10';
+                document.getElementById('angleThreshold').value = '30';
                 
-                // Clear image
                 uploadedImage = null;
                 imageData = null;
                 imagePath = '';
@@ -1152,16 +1588,16 @@
                 document.getElementById('imageFile').value = '';
                 document.getElementById('imageToggleBtn').style.display = 'none';
                 
-                // Reset zoom and pan
                 zoomLevel = 1;
                 panX = 0;
                 panY = 0;
                 document.getElementById('zoomDisplay').textContent = '100%';
                 
-                // Clear segments
                 segments = [];
+                corners = [];
                 
                 updateSegmentsList();
+                updateCornersDisplay();
                 drawCanvas();
                 showStatus('All data cleared.', 'info');
             }
@@ -1174,7 +1610,7 @@
             const reader = new FileReader();
             reader.onload = function(e) {
                 parseCSV(e.target.result);
-                event.target.value = ''; // Reset file input
+                event.target.value = '';
             };
             reader.readAsText(file);
         }
@@ -1182,6 +1618,7 @@
         function parseCSV(content) {
             const lines = content.split('\n');
             segments = [];
+            corners = [];
             
             let inPoints = false;
             let currentSegmentType = null;
@@ -1196,7 +1633,6 @@
                 }
                 
                 if (!inPoints) {
-                    // Parse parameters
                     if (!line.startsWith('#') && line.includes(',')) {
                         const [key, ...valueParts] = line.split(',');
                         const value = valueParts.join(',').trim();
@@ -1240,38 +1676,34 @@
                         }
                     }
                 } else {
-                    // Parse points
                     if (line.startsWith('SEGMENT,')) {
-                        // Save previous segment if exists
                         if (currentSegmentType && currentSegmentPoints.length > 0) {
                             if (currentSegmentType === 'ARC') {
-                                // Group points in pairs for ARCs
                                 for (let i = 0; i < currentSegmentPoints.length; i += 2) {
                                     if (i + 1 < currentSegmentPoints.length) {
                                         segments.push({
                                             type: 'ARC',
-                                            points: [currentSegmentPoints[i], currentSegmentPoints[i + 1]]
+                                            points: [currentSegmentPoints[i], currentSegmentPoints[i + 1]],
+                                            rounded: false
                                         });
                                     }
                                 }
                             } else {
-                                // Each point is a separate LINE segment
                                 currentSegmentPoints.forEach(point => {
                                     segments.push({
                                         type: 'LINE',
-                                        points: [point]
+                                        points: [point],
+                                        rounded: false
                                     });
                                 });
                             }
                         }
                         
-                        // Start new segment
                         currentSegmentType = line.split(',')[1].trim();
                         currentSegmentPoints = [];
                     } else if (line && !line.startsWith('#') && line.includes(',')) {
                         const [x, y] = line.split(',').map(v => parseFloat(v.trim()));
                         if (!isNaN(x) && !isNaN(y)) {
-                            // Round to 1 decimal place
                             currentSegmentPoints.push({
                                 x: Math.round(x * 10) / 10,
                                 y: Math.round(y * 10) / 10
@@ -1281,14 +1713,14 @@
                 }
             }
             
-            // Save last segment
             if (currentSegmentType && currentSegmentPoints.length > 0) {
                 if (currentSegmentType === 'ARC') {
                     for (let i = 0; i < currentSegmentPoints.length; i += 2) {
                         if (i + 1 < currentSegmentPoints.length) {
                             segments.push({
                                 type: 'ARC',
-                                points: [currentSegmentPoints[i], currentSegmentPoints[i + 1]]
+                                points: [currentSegmentPoints[i], currentSegmentPoints[i + 1]],
+                                rounded: false
                             });
                         }
                     }
@@ -1296,19 +1728,20 @@
                     currentSegmentPoints.forEach(point => {
                         segments.push({
                             type: 'LINE',
-                            points: [point]
+                            points: [point],
+                            rounded: false
                         });
                     });
                 }
             }
             
             updateSegmentsList();
+            updateCornersDisplay();
             drawCanvas();
             showStatus('File imported successfully!', 'success');
         }
         
         function exportCSV() {
-            // Validate required fields
             const customer = document.getElementById('customer').value;
             const boatName = document.getElementById('boatName').value;
             const brand = document.getElementById('brand').value;
@@ -1328,7 +1761,6 @@
                 return;
             }
             
-            // Build CSV content
             let csv = `# Rudder Profile Specification for Core Model,
 # ,
 # UNITS: Millimeters (mm),
@@ -1363,12 +1795,9 @@ BoxSize,${boxWidth},${boxHeight}`;
             csv += `\n\n# --- Outline Points (X,Z) ---
 X,Y\n`;
             
-            // Add segments without grouping - each segment gets its own declaration
             segments.forEach((segment, index) => {
                 csv += `SEGMENT,${segment.type}\n`;
                 
-                // For the first segment, add the origin point before the segment points
-                // ONLY if the segment doesn't already start at 0,0
                 if (index === 0) {
                     const firstPoint = segment.points[0];
                     if (!(firstPoint.x === 0 && firstPoint.y === 0)) {
@@ -1376,13 +1805,11 @@ X,Y\n`;
                     }
                 }
                 
-                // Add segment points (all rounded to 1 decimal)
                 segment.points.forEach(point => {
                     csv += `${point.x.toFixed(1)},${point.y.toFixed(1)}\n`;
                 });
             });
             
-            // Create download
             const blob = new Blob([csv], { type: 'text/csv' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1397,10 +1824,9 @@ X,Y\n`;
         }
         
         function generateExamplePoints() {
-            // Clear existing
             segments = [];
+            corners = [];
             
-            // Set example parameters
             document.getElementById('customer').value = 'Andrew';
             document.getElementById('boatName').value = 'MackenSea';
             document.getElementById('brand').value = 'Nautitech';
@@ -1411,30 +1837,36 @@ X,Y\n`;
             document.getElementById('boxWidth').value = '500';
             document.getElementById('boxHeight').value = '1100';
             document.getElementById('thicknessRatio').value = '0.16';
+            document.getElementById('defaultRadius').value = '10';
+            document.getElementById('angleThreshold').value = '30';
             
-            // Set example image path
             imagePath = '../MackenSea/Input/MackenSea_Rudder_Outline.png';
             document.getElementById('imagePath').value = imagePath;
             document.getElementById('imageStatus').textContent = '⚠️ Example image path - select actual file to display';
             document.getElementById('imageStatus').style.color = '#ff9800';
             
-            // Add example segments from the actual CSV data
             segments = [
-                {type: 'LINE', points: [{x: 500, y: 0}]},
-                {type: 'LINE', points: [{x: 500, y: 89.4347680133322}]},
-                {type: 'LINE', points: [{x: 449.17654286260193, y: 574.8695506220279}]},
-                {type: 'ARC', points: [{x: 426.50170436291944, y: 802.1755974841772}, {x: 372.6548037321671, y: 976.6086810568105}]},
-                {type: 'ARC', points: [{x: 337.18490988778655, y: 1053.2687072173183}, {x: 279.46862989222757, y: 1078.3017395934542}]},
-                {type: 'ARC', points: [{x: 250.68833502125707, y: 1085.154190753209}, {x: 219.9154534478972, y: 1087.2885310216889}]},
-                {type: 'LINE', points: [{x: 122.85328333696499, y: 1097.8596584595132}]},
-                {type: 'LINE', points: [{x: 36.9, y: 571.7}]},
-                {type: 'ARC', points: [{x: 19.6, y: 356}, {x: 4.8, y: 158.2}]},
-                {type: 'LINE', points: [{x: 0, y: 0}]}
+                {type: 'LINE', points: [{x: 500, y: 0}], rounded: false},
+                {type: 'LINE', points: [{x: 500, y: 89.4}], rounded: false},
+                {type: 'LINE', points: [{x: 449.2, y: 574.9}], rounded: false},
+                {type: 'ARC', points: [{x: 426.5, y: 802.2}, {x: 372.7, y: 976.6}], rounded: false},
+                {type: 'ARC', points: [{x: 337.2, y: 1053.3}, {x: 279.5, y: 1078.3}], rounded: false},
+                {type: 'ARC', points: [{x: 250.7, y: 1085.2}, {x: 219.9, y: 1087.3}], rounded: false},
+                {type: 'LINE', points: [{x: 122.9, y: 1097.9}], rounded: false},
+                {type: 'LINE', points: [{x: 36.9, y: 571.7}], rounded: false},
+                {type: 'ARC', points: [{x: 19.6, y: 356}, {x: 4.8, y: 158.2}], rounded: false},
+                {type: 'LINE', points: [{x: 0, y: 0}], rounded: false}
             ];
             
             updateSegmentsList();
+            updateCornersDisplay();
             drawCanvas();
-            showStatus('Example rudder loaded!', 'success');
+            
+            // Auto-detect corners after loading
+            setTimeout(() => {
+                detectCorners();
+                showStatus('Example rudder loaded with corner detection!', 'success');
+            }, 100);
         }
         
         function showStatus(message, type) {
