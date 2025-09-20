@@ -24,7 +24,7 @@ from helpers.step_save_load import load_step, save_step, validate_step_file, Ste
 
 # Boat Configuration
 BOAT_NAME = "MackenSea"
-VERSION = "2.5.4"  # Fixed magic numbers and global state management
+VERSION = "2.5.5"  # Unified hole creation logic
 
 # Stock Positioning (mm)
 STOCK_CONFIG = {
@@ -190,92 +190,143 @@ def get_chord_bounds_at_z(shape, z_position):
         return None
 
 # ============================================================================
+# GENERIC HOLE OPERATION FUNCTION
+# ============================================================================
+
+def create_holes_generic(shape, hole_positions, hole_config, hole_params):
+    """
+    Generic function to create holes in a shape at specified positions.
+    
+    Args:
+        shape: The shape to add holes to
+        hole_positions: List of position data for holes
+        hole_config: Configuration dict with 'diameter' and 'depth' keys
+        hole_params: Dict with orientation-specific parameters:
+            - 'orientation': 'Z', 'X', or 'Y' for hole direction
+            - 'description': String describing the hole operation
+            - 'hole_type': Type name for error messages (e.g., "foam hole", "X-cut hole")
+    
+    Returns:
+        Modified shape with holes, or None if operation failed
+    """
+    orientation = hole_params['orientation']
+    description = hole_params['description']
+    hole_type = hole_params['hole_type']
+    
+    print(f"      {description}")
+    
+    result_shape = shape
+    successful_holes = 0
+    total_holes = len(hole_positions)
+    
+    for i, pos_data in enumerate(hole_positions):
+        position = pos_data['position']
+        fraction_desc = pos_data.get('fraction_desc', '')
+        
+        # Create cylinder based on orientation
+        if orientation == 'Z':
+            # Vertical hole (along Z-axis)
+            cylinder = Part.makeCylinder(
+                hole_config['diameter'] / 2,
+                hole_config['depth'],
+                position - Vector(0, 0, hole_config['depth']/2),
+                Vector(0, 0, 1)
+            )
+        elif orientation == 'X':
+            # Horizontal hole along X-axis
+            cylinder = Part.makeCylinder(
+                hole_config['diameter'] / 2,
+                hole_config['depth'],
+                position - Vector(hole_config['depth']/2, 0, 0),
+                Vector(1, 0, 0)
+            )
+        elif orientation == 'Y':
+            # Horizontal hole along Y-axis
+            cylinder = Part.makeCylinder(
+                hole_config['diameter'] / 2,
+                hole_config['depth'],
+                Vector(position.x, -hole_config['depth']/2, position.z),
+                Vector(0, -1, 0)
+            )
+        else:
+            print(f"         ❌ Unknown orientation: {orientation}")
+            return None
+        
+        try:
+            result_shape = result_shape.cut(cylinder)
+            successful_holes += 1
+        except Exception as e:
+            error_msg = f"         ❌ FAILED to add {hole_type} {i+1}/{total_holes}"
+            if fraction_desc:
+                error_msg += f" at {fraction_desc}"
+            error_msg += f": {e}"
+            print(error_msg)
+            return None
+    
+    if successful_holes != total_holes:
+        print(f"         ❌ Only added {successful_holes}/{total_holes} {hole_type}s - ABORTING")
+        return None
+    
+    print(f"         ✅ Added {successful_holes}/{total_holes} {hole_type}s ({hole_config['diameter']}mm dia)")
+    return result_shape
+
+# ============================================================================
 # HOLE OPERATION FUNCTIONS
 # ============================================================================
 
 def add_z_cut_alignment_pins(shape, z_cut_position):
     """Add alignment holes at a Z-cut position using FOAM_HOLE_CONFIG."""
-    print(f"      Adding foam holes at Z={z_cut_position:.1f}")
-    
     # Get chord bounds using cache
     bounds = get_chord_bounds_at_z(shape, z_cut_position)
     if bounds is None:
         return None
     
     x_min = bounds['x_min']
-    x_max = bounds['x_max']
     chord_width = bounds['width']
     y_pos = 0 - FOAM_HOLE_CONFIG['y_offset'] - FOAM_HOLE_CONFIG['diameter']/2
     
-    # Calculate hole positions using configuration
-    result_shape = shape
-    successful_holes = 0
-    total_holes = len(HOLE_POSITIONS['z_cut'])
-    
-    for i, fraction in enumerate(HOLE_POSITIONS['z_cut']):
+    # Build position data for generic function
+    hole_positions = []
+    for fraction in HOLE_POSITIONS['z_cut']:
         x_pos = x_min + (chord_width * fraction)
-        pos = Vector(x_pos, y_pos, z_cut_position)
-        
-        hole_cylinder = Part.makeCylinder(
-            FOAM_HOLE_CONFIG['diameter'] / 2, 
-            FOAM_HOLE_CONFIG['depth'],
-            pos - Vector(0, 0, FOAM_HOLE_CONFIG['depth']/2),
-            Vector(0, 0, 1)
-        )
-        
-        try:
-            result_shape = result_shape.cut(hole_cylinder)
-            successful_holes += 1
-        except Exception as e:
-            print(f"         ❌ FAILED to add foam hole {i+1}/{total_holes} at {fraction*100:.0f}%: {e}")
-            return None
+        hole_positions.append({
+            'position': Vector(x_pos, y_pos, z_cut_position),
+            'fraction_desc': f"{fraction*100:.0f}%"
+        })
     
-    if successful_holes != total_holes:
-        print(f"         ❌ Only added {successful_holes}/{total_holes} foam holes - ABORTING")
-        return None
-        
-    print(f"         ✅ Added {successful_holes}/{total_holes} foam holes ({FOAM_HOLE_CONFIG['diameter']}mm dia)")
-    return result_shape
+    hole_params = {
+        'orientation': 'Z',
+        'description': f"Adding foam holes at Z={z_cut_position:.1f}",
+        'hole_type': "foam hole"
+    }
+    
+    return create_holes_generic(shape, hole_positions, FOAM_HOLE_CONFIG, hole_params)
 
 
 def add_x_cut_alignment_pins(shape, x_cut_position, z_start, z_end):
     """Add alignment holes at an X-cut position using HOLE_CONFIG."""
-    print(f"      Adding X-cut alignment holes at X={x_cut_position:.1f}")
-    
     slice_height = z_end - z_start
     y_pos = 0 - HOLE_CONFIG['y_offset'] - HOLE_CONFIG['diameter']/2
     
     print(f"         Slice from Z={z_start:.1f} to {z_end:.1f} (height={slice_height:.1f})")
     print(f"         Y position for holes: {y_pos:.1f}")
     
-    result_shape = shape
-    successful_holes = 0
-    total_holes = len(HOLE_POSITIONS['x_cut'])
-    
-    for i, fraction in enumerate(HOLE_POSITIONS['x_cut']):
+    # Build position data for generic function
+    hole_positions = []
+    for fraction in HOLE_POSITIONS['x_cut']:
         z_pos = z_start + (slice_height * fraction)
-        pos = Vector(x_cut_position, y_pos, z_pos)
-        
-        hole_cylinder = Part.makeCylinder(
-            HOLE_CONFIG['diameter'] / 2, 
-            HOLE_CONFIG['depth'],
-            pos - Vector(HOLE_CONFIG['depth']/2, 0, 0),
-            Vector(1, 0, 0)
-        )
-        
-        try:
-            result_shape = result_shape.cut(hole_cylinder)
-            successful_holes += 1
-        except Exception as e:
-            print(f"         ❌ FAILED to add X-cut hole {i+1}/{total_holes} at {fraction*100:.0f}%: {e}")
-            return None
+        hole_positions.append({
+            'position': Vector(x_cut_position, y_pos, z_pos),
+            'fraction_desc': f"{fraction*100:.0f}%"
+        })
     
-    if successful_holes != total_holes:
-        print(f"         ❌ Only added {successful_holes}/{total_holes} X-cut holes - ABORTING")
-        return None
-        
-    print(f"         ✅ Added {successful_holes}/{total_holes} X-cut holes ({HOLE_CONFIG['diameter']}mm dia)")
-    return result_shape
+    hole_params = {
+        'orientation': 'X',
+        'description': f"Adding X-cut alignment holes at X={x_cut_position:.1f}",
+        'hole_type': "X-cut hole"
+    }
+    
+    return create_holes_generic(shape, hole_positions, HOLE_CONFIG, hole_params)
 
 
 def add_y_half_joining_holes(shape, z_start, z_end, section_name):
@@ -284,9 +335,8 @@ def add_y_half_joining_holes(shape, z_start, z_end, section_name):
     print(f"      Adding Y-direction joining holes to {section_name}")
     print(f"         Section Z: {z_start:.1f} to {z_end:.1f} (height={section_height:.1f})")
     
-    result_shape = shape
-    total_holes = 0
-    expected_holes = len(HOLE_POSITIONS['y_join_rows']) * len(HOLE_POSITIONS['y_join_cols'])
+    # Build position data for all holes
+    hole_positions = []
     
     for row_frac in HOLE_POSITIONS['y_join_rows']:
         z_position = z_start + (section_height * row_frac)
@@ -298,32 +348,22 @@ def add_y_half_joining_holes(shape, z_start, z_end, section_name):
             return None
         
         x_min = bounds['x_min']
-        x_max = bounds['x_max']
         chord_width = bounds['width']
         
         for x_frac in HOLE_POSITIONS['y_join_cols']:
             x_pos = x_min + (chord_width * x_frac)
-            
-            hole_cylinder = Part.makeCylinder(
-                HOLE_CONFIG['diameter'] / 2, 
-                HOLE_CONFIG['depth'],
-                Vector(x_pos, -HOLE_CONFIG['depth']/2, z_position),
-                Vector(0, -1, 0)
-            )
-            
-            try:
-                result_shape = result_shape.cut(hole_cylinder)
-                total_holes += 1
-            except Exception as e:
-                print(f"            ❌ FAILED to add hole at X={x_pos:.1f}: {e}")
-                return None
+            hole_positions.append({
+                'position': Vector(x_pos, 0, z_position),  # Y position handled by cylinder creation
+                'fraction_desc': None  # Not needed for Y holes
+            })
     
-    if total_holes != expected_holes:
-        print(f"         ❌ Only added {total_holes}/{expected_holes} joining holes - ABORTING")
-        return None
-        
-    print(f"         ✅ Added {total_holes}/{expected_holes} joining holes ({HOLE_CONFIG['diameter']}mm dia)")
-    return result_shape
+    hole_params = {
+        'orientation': 'Y',
+        'description': "",  # Already printed above
+        'hole_type': "joining hole"
+    }
+    
+    return create_holes_generic(shape, hole_positions, HOLE_CONFIG, hole_params)
 
 
 def ensure_solid(shape, operation_name="operations"):
