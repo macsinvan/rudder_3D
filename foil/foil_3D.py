@@ -560,14 +560,9 @@ def build_foil_from_step(doc):
         chord_len = abs(x2 - x1)
         
         # Handle different chord sizes
-        if chord_len < 0.01:  # Essentially a point
-            # Create tiny circle for tip closure
-            center = Vector((x1 + x2) / 2, 0.0, z)
-            circle = Part.makeCircle(1.0, center, Vector(0, 0, 1))
-            wire = Part.Wire([circle])
-            section_type = "TIP_CIRCLE"
-            thickness_percent = 0
-            absolute_thickness = 0
+        if chord_len < 0.001:  # Skip essentially zero-length chords
+            print(f"{idx:<6} {z:<10.1f} {chord_len:<10.2f} {'--':<10} {'--':<10} {'SKIPPED':<15}")
+            continue  # Skip this section entirely - no geometry created
             
         elif chord_len < CONFIG['min_chord_length']:
             # Very small chord - create ellipse
