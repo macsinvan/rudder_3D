@@ -24,7 +24,7 @@ from helpers.step_save_load import load_step, save_step, validate_step_file, Ste
 
 # Boat Configuration
 BOAT_NAME = "MackenSea"
-VERSION = "2.5.3"  # Added chord bounds caching
+VERSION = "2.5.4"  # Fixed magic numbers and global state management
 
 # Stock Positioning (mm)
 STOCK_CONFIG = {
@@ -72,6 +72,15 @@ GEOMETRY_CONFIG = {
     'y_split_overlap': 0.01,       # Minimal overlap at Y=0 split for reliable boolean ops
     'cutting_box_extra': 10,       # Extra size for piece cutting boxes
     'cutting_box_offset': 5,       # Offset for piece cutting
+    'sample_box_size': 1000,       # Size of sampling boxes for chord detection
+    'sample_box_center': 500,      # Center offset for sampling boxes
+    'cache_rounding_precision': 2,  # Decimal places for cache key rounding
+}
+
+# Validation Parameters
+VALIDATION_CONFIG = {
+    'min_intersection_volume': 0.001,  # Minimum volume (mm³) for meaningful intersection
+    'high_face_count_warning': 10000,  # Warning threshold for face count
 }
 
 # Visualization
@@ -112,26 +121,52 @@ INPUT_FILES = {
 MACRO_NAME = f"Demo_Model_{BOAT_NAME}"
 
 # ============================================================================
-# CHORD BOUNDS CACHE
+# APPLICATION STATE CLASS
 # ============================================================================
 
-# Cache for chord bounds at different Z positions to avoid redundant sampling
-chord_bounds_cache = {}
+class DemoModelState:
+    """Holds all application state to avoid global variables"""
+    def __init__(self):
+        self.doc = None
+        self.cut_foil_obj = None
+        self.stock_obj = None
+        self.stock_cutout_obj = None
+        self.port_half = None
+        self.port_half_obj = None
+        self.port_plan = None
+        self.pieces = []
+        self.piece_objects = []
+        self.chord_bounds_cache = {}
+    
+    def clear_chord_cache(self):
+        """Clear the chord bounds cache"""
+        self.chord_bounds_cache = {}
+        print(f"   Cleared chord bounds cache")
+
+# Create single state instance
+state = DemoModelState()
+
+# ============================================================================
+# CHORD BOUNDS CACHE
+# ============================================================================
 
 def get_chord_bounds_at_z(shape, z_position):
     """Get chord bounds at a Z position, using cache if available."""
     # Round Z position to avoid floating point comparison issues
-    z_key = round(z_position, 2)
+    z_key = round(z_position, GEOMETRY_CONFIG['cache_rounding_precision'])
     
-    if z_key in chord_bounds_cache:
+    if z_key in state.chord_bounds_cache:
         print(f"         Using cached chord bounds for Z={z_position:.1f}")
-        return chord_bounds_cache[z_key]
+        return state.chord_bounds_cache[z_key]
     
     print(f"         Computing chord bounds at Z={z_position:.1f}")
     
+    box_size = GEOMETRY_CONFIG['sample_box_size']
+    box_center = GEOMETRY_CONFIG['sample_box_center']
+    
     sample_slice = Part.makeBox(
-        1000, 1000, GEOMETRY_CONFIG['slice_sample_thickness'],
-        Vector(-500, -500, z_position - GEOMETRY_CONFIG['slice_sample_thickness']/2)
+        box_size, box_size, GEOMETRY_CONFIG['slice_sample_thickness'],
+        Vector(-box_center, -box_center, z_position - GEOMETRY_CONFIG['slice_sample_thickness']/2)
     )
     
     try:
@@ -145,7 +180,7 @@ def get_chord_bounds_at_z(shape, z_position):
         }
         
         # Cache the result
-        chord_bounds_cache[z_key] = bounds
+        state.chord_bounds_cache[z_key] = bounds
         
         print(f"         Chord: X from {bounds['x_min']:.1f} to {bounds['x_max']:.1f} (width={bounds['width']:.1f})")
         return bounds
@@ -153,12 +188,6 @@ def get_chord_bounds_at_z(shape, z_position):
     except Exception as e:
         print(f"         ❌ FAILED to find chord at Z={z_position:.1f}: {e}")
         return None
-
-def clear_chord_bounds_cache():
-    """Clear the chord bounds cache."""
-    global chord_bounds_cache
-    chord_bounds_cache = {}
-    print(f"   Cleared chord bounds cache")
 
 # ============================================================================
 # HOLE OPERATION FUNCTIONS
@@ -324,33 +353,18 @@ def ensure_solid(shape, operation_name="operations"):
     return None
 
 # ============================================================================
-# GLOBAL STATE
-# ============================================================================
-
-doc = None
-cut_foil_obj = None
-stock_obj = None
-stock_cutout_obj = None
-port_half = None
-port_half_obj = None
-port_plan = None
-pieces = []
-piece_objects = []
-
-# ============================================================================
 # MAIN WORKFLOW FUNCTIONS
 # ============================================================================
 
 def update_view():
     """Update document and view to show current state"""
-    doc.recompute()
+    state.doc.recompute()
     Gui.SendMsgToActiveView("ViewFit")
     Gui.activeDocument().activeView().viewIsometric()
 
 
 def initialize_and_setup():
     """Initialize document and validate STEP files"""
-    global doc
     
     print(f"\n🎭 Demo Model Generator v{VERSION}")
     print(f"🚤 Boat: {BOAT_NAME}")
@@ -358,7 +372,7 @@ def initialize_and_setup():
     # New document
     if MACRO_NAME in App.listDocuments():
         App.closeDocument(MACRO_NAME)
-    doc = App.newDocument(MACRO_NAME)
+    state.doc = App.newDocument(MACRO_NAME)
     Gui.activateWorkbench("PartWorkbench")
 
     # Validate STEP files before import
@@ -384,7 +398,6 @@ def initialize_and_setup():
 
 def import_step_files():
     """Import all STEP files"""
-    global cut_foil_obj, stock_obj, stock_cutout_obj
     
     try:
         print(f"\n📥 Importing STEP files...")
@@ -394,24 +407,24 @@ def import_step_files():
         _, cut_foil_objects = load_step(cut_foil_path, MACRO_NAME, verbose=True)
         if not cut_foil_objects:
             raise StepFileError("No objects imported from cut foil file")
-        cut_foil_obj = cut_foil_objects[0]
-        cut_foil_obj.Label = f"{BOAT_NAME}_Cut_Foil"
+        state.cut_foil_obj = cut_foil_objects[0]
+        state.cut_foil_obj.Label = f"{BOAT_NAME}_Cut_Foil"
         
         # Import stock
         stock_path = f"{PATHS['stock_folder']}/{INPUT_FILES['stock']}"
         _, stock_objects = load_step(stock_path, MACRO_NAME, verbose=True)
         if not stock_objects:
             raise StepFileError("No objects imported from stock file")
-        stock_obj = stock_objects[0]
-        stock_obj.Label = f"{BOAT_NAME}_Stock"
+        state.stock_obj = stock_objects[0]
+        state.stock_obj.Label = f"{BOAT_NAME}_Stock"
         
         # Import stock cutout
         stock_cutout_path = f"{PATHS['cutout_folder']}/{INPUT_FILES['stock_cutout']}"
         _, stock_cutout_objects = load_step(stock_cutout_path, MACRO_NAME, verbose=True)
         if not stock_cutout_objects:
             raise StepFileError("No objects imported from stock cutout file")
-        stock_cutout_obj = stock_cutout_objects[0]
-        stock_cutout_obj.Label = f"{BOAT_NAME}_Stock_Cutout"
+        state.stock_cutout_obj = stock_cutout_objects[0]
+        state.stock_cutout_obj.Label = f"{BOAT_NAME}_Stock_Cutout"
         
         update_view()
         return True
@@ -424,8 +437,8 @@ def import_step_files():
 def position_stock_components():
     """Position all stock components"""
     final_positions = position_all_stock_components(
-        stock_obj, 
-        stock_cutout_obj,
+        state.stock_obj, 
+        state.stock_cutout_obj,
         STOCK_CONFIG['post_center_x'], 
         STOCK_CONFIG['post_top_z'], 
         STOCK_CONFIG['post_diameter'], 
@@ -433,9 +446,9 @@ def position_stock_components():
     )
     
     # Make objects visible
-    cut_foil_obj.ViewObject.Visibility = True
-    stock_obj.ViewObject.Visibility = True
-    stock_cutout_obj.ViewObject.Visibility = True
+    state.cut_foil_obj.ViewObject.Visibility = True
+    state.stock_obj.ViewObject.Visibility = True
+    state.stock_cutout_obj.ViewObject.Visibility = True
     
     print(f"\n🔄 Recomputing to ensure positioning is complete...")
     update_view()
@@ -446,12 +459,11 @@ def position_stock_components():
 
 def split_solid_foil_at_y_zero():
     """Split solid foil at Y=0 for port/starboard (BEFORE boolean cut)"""
-    global port_half, port_half_obj
     
     print(f"\n✂️ Splitting solid foil at Y=0...")
     
     try:
-        bbox = cut_foil_obj.Shape.BoundBox
+        bbox = state.cut_foil_obj.Shape.BoundBox
         print(f"   Solid foil bounds:")
         print(f"      X: {bbox.XMin:.1f} to {bbox.XMax:.1f}")
         print(f"      Y: {bbox.YMin:.1f} to {bbox.YMax:.1f}")
@@ -471,27 +483,27 @@ def split_solid_foil_at_y_zero():
         
         # Extract port half only from SOLID foil
         print(f"   Creating port half from solid foil (will be mirrored for starboard)...")
-        port_half = cut_foil_obj.Shape.common(box_negative_y)
+        state.port_half = state.cut_foil_obj.Shape.common(box_negative_y)
         
         # Verify the split worked
-        if port_half.isNull() or len(port_half.Faces) == 0:
+        if state.port_half.isNull() or len(state.port_half.Faces) == 0:
             print(f"   ❌ FAILED: Port half is empty!")
             return False
         
         # Create FreeCAD object for port half visualization
-        port_half_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_Port_Half_Solid")
-        port_half_obj.Shape = port_half
-        port_half_obj.ViewObject.Visibility = True
-        port_half_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['port_solid']
-        port_half_obj.ViewObject.Transparency = VISUALIZATION_CONFIG['transparency']['solid']
-        port_half_obj.Label = f"{BOAT_NAME}_Port_Half_Solid"
+        state.port_half_obj = state.doc.addObject("Part::Feature", f"{BOAT_NAME}_Port_Half_Solid")
+        state.port_half_obj.Shape = state.port_half
+        state.port_half_obj.ViewObject.Visibility = True
+        state.port_half_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['port_solid']
+        state.port_half_obj.ViewObject.Transparency = VISUALIZATION_CONFIG['transparency']['solid']
+        state.port_half_obj.Label = f"{BOAT_NAME}_Port_Half_Solid"
         
         # Hide the original foil and stock for cleaner view
-        cut_foil_obj.ViewObject.Visibility = False
-        stock_obj.ViewObject.Visibility = False
-        stock_cutout_obj.ViewObject.Visibility = False
+        state.cut_foil_obj.ViewObject.Visibility = False
+        state.stock_obj.ViewObject.Visibility = False
+        state.stock_cutout_obj.ViewObject.Visibility = False
         
-        print(f"   ✅ Solid port half created with {len(port_half.Faces)} faces")
+        print(f"   ✅ Solid port half created with {len(state.port_half.Faces)} faces")
         print(f"   ℹ️ This solid half will have holes added, then be hollowed")
         
         update_view()
@@ -504,13 +516,12 @@ def split_solid_foil_at_y_zero():
 
 def create_port_cutting_plan():
     """Create cutting plan for 3D printing"""
-    global port_plan
     
     print(f"\n🗺️ Creating cutting plan for 3D printing...")
     print(f"🖨️ Printer: Bambu Labs HD2 (Build volume: {PRINTER_CONFIG['build_x']}x{PRINTER_CONFIG['build_y']}x{PRINTER_CONFIG['build_z']}mm)")
     
     try:
-        port_plan = create_cutting_plan(port_half, "Port Half", PRINTER_CONFIG['max_print_size'])
+        state.port_plan = create_cutting_plan(state.port_half, "Port Half", PRINTER_CONFIG['max_print_size'])
         return True
     except Exception as e:
         print(f"   ❌ FAILED to create cutting plan: {e}")
@@ -519,27 +530,26 @@ def create_port_cutting_plan():
 
 def add_z_alignment_to_port():
     """Add Z-cut foam holes to solid port half"""
-    global port_half
     
     # Clear cache before starting hole operations
-    clear_chord_bounds_cache()
+    state.clear_chord_cache()
     
     positions_str = ', '.join([f"{p*100:.0f}%" for p in HOLE_POSITIONS['z_cut']])
     print(f"\n🔩 Adding Z-cut foam holes to solid port half...")
     print(f"   Adding {len(HOLE_POSITIONS['z_cut'])} foam holes ({FOAM_HOLE_CONFIG['diameter']}mm) at each Z-cut position")
     print(f"   Holes at {positions_str} of chord width")
     
-    if port_plan['z_slices'] > 1:
-        for i in range(1, port_plan['z_slices']):
-            z_cut_position = port_plan['bbox'].ZMin + (i * port_plan['z_slice_height'])
-            modified_shape = add_z_cut_alignment_pins(port_half, z_cut_position)
+    if state.port_plan['z_slices'] > 1:
+        for i in range(1, state.port_plan['z_slices']):
+            z_cut_position = state.port_plan['bbox'].ZMin + (i * state.port_plan['z_slice_height'])
+            modified_shape = add_z_cut_alignment_pins(state.port_half, z_cut_position)
             if modified_shape is None:
                 print(f"   ❌ FAILED to add Z-cut foam holes")
                 return False
-            port_half = modified_shape
+            state.port_half = modified_shape
     
-    port_half_obj.Shape = port_half
-    port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_Z_holes"
+    state.port_half_obj.Shape = state.port_half
+    state.port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_Z_holes"
     
     update_view()
     print(f"   🔄 View updated to show Z-cut foam holes in solid")
@@ -549,27 +559,26 @@ def add_z_alignment_to_port():
 
 def add_x_alignment_to_port():
     """Add X-cut alignment pins to solid port half"""
-    global port_half
     
     positions_str = ', '.join([f"{p*100:.0f}%" for p in HOLE_POSITIONS['x_cut']])
     print(f"\n🔧 Adding X-cut alignment holes to solid port half...")
     print(f"   Adding {len(HOLE_POSITIONS['x_cut'])} alignment holes ({HOLE_CONFIG['diameter']}mm) at each X-cut position")
     print(f"   Holes at {positions_str} of slice height")
     
-    for slice_info in port_plan['slice_plans']:
+    for slice_info in state.port_plan['slice_plans']:
         if slice_info['needs_x_split']:
             x_center = slice_info['x_center']
             z_start = slice_info['z_start']
             z_end = slice_info['z_end']
-            modified_shape = add_x_cut_alignment_pins(port_half, x_center, z_start, z_end)
+            modified_shape = add_x_cut_alignment_pins(state.port_half, x_center, z_start, z_end)
             if modified_shape is None:
                 print(f"   ❌ FAILED to add X-cut alignment pins")
                 return False
-            port_half = modified_shape
+            state.port_half = modified_shape
     
-    port_half_obj.Shape = port_half
-    port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_Alignment_Holes"
-    port_half_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['port_aligned']
+    state.port_half_obj.Shape = state.port_half
+    state.port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_Alignment_Holes"
+    state.port_half_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['port_aligned']
     
     update_view()
     print(f"   🔄 View updated to show all alignment holes in solid")
@@ -580,7 +589,6 @@ def add_x_alignment_to_port():
 
 def add_y_joining_to_port():
     """Add Y-direction holes for joining port and starboard halves"""
-    global port_half
     
     rows = len(HOLE_POSITIONS['y_join_rows'])
     cols = len(HOLE_POSITIONS['y_join_cols'])
@@ -592,7 +600,7 @@ def add_y_joining_to_port():
     print(f"   Adding {cols} holes ({HOLE_CONFIG['diameter']}mm) per row at {col_str} of chord")
     print(f"   Holes oriented horizontally (Y-axis) for joining halves")
     
-    for i, slice_info in enumerate(port_plan['slice_plans']):
+    for i, slice_info in enumerate(state.port_plan['slice_plans']):
         section_num = i + 1
         z_start = slice_info['z_start']
         z_end = slice_info['z_end']
@@ -600,22 +608,22 @@ def add_y_joining_to_port():
         
         print(f"\n   Processing {section_name} (Z: {z_start:.0f} to {z_end:.0f}mm)")
         
-        modified_shape = add_y_half_joining_holes(port_half, z_start, z_end, section_name)
+        modified_shape = add_y_half_joining_holes(state.port_half, z_start, z_end, section_name)
         if modified_shape is None:
             print(f"   ❌ FAILED to add Y-joining holes")
             return False
-        port_half = modified_shape
+        state.port_half = modified_shape
     
     # Ensure solid after all hole operations
-    solid_shape = ensure_solid(port_half, "hole operations")
+    solid_shape = ensure_solid(state.port_half, "hole operations")
     if solid_shape is None:
         print(f"   ❌ FAILED to ensure solid shape")
         return False
-    port_half = solid_shape
+    state.port_half = solid_shape
     
-    port_half_obj.Shape = port_half
-    port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_Joining_Holes"
-    port_half_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['port_joined']
+    state.port_half_obj.Shape = state.port_half
+    state.port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_Joining_Holes"
+    state.port_half_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['port_joined']
     
     update_view()
     print(f"   🔄 View updated to show joining holes in solid")
@@ -630,31 +638,31 @@ def pre_boolean_checks():
     print(f"   Checking port half with holes vs stock cutout")
     
     # Check 1: Validate shapes
-    if not port_half.isValid():
+    if not state.port_half.isValid():
         print(f"❌ Port half shape is not valid!")
         return False
     
-    if not stock_cutout_obj.Shape.isValid():
+    if not state.stock_cutout_obj.Shape.isValid():
         print(f"❌ Stock cutout shape is not valid!")
         return False
     
     print(f"   ✅ Both shapes are valid")
     
     # Check 2: Ensure shapes are solids
-    if not port_half.ShapeType == "Solid":
-        print(f"❌ Port half is not a solid! (Type: {port_half.ShapeType})")
+    if not state.port_half.ShapeType == "Solid":
+        print(f"❌ Port half is not a solid! (Type: {state.port_half.ShapeType})")
         return False
     
-    if not stock_cutout_obj.Shape.ShapeType == "Solid":
-        print(f"❌ Stock cutout is not a solid! (Type: {stock_cutout_obj.Shape.ShapeType})")
+    if not state.stock_cutout_obj.Shape.ShapeType == "Solid":
+        print(f"❌ Stock cutout is not a solid! (Type: {state.stock_cutout_obj.Shape.ShapeType})")
         return False
     
     print(f"   ✅ Both shapes are solids")
     
     # Check 3: Check for intersection
     try:
-        common_volume = port_half.common(stock_cutout_obj.Shape)
-        if common_volume.Volume < 0.001:
+        common_volume = state.port_half.common(state.stock_cutout_obj.Shape)
+        if common_volume.Volume < VALIDATION_CONFIG['min_intersection_volume']:
             print(f"❌ No meaningful intersection between shapes!")
             print(f"   Common volume: {common_volume.Volume:.6f} mm³")
             return False
@@ -665,8 +673,8 @@ def pre_boolean_checks():
     print(f"   ✅ Shapes intersect properly (common volume: {common_volume.Volume:.2f} mm³)")
     
     # Check 4: Check bounding box overlap
-    port_bbox = port_half.BoundBox
-    cutout_bbox = stock_cutout_obj.Shape.BoundBox
+    port_bbox = state.port_half.BoundBox
+    cutout_bbox = state.stock_cutout_obj.Shape.BoundBox
     
     if not (port_bbox.intersect(cutout_bbox)):
         print(f"❌ Bounding boxes do not intersect!")
@@ -676,10 +684,11 @@ def pre_boolean_checks():
     
     # Check 5: Check shape complexity
     print(f"   ℹ️ Shape complexity:")
-    print(f"      Port half with holes: {len(port_half.Faces)} faces, {len(port_half.Edges)} edges")
-    print(f"      Stock cutout: {len(stock_cutout_obj.Shape.Faces)} faces, {len(stock_cutout_obj.Shape.Edges)} edges")
+    print(f"      Port half with holes: {len(state.port_half.Faces)} faces, {len(state.port_half.Edges)} edges")
+    print(f"      Stock cutout: {len(state.stock_cutout_obj.Shape.Faces)} faces, {len(state.stock_cutout_obj.Shape.Edges)} edges")
     
-    if len(port_half.Faces) > 10000 or len(stock_cutout_obj.Shape.Faces) > 10000:
+    if len(state.port_half.Faces) > VALIDATION_CONFIG['high_face_count_warning'] or \
+       len(state.stock_cutout_obj.Shape.Faces) > VALIDATION_CONFIG['high_face_count_warning']:
         print(f"   ⚠️ Warning: High face count detected. Boolean operation may be slow.")
     
     print(f"\n✅ All pre-Boolean checks passed successfully!")
@@ -688,32 +697,31 @@ def pre_boolean_checks():
 
 def boolean_cut_operation():
     """Perform boolean cut to create hollowed port half"""
-    global port_half
     
     print(f"\n🔧 Creating cavity with boolean cut on port half...")
     print(f"   ⏳ This may take a moment for complex geometry...")
     try:
-        original_faces = len(port_half.Faces)
-        hollowed_port_half = port_half.cut(stock_cutout_obj.Shape)
+        original_faces = len(state.port_half.Faces)
+        hollowed_port_half = state.port_half.cut(state.stock_cutout_obj.Shape)
         
         # Verify the cut worked
         if hollowed_port_half.isNull() or len(hollowed_port_half.Faces) <= original_faces:
             print(f"   ❌ FAILED: Boolean cut produced invalid result")
             return False
         
-        port_half = hollowed_port_half
+        state.port_half = hollowed_port_half
         
-        port_half_obj.Shape = port_half
-        port_half_obj.Label = f"{BOAT_NAME}_Port_Half_Hollowed"
-        port_half_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['port_hollowed']
-        port_half_obj.ViewObject.Transparency = VISUALIZATION_CONFIG['transparency']['hollowed']
+        state.port_half_obj.Shape = state.port_half
+        state.port_half_obj.Label = f"{BOAT_NAME}_Port_Half_Hollowed"
+        state.port_half_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['port_hollowed']
+        state.port_half_obj.ViewObject.Transparency = VISUALIZATION_CONFIG['transparency']['hollowed']
         
-        stock_obj.ViewObject.Visibility = True
-        stock_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['stock']
+        state.stock_obj.ViewObject.Visibility = True
+        state.stock_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['stock']
         
         print(f"   ✅ Cavity created successfully in port half")
         print(f"   Original port half faces: {original_faces}")
-        print(f"   Hollowed port half faces: {len(port_half.Faces)}")
+        print(f"   Hollowed port half faces: {len(state.port_half.Faces)}")
         
         update_view()
         return True
@@ -725,16 +733,15 @@ def boolean_cut_operation():
 
 def cut_pieces():
     """Cut hollowed port half into pieces according to plan"""
-    global pieces, piece_objects
     
     print(f"\n📐 Cutting pieces...")
     print(f"   Alignment and joining holes will be split automatically by cuts")
     
-    port_half_obj.ViewObject.Visibility = False
-    stock_obj.ViewObject.Visibility = False
+    state.port_half_obj.ViewObject.Visibility = False
+    state.stock_obj.ViewObject.Visibility = False
     
-    pieces = []
-    piece_objects = []
+    state.pieces = []
+    state.piece_objects = []
     
     extra = GEOMETRY_CONFIG['boolean_box_extra']
     offset = GEOMETRY_CONFIG['boolean_box_offset']
@@ -742,14 +749,14 @@ def cut_pieces():
     cut_offset = GEOMETRY_CONFIG['cutting_box_offset']
     
     # Cut into Z slices
-    for i, slice_info in enumerate(port_plan['slice_plans']):
+    for i, slice_info in enumerate(state.port_plan['slice_plans']):
         slice_num = i + 1
         z_start = slice_info['z_start']
         z_end = slice_info['z_end']
         
         print(f"\n   Processing slice {slice_num} (Z: {z_start:.0f} to {z_end:.0f}mm)")
         
-        slice_bbox = port_half.BoundBox
+        slice_bbox = state.port_half.BoundBox
         
         # Box to isolate this Z slice
         slice_box = Part.makeBox(
@@ -760,7 +767,7 @@ def cut_pieces():
         )
         
         try:
-            slice_shape = port_half.common(slice_box)
+            slice_shape = state.port_half.common(slice_box)
             
             if slice_shape.isNull() or len(slice_shape.Faces) == 0:
                 print(f"      ❌ FAILED: Slice {slice_num} is empty")
@@ -795,14 +802,14 @@ def cut_pieces():
                 name_a = f"{slice_num}A"
                 name_b = f"{slice_num}B"
                 
-                pieces.append((name_a, piece_a))
-                pieces.append((name_b, piece_b))
+                state.pieces.append((name_a, piece_a))
+                state.pieces.append((name_b, piece_b))
                 
                 print(f"      ✅ Created pieces {name_a} and {name_b}")
                 
                 # Create FreeCAD objects
                 for name, piece, x_offset in [(name_a, piece_a, -1), (name_b, piece_b, 1)]:
-                    obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_{name}")
+                    obj = state.doc.addObject("Part::Feature", f"{BOAT_NAME}_{name}")
                     obj.Shape = piece
                     obj.ViewObject.ShapeColor = (0.2 + i*0.15, 0.4, 0.6)
                     obj.ViewObject.Transparency = VISUALIZATION_CONFIG['transparency']['pieces']
@@ -811,15 +818,15 @@ def cut_pieces():
                         obj.Placement.Base.x += x_offset * VISUALIZATION_CONFIG['explosion_factor']
                         obj.Placement.Base.z += i * VISUALIZATION_CONFIG['explosion_factor']
                     
-                    piece_objects.append(obj)
+                    state.piece_objects.append(obj)
                 
             else:
                 name = f"{slice_num}A"
-                pieces.append((name, slice_shape))
+                state.pieces.append((name, slice_shape))
                 
                 print(f"      ✅ Created piece {name} (no X-split needed)")
                 
-                obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_{name}")
+                obj = state.doc.addObject("Part::Feature", f"{BOAT_NAME}_{name}")
                 obj.Shape = slice_shape
                 obj.ViewObject.ShapeColor = (0.2 + i*0.15, 0.4, 0.6)
                 obj.ViewObject.Transparency = VISUALIZATION_CONFIG['transparency']['pieces']
@@ -827,13 +834,13 @@ def cut_pieces():
                 if VISUALIZATION_CONFIG['explosion_factor'] > 0:
                     obj.Placement.Base.z += i * VISUALIZATION_CONFIG['explosion_factor']
                 
-                piece_objects.append(obj)
+                state.piece_objects.append(obj)
                 
         except Exception as e:
             print(f"      ❌ FAILED to create slice: {e}")
             return False
     
-    if len(pieces) == 0:
+    if len(state.pieces) == 0:
         print(f"   ❌ FAILED: No pieces were created")
         return False
     
@@ -849,15 +856,15 @@ def export_pieces():
     
     exported_count = 0
     
-    for piece_name, piece_shape in pieces:
+    for piece_name, piece_shape in state.pieces:
         try:
-            temp_obj = doc.addObject("Part::Feature", f"temp_{piece_name}")
+            temp_obj = state.doc.addObject("Part::Feature", f"temp_{piece_name}")
             temp_obj.Shape = piece_shape
             
             piece_path = f"{pieces_folder}/{BOAT_NAME}_{piece_name}.step"
             save_step(temp_obj, piece_path, verbose=False)
             
-            doc.removeObject(temp_obj.Name)
+            state.doc.removeObject(temp_obj.Name)
             
             print(f"   ✅ Exported: {piece_name}")
             exported_count += 1
@@ -865,15 +872,15 @@ def export_pieces():
         except Exception as e:
             print(f"   ❌ FAILED to export {piece_name}: {e}")
             # Clean up temp object if it exists
-            if f"temp_{piece_name}" in [obj.Name for obj in doc.Objects]:
-                doc.removeObject(f"temp_{piece_name}")
+            if f"temp_{piece_name}" in [obj.Name for obj in state.doc.Objects]:
+                state.doc.removeObject(f"temp_{piece_name}")
             return False
     
-    if exported_count != len(pieces):
-        print(f"   ❌ FAILED: Only exported {exported_count}/{len(pieces)} pieces")
+    if exported_count != len(state.pieces):
+        print(f"   ❌ FAILED: Only exported {exported_count}/{len(state.pieces)} pieces")
         return False
     
-    print(f"\n   📦 Successfully exported {exported_count}/{len(pieces)} pieces")
+    print(f"\n   📦 Successfully exported {exported_count}/{len(state.pieces)} pieces")
     return True
 
 
@@ -915,15 +922,15 @@ def final_view_and_summary():
     print(f"      • Add all holes to solid geometry (cleaner cuts)")
     print(f"      • Boolean cut last (on port half only)")
     print(f"   Chord bounds caching:")
-    print(f"      • Cached {len(chord_bounds_cache)} unique Z positions")
+    print(f"      • Cached {len(state.chord_bounds_cache)} unique Z positions")
     print(f"      • Reduced redundant geometry sampling operations")
     print(f"   Pieces created (to be mirrored):")
-    piece_list = [name for name, _ in pieces]
+    piece_list = [name for name, _ in state.pieces]
     piece_list.sort()
     for piece_name in piece_list:
         print(f"      • {piece_name}")
-    print(f"   📦 UNIQUE PIECES: {len(pieces)}")
-    print(f"   📦 TOTAL AFTER MIRRORING: {len(pieces) * 2}")
+    print(f"   📦 UNIQUE PIECES: {len(state.pieces)}")
+    print(f"   📦 TOTAL AFTER MIRRORING: {len(state.pieces) * 2}")
     
     pieces_folder = f"{PATHS['print_folder']}/pieces_for_mirroring"
     print(f"\n✅ Complete! Pieces ready for mirroring in slicer.")
