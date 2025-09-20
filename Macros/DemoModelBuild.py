@@ -24,7 +24,7 @@ from helpers.step_save_load import load_step, save_step, validate_step_file, Ste
 
 # Boat Configuration
 BOAT_NAME = "MackenSea"
-VERSION = "2.5.5"  # Unified hole creation logic
+VERSION = "2.5.6"  # Adaptive hole positioning to prevent breakthrough
 
 # Stock Positioning (mm)
 STOCK_CONFIG = {
@@ -46,19 +46,21 @@ PRINTER_CONFIG = {
 HOLE_CONFIG = {
     'diameter': 6,          # Dowel diameter
     'depth': 25,            # Hole depth
-    'y_offset': 3,          # Distance from Y=0 plane to hole center
+    'y_offset': 3,          # Distance from Y=0 plane to hole center (used only if adaptive positioning disabled)
+    'min_wall_thickness': 2,  # Minimum material thickness on each side of hole
 }
 
 # Foam Hole Configuration (mm) - Used for Z holes
 FOAM_HOLE_CONFIG = {
     'diameter': 12,         # Foam injection hole diameter
     'depth': 25,            # Hole depth
-    'y_offset': 3,          # Distance from Y=0 plane to hole center
+    'y_offset': 3,          # Distance from Y=0 plane to hole center (used only if adaptive positioning disabled)
+    'min_wall_thickness': 2,  # Minimum material thickness on each side of hole
 }
 
 # Hole Position Arrays (as fractions of dimension)
 HOLE_POSITIONS = {
-    'z_cut': [0.30, 0.45, 0.60, 0.90],          # Along chord width
+    'z_cut': [0.35, 0.45, 0.60, 0.80],          # Along chord width
     'x_cut': [0.1, 0.4, 0.6, 0.8],        # Along slice height
     'y_join_rows': [0.25, 0.75],          # Row positions in section height
     'y_join_cols': [0.1, 0.4, 0.6, 0.9],  # Along chord width
@@ -75,6 +77,7 @@ GEOMETRY_CONFIG = {
     'sample_box_size': 1000,       # Size of sampling boxes for chord detection
     'sample_box_center': 500,      # Center offset for sampling boxes
     'cache_rounding_precision': 2,  # Decimal places for cache key rounding
+    'adaptive_positioning': True,  # Use adaptive hole positioning to center in material
 }
 
 # Validation Parameters
@@ -189,6 +192,52 @@ def get_chord_bounds_at_z(shape, z_position):
         print(f"         ❌ FAILED to find chord at Z={z_position:.1f}: {e}")
         return None
 
+def get_y_bounds_at_position(shape, x_position, z_position):
+    """Get Y bounds of material at a specific X,Z position (from Y=0 to outer surface)."""
+    print(f"            Sampling Y bounds at X={x_position:.1f}, Z={z_position:.1f}")
+    
+    # Create a small vertical sample box at the X,Z position
+    # Extended in -Z direction to ensure we catch geometry at cut planes
+    sample_size = 5.0  # Increased from 1mm to 5mm for better detection
+    sample_z_extend = 10.0  # Extend 10mm in -Z direction to avoid cut plane issues
+    sample_height = 100.0  # Should cover the full Y extent
+    
+    # Create sample box that extends from positive Y through 0 to negative Y
+    # and extends backward in Z to catch narrower chord
+    sample_box = Part.makeBox(
+        sample_size,
+        sample_height * 2,  # Double height to cover both sides
+        sample_size + sample_z_extend,  # Extended in Z
+        Vector(x_position - sample_size/2, -sample_height, z_position - sample_z_extend)
+    )
+    
+    try:
+        # Find intersection with shape
+        intersection = shape.common(sample_box)
+        if intersection.isNull() or len(intersection.Faces) == 0:
+            print(f"            No material at this position")
+            return None
+            
+        # Get Y bounds of intersection
+        bbox = intersection.BoundBox
+        y_min = bbox.YMin  # Outer surface (negative for port half)
+        y_max = bbox.YMax  # Should be close to 0 (split plane)
+        
+        # For port half: material extends from Y=0 to negative Y
+        # The thickness is the distance from the split plane (0) to the outer surface
+        available_thickness = abs(y_min)  # Since y_min is negative for port half
+        
+        print(f"            Y bounds: {y_min:.1f} to {y_max:.1f} (thickness={available_thickness:.1f}mm)")
+        return {
+            'y_inner': 0,  # Split plane
+            'y_outer': y_min,  # Outer surface (negative for port)
+            'thickness': available_thickness
+        }
+        
+    except Exception as e:
+        print(f"            ❌ Failed to sample Y bounds: {e}")
+        return None
+    
 # ============================================================================
 # GENERIC HOLE OPERATION FUNCTION
 # ============================================================================
@@ -205,6 +254,7 @@ def create_holes_generic(shape, hole_positions, hole_config, hole_params):
             - 'orientation': 'Z', 'X', or 'Y' for hole direction
             - 'description': String describing the hole operation
             - 'hole_type': Type name for error messages (e.g., "foam hole", "X-cut hole")
+            - 'use_adaptive': Boolean to enable adaptive positioning (optional, default False)
     
     Returns:
         Modified shape with holes, or None if operation failed
@@ -212,16 +262,54 @@ def create_holes_generic(shape, hole_positions, hole_config, hole_params):
     orientation = hole_params['orientation']
     description = hole_params['description']
     hole_type = hole_params['hole_type']
+    use_adaptive = hole_params.get('use_adaptive', False) and GEOMETRY_CONFIG['adaptive_positioning']
     
     print(f"      {description}")
+    if use_adaptive:
+        print(f"         Using adaptive positioning (centering in material)")
     
     result_shape = shape
     successful_holes = 0
+    skipped_holes = 0
     total_holes = len(hole_positions)
     
     for i, pos_data in enumerate(hole_positions):
         position = pos_data['position']
         fraction_desc = pos_data.get('fraction_desc', '')
+        
+        # Adaptive positioning for Y-oriented holes
+        if use_adaptive and (orientation == 'Z' or orientation == 'X' or orientation == 'Y'):
+            y_bounds = get_y_bounds_at_position(shape, position.x, position.z)
+            
+            if y_bounds is None:
+                print(f"            Skipping hole {i+1}: No material at position")
+                skipped_holes += 1
+                continue
+            
+            # Check if there's enough material for the hole
+            min_wall = hole_config.get('min_wall_thickness', 2)
+            required_thickness = hole_config['diameter'] + (2 * min_wall)
+            
+            if y_bounds['thickness'] < required_thickness:
+                print(f"            Skipping hole {i+1}: Insufficient material")
+                print(f"              Available: {y_bounds['thickness']:.1f}mm, Required: {required_thickness:.1f}mm")
+                skipped_holes += 1
+                continue
+            
+            # Center the hole in the available material
+            # For port half: y_outer is negative, so center is at -thickness/2
+            y_center = y_bounds['y_inner'] - y_bounds['thickness'] / 2
+            
+            # Update position based on orientation
+            if orientation == 'Z':
+                position = Vector(position.x, y_center, position.z)
+            elif orientation == 'X':
+                position = Vector(position.x, y_center, position.z)
+            elif orientation == 'Y':
+                # For Y holes, we already have the correct X,Z, just need to ensure proper Y positioning
+                pass  # Y position is handled in cylinder creation
+                
+            print(f"            Hole {i+1}: Centered at Y={y_center:.1f} (thickness={y_bounds['thickness']:.1f}mm)")
         
         # Create cylinder based on orientation
         if orientation == 'Z':
@@ -263,8 +351,12 @@ def create_holes_generic(shape, hole_positions, hole_config, hole_params):
             print(error_msg)
             return None
     
-    if successful_holes != total_holes:
-        print(f"         ❌ Only added {successful_holes}/{total_holes} {hole_type}s - ABORTING")
+    # Report results
+    if skipped_holes > 0:
+        print(f"         ⚠️ Skipped {skipped_holes}/{total_holes} holes due to insufficient material")
+    
+    if successful_holes == 0:
+        print(f"         ❌ No holes were created - all positions had insufficient material")
         return None
     
     print(f"         ✅ Added {successful_holes}/{total_holes} {hole_type}s ({hole_config['diameter']}mm dia)")
@@ -283,7 +375,13 @@ def add_z_cut_alignment_pins(shape, z_cut_position):
     
     x_min = bounds['x_min']
     chord_width = bounds['width']
-    y_pos = 0 - FOAM_HOLE_CONFIG['y_offset'] - FOAM_HOLE_CONFIG['diameter']/2
+    
+    # If adaptive positioning is enabled, use Y=0 as placeholder
+    # Otherwise, use the fixed offset
+    if GEOMETRY_CONFIG['adaptive_positioning']:
+        y_pos = 0  # Will be replaced by adaptive positioning
+    else:
+        y_pos = 0 - FOAM_HOLE_CONFIG['y_offset'] - FOAM_HOLE_CONFIG['diameter']/2
     
     # Build position data for generic function
     hole_positions = []
@@ -297,7 +395,8 @@ def add_z_cut_alignment_pins(shape, z_cut_position):
     hole_params = {
         'orientation': 'Z',
         'description': f"Adding foam holes at Z={z_cut_position:.1f}",
-        'hole_type': "foam hole"
+        'hole_type': "foam hole",
+        'use_adaptive': True  # Enable adaptive positioning
     }
     
     return create_holes_generic(shape, hole_positions, FOAM_HOLE_CONFIG, hole_params)
@@ -306,10 +405,15 @@ def add_z_cut_alignment_pins(shape, z_cut_position):
 def add_x_cut_alignment_pins(shape, x_cut_position, z_start, z_end):
     """Add alignment holes at an X-cut position using HOLE_CONFIG."""
     slice_height = z_end - z_start
-    y_pos = 0 - HOLE_CONFIG['y_offset'] - HOLE_CONFIG['diameter']/2
+    
+    # If adaptive positioning is enabled, use Y=0 as placeholder
+    # Otherwise, use the fixed offset
+    if GEOMETRY_CONFIG['adaptive_positioning']:
+        y_pos = 0  # Will be replaced by adaptive positioning
+    else:
+        y_pos = 0 - HOLE_CONFIG['y_offset'] - HOLE_CONFIG['diameter']/2
     
     print(f"         Slice from Z={z_start:.1f} to {z_end:.1f} (height={slice_height:.1f})")
-    print(f"         Y position for holes: {y_pos:.1f}")
     
     # Build position data for generic function
     hole_positions = []
@@ -323,7 +427,8 @@ def add_x_cut_alignment_pins(shape, x_cut_position, z_start, z_end):
     hole_params = {
         'orientation': 'X',
         'description': f"Adding X-cut alignment holes at X={x_cut_position:.1f}",
-        'hole_type': "X-cut hole"
+        'hole_type': "X-cut hole",
+        'use_adaptive': True  # Enable adaptive positioning
     }
     
     return create_holes_generic(shape, hole_positions, HOLE_CONFIG, hole_params)
@@ -360,7 +465,8 @@ def add_y_half_joining_holes(shape, z_start, z_end, section_name):
     hole_params = {
         'orientation': 'Y',
         'description': "",  # Already printed above
-        'hole_type': "joining hole"
+        'hole_type': "joining hole",
+        'use_adaptive': True  # Enable adaptive positioning
     }
     
     return create_holes_generic(shape, hole_positions, HOLE_CONFIG, hole_params)
@@ -578,6 +684,8 @@ def add_z_alignment_to_port():
     print(f"\n🔩 Adding Z-cut foam holes to solid port half...")
     print(f"   Adding {len(HOLE_POSITIONS['z_cut'])} foam holes ({FOAM_HOLE_CONFIG['diameter']}mm) at each Z-cut position")
     print(f"   Holes at {positions_str} of chord width")
+    if GEOMETRY_CONFIG['adaptive_positioning']:
+        print(f"   Using adaptive positioning with {FOAM_HOLE_CONFIG['min_wall_thickness']}mm minimum wall thickness")
     
     if state.port_plan['z_slices'] > 1:
         for i in range(1, state.port_plan['z_slices']):
@@ -604,6 +712,8 @@ def add_x_alignment_to_port():
     print(f"\n🔧 Adding X-cut alignment holes to solid port half...")
     print(f"   Adding {len(HOLE_POSITIONS['x_cut'])} alignment holes ({HOLE_CONFIG['diameter']}mm) at each X-cut position")
     print(f"   Holes at {positions_str} of slice height")
+    if GEOMETRY_CONFIG['adaptive_positioning']:
+        print(f"   Using adaptive positioning with {HOLE_CONFIG['min_wall_thickness']}mm minimum wall thickness")
     
     for slice_info in state.port_plan['slice_plans']:
         if slice_info['needs_x_split']:
@@ -639,6 +749,8 @@ def add_y_joining_to_port():
     print(f"   Adding {rows} rows per section at {row_str} of height")
     print(f"   Adding {cols} holes ({HOLE_CONFIG['diameter']}mm) per row at {col_str} of chord")
     print(f"   Holes oriented horizontally (Y-axis) for joining halves")
+    if GEOMETRY_CONFIG['adaptive_positioning']:
+        print(f"   Using adaptive positioning with {HOLE_CONFIG['min_wall_thickness']}mm minimum wall thickness")
     
     for i, slice_info in enumerate(state.port_plan['slice_plans']):
         section_num = i + 1
@@ -957,6 +1069,11 @@ def final_view_and_summary():
     print(f"      • Holes at {y_col_str} of chord width")
     print(f"      • {HOLE_CONFIG['diameter']}mm diameter, {HOLE_CONFIG['depth']}mm depth")
     print(f"      • Horizontal holes for joining port and starboard halves")
+    if GEOMETRY_CONFIG['adaptive_positioning']:
+        print(f"   Adaptive positioning:")
+        print(f"      • Holes centered in available material thickness")
+        print(f"      • Minimum wall thickness: {HOLE_CONFIG['min_wall_thickness']}mm")
+        print(f"      • Holes skipped where material is insufficient")
     print(f"   Processing approach:")
     print(f"      • Split solid foil first (more reliable)")
     print(f"      • Add all holes to solid geometry (cleaner cuts)")
