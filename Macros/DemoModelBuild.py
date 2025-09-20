@@ -24,7 +24,7 @@ from helpers.step_save_load import load_step, save_step, validate_step_file, Ste
 
 # Boat Configuration
 BOAT_NAME = "MackenSea"
-VERSION = "2.5.2"  # Z-holes now use foam configuration
+VERSION = "2.5.3"  # Added chord bounds caching
 
 # Stock Positioning (mm)
 STOCK_CONFIG = {
@@ -112,6 +112,55 @@ INPUT_FILES = {
 MACRO_NAME = f"Demo_Model_{BOAT_NAME}"
 
 # ============================================================================
+# CHORD BOUNDS CACHE
+# ============================================================================
+
+# Cache for chord bounds at different Z positions to avoid redundant sampling
+chord_bounds_cache = {}
+
+def get_chord_bounds_at_z(shape, z_position):
+    """Get chord bounds at a Z position, using cache if available."""
+    # Round Z position to avoid floating point comparison issues
+    z_key = round(z_position, 2)
+    
+    if z_key in chord_bounds_cache:
+        print(f"         Using cached chord bounds for Z={z_position:.1f}")
+        return chord_bounds_cache[z_key]
+    
+    print(f"         Computing chord bounds at Z={z_position:.1f}")
+    
+    sample_slice = Part.makeBox(
+        1000, 1000, GEOMETRY_CONFIG['slice_sample_thickness'],
+        Vector(-500, -500, z_position - GEOMETRY_CONFIG['slice_sample_thickness']/2)
+    )
+    
+    try:
+        cross_section = shape.common(sample_slice)
+        chord_bbox = cross_section.BoundBox
+        
+        bounds = {
+            'x_min': chord_bbox.XMin,
+            'x_max': chord_bbox.XMax,
+            'width': chord_bbox.XMax - chord_bbox.XMin
+        }
+        
+        # Cache the result
+        chord_bounds_cache[z_key] = bounds
+        
+        print(f"         Chord: X from {bounds['x_min']:.1f} to {bounds['x_max']:.1f} (width={bounds['width']:.1f})")
+        return bounds
+        
+    except Exception as e:
+        print(f"         ❌ FAILED to find chord at Z={z_position:.1f}: {e}")
+        return None
+
+def clear_chord_bounds_cache():
+    """Clear the chord bounds cache."""
+    global chord_bounds_cache
+    chord_bounds_cache = {}
+    print(f"   Cleared chord bounds cache")
+
+# ============================================================================
 # HOLE OPERATION FUNCTIONS
 # ============================================================================
 
@@ -119,26 +168,15 @@ def add_z_cut_alignment_pins(shape, z_cut_position):
     """Add alignment holes at a Z-cut position using FOAM_HOLE_CONFIG."""
     print(f"      Adding foam holes at Z={z_cut_position:.1f}")
     
-    # Find chord bounds at this Z
-    sample_slice = Part.makeBox(
-        1000, 1000, GEOMETRY_CONFIG['slice_sample_thickness'],
-        Vector(-500, -500, z_cut_position - GEOMETRY_CONFIG['slice_sample_thickness']/2)
-    )
-    
-    try:
-        cross_section = shape.common(sample_slice)
-        chord_bbox = cross_section.BoundBox
-        
-        x_min = chord_bbox.XMin
-        x_max = chord_bbox.XMax
-        chord_width = x_max - x_min
-        y_pos = 0 - FOAM_HOLE_CONFIG['y_offset'] - FOAM_HOLE_CONFIG['diameter']/2
-        
-        print(f"         Chord: X from {x_min:.1f} to {x_max:.1f} (width={chord_width:.1f})")
-        
-    except Exception as e:
-        print(f"         ❌ FAILED to find chord at Z={z_cut_position:.1f}: {e}")
+    # Get chord bounds using cache
+    bounds = get_chord_bounds_at_z(shape, z_cut_position)
+    if bounds is None:
         return None
+    
+    x_min = bounds['x_min']
+    x_max = bounds['x_max']
+    chord_width = bounds['width']
+    y_pos = 0 - FOAM_HOLE_CONFIG['y_offset'] - FOAM_HOLE_CONFIG['diameter']/2
     
     # Calculate hole positions using configuration
     result_shape = shape
@@ -225,24 +263,14 @@ def add_y_half_joining_holes(shape, z_start, z_end, section_name):
         z_position = z_start + (section_height * row_frac)
         print(f"         Row at Z={z_position:.1f} ({row_frac*100:.0f}% of section height)")
         
-        sample_slice = Part.makeBox(
-            1000, 1000, GEOMETRY_CONFIG['slice_sample_thickness'],
-            Vector(-500, -500, z_position - GEOMETRY_CONFIG['slice_sample_thickness']/2)
-        )
-        
-        try:
-            cross_section = shape.common(sample_slice)
-            chord_bbox = cross_section.BoundBox
-            
-            x_min = chord_bbox.XMin
-            x_max = chord_bbox.XMax
-            chord_width = x_max - x_min
-            
-            print(f"            Chord: X from {x_min:.1f} to {x_max:.1f} (width={chord_width:.1f})")
-            
-        except Exception as e:
-            print(f"            ❌ FAILED to find chord at Z={z_position:.1f}: {e}")
+        # Get chord bounds using cache
+        bounds = get_chord_bounds_at_z(shape, z_position)
+        if bounds is None:
             return None
+        
+        x_min = bounds['x_min']
+        x_max = bounds['x_max']
+        chord_width = bounds['width']
         
         for x_frac in HOLE_POSITIONS['y_join_cols']:
             x_pos = x_min + (chord_width * x_frac)
@@ -492,6 +520,9 @@ def create_port_cutting_plan():
 def add_z_alignment_to_port():
     """Add Z-cut foam holes to solid port half"""
     global port_half
+    
+    # Clear cache before starting hole operations
+    clear_chord_bounds_cache()
     
     positions_str = ', '.join([f"{p*100:.0f}%" for p in HOLE_POSITIONS['z_cut']])
     print(f"\n🔩 Adding Z-cut foam holes to solid port half...")
@@ -883,6 +914,9 @@ def final_view_and_summary():
     print(f"      • Split solid foil first (more reliable)")
     print(f"      • Add all holes to solid geometry (cleaner cuts)")
     print(f"      • Boolean cut last (on port half only)")
+    print(f"   Chord bounds caching:")
+    print(f"      • Cached {len(chord_bounds_cache)} unique Z positions")
+    print(f"      • Reduced redundant geometry sampling operations")
     print(f"   Pieces created (to be mirrored):")
     piece_list = [name for name, _ in pieces]
     piece_list.sort()
