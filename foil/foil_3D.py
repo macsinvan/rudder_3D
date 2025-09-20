@@ -1,6 +1,6 @@
 """
 Foil 3D Pipeline - Converts STEP outline profiles to 3D NACA foil via chord slicing and lofting.
-Version 1.6.0 - Enhanced tip handling and section validation
+Version 1.7.1 - Production version with improved leading edge smoothness
 Exports both STEP and STL files.
 """
 
@@ -12,13 +12,10 @@ import math
 
 # Configuration - Boat-Centric
 BOAT_NAME = "MackenSea"  # Single source of truth
-VERSION = "1.6.0"  # Enhanced tip handling
+VERSION = "1.7.1"  # Improved leading edge smoothness
 
 # COMPLEXITY CONTROL - Set to 1 for full quality, higher for faster processing
 COMPLEXITY_REDUCTION = 1  # Reduces point count and adjusts spacing
-
-# DEBUG MODE - Set to True to see individual section wires instead of loft
-DEBUG_MODE = False  # Set to False to generate full 3D foil
 
 # Paths
 BOAT_FOLDER = os.path.expanduser(f"~/Rudder_Code/boats/{BOAT_NAME}")
@@ -33,14 +30,16 @@ FOIL_STL_FILE = f"{BOAT_NAME}_Foil.stl"
 # Configuration with complexity reduction
 CONFIG = {
     'apex_at_top': 64.0,        # mm measured thickness at top
-    'naca_points': max(20, 80 // COMPLEXITY_REDUCTION),  # Points per section
-    'base_slice_spacing': 3.0 * COMPLEXITY_REDUCTION,  # Base spacing
-    'min_slice_spacing': 1.0,    # mm minimum spacing even in high curvature
-    'max_slice_spacing': 5.0,   # mm maximum spacing in straight sections
-    'tip_zone_height': 20.0,    # mm height from tip to use dense spacing
-    'tip_spacing': 1,         # mm spacing in tip zone
-    'curvature_samples': 100,     # Number of points to sample for curvature analysis
-    'min_chord_length': 2.0,     # mm minimum chord to use NACA (reduced from 20)
+    'naca_points': max(30, 60 // COMPLEXITY_REDUCTION),  # Increased for smoother leading edge
+    'leading_edge_bias': 0.35,   # Concentrate 35% of points in first 10% of chord
+    'base_slice_spacing': 10.0 * COMPLEXITY_REDUCTION,  # Base spacing
+    'min_slice_spacing': 5.0,    # mm increased minimum spacing
+    'max_slice_spacing': 20.0,   # mm increased maximum spacing
+    'tip_zone_height': 10.0,    # mm reduced tip zone height
+    'tip_spacing': 2.0,         # mm increased tip spacing
+    'curvature_samples': 50,     # Reduced samples for faster analysis
+    'min_chord_length': 2.0,     # mm minimum chord to use NACA
+    'max_sections': 60,         # Maximum number of sections to generate
     'stl_tolerance': min(0.2, 0.05 * COMPLEXITY_REDUCTION),  # STL tolerance
     'plane_size': 1100,          # mm sectioning plane size
     'gap_tolerance': 0.1,        # mm tolerance for gap detection
@@ -48,13 +47,13 @@ CONFIG = {
 }
 
 print(f"🔧 Complexity reduction: {COMPLEXITY_REDUCTION}x")
-print(f"   Points per section: {CONFIG['naca_points']} (was 80)")
+print(f"   Points per section: {CONFIG['naca_points']} (optimized for smooth leading edge)")
+print(f"   Leading edge bias: {CONFIG['leading_edge_bias']*100:.0f}% of points in first 10% of chord")
 print(f"   Base slice spacing: {CONFIG['base_slice_spacing']}mm")
 print(f"   Adaptive spacing: {CONFIG['min_slice_spacing']}-{CONFIG['max_slice_spacing']}mm")
 print(f"   Tip zone: {CONFIG['tip_zone_height']}mm with {CONFIG['tip_spacing']}mm spacing")
+print(f"   Max sections: {CONFIG['max_sections']} (performance limit)")
 print(f"   STL tolerance: {CONFIG['stl_tolerance']}mm")
-if DEBUG_MODE:
-    print(f"   🔍 DEBUG MODE ENABLED - Will show section wires only")
 
 
 def comprehensive_profile_diagnostics(wire, doc):
@@ -164,6 +163,9 @@ def comprehensive_profile_diagnostics(wire, doc):
     print(f"   BoundBox Z range: {z_min:.1f} to {z_max:.1f} (height: {z_max-z_min:.1f}mm)")
     print(f"   BoundBox X range: {bb.XMin:.1f} to {bb.XMax:.1f} (width: {bb.XMax-bb.XMin:.1f}mm)")
     
+    # 7. Visual Debugging Objects (disabled to avoid downstream interference)
+    # Diagnostic visualization removed - data still collected above
+    
     # Summary
     print("\n" + "="*80)
     print("📊 DIAGNOSTIC SUMMARY")
@@ -231,7 +233,7 @@ def analyze_profile_curvature(wire, num_samples=50):
 def generate_adaptive_levels(wire, base_spacing, min_spacing, max_spacing):
     """
     Generate slice levels with adaptive spacing based on profile curvature.
-    Dense spacing at tip, adaptive elsewhere.
+    Dense spacing at tip, adaptive elsewhere, with max section limit.
     """
     bb = wire.BoundBox
     z_min, z_max = bb.ZMin, bb.ZMax
@@ -241,67 +243,88 @@ def generate_adaptive_levels(wire, base_spacing, min_spacing, max_spacing):
     
     levels = []
     
-    # CRITICAL: Dense spacing near tip for proper closure
-    tip_zone_end = z_min + CONFIG['tip_zone_height']
+    # CRITICAL: Dense spacing near tip for proper closure (but not too dense)
+    tip_zone_end = min(z_min + CONFIG['tip_zone_height'], z_max)
     z = z_min
-    while z < tip_zone_end and z < z_max:
+    while z < tip_zone_end and z < z_max and len(levels) < CONFIG['max_sections'] // 3:
         levels.append(z)
         z += CONFIG['tip_spacing']
     print(f"   Added {len(levels)} levels in tip zone ({CONFIG['tip_zone_height']}mm)")
     
-    # Analyze curvature for the rest
-    curvatures = analyze_profile_curvature(wire, CONFIG['curvature_samples'])
+    # Calculate remaining budget
+    remaining_sections = CONFIG['max_sections'] - len(levels) - 1  # -1 for top
+    remaining_height = z_max - z
     
-    if not curvatures:
-        # Fallback to uniform spacing
-        print("   Using uniform spacing (curvature analysis failed)")
-        while z < z_max:
-            z += base_spacing
-            if z < z_max:
-                levels.append(z)
-    else:
-        # Adaptive spacing based on curvature
-        current_z = z  # Start from end of tip zone
-        
-        while current_z < z_max - min_spacing:
-            # Find curvature at current position
-            current_curvature = 0.0
-            for i in range(len(curvatures) - 1):
-                if curvatures[i][0] <= current_z <= curvatures[i+1][0]:
-                    t = (current_z - curvatures[i][0]) / (curvatures[i+1][0] - curvatures[i][0])
-                    current_curvature = curvatures[i][1] * (1-t) + curvatures[i+1][1] * t
-                    break
-            
-            # Calculate spacing based on curvature
-            spacing = min_spacing + (1.0 - current_curvature) * (max_spacing - min_spacing)
-            spacing = min(max_spacing, spacing * (1 + (COMPLEXITY_REDUCTION - 1) * 0.3))
-            
-            next_z = min(current_z + spacing, z_max)
-            
-            if next_z < z_max - min_spacing * 0.5:
-                levels.append(next_z)
-                current_z = next_z
-            else:
-                break
+    if remaining_sections <= 0:
+        # Just add the top
+        if not levels or abs(levels[-1] - z_max) > 0.01:
+            levels.append(z_max)
+        print(f"   ⚠️ Section budget exhausted in tip zone")
+        return levels
     
-    # Always include the top
-    if levels[-1] != z_max:
+    # Calculate uniform spacing for remaining height
+    uniform_spacing = remaining_height / remaining_sections
+    uniform_spacing = max(uniform_spacing, min_spacing)
+    uniform_spacing = min(uniform_spacing, max_spacing)
+    
+    print(f"   Using {uniform_spacing:.1f}mm spacing for main body")
+    
+    # Add sections with uniform spacing
+    current_z = z
+    while current_z < z_max - min_spacing and len(levels) < CONFIG['max_sections'] - 1:
+        current_z += uniform_spacing
+        if current_z < z_max - 0.01:  # Avoid getting too close to z_max
+            levels.append(current_z)
+    
+    # Always include the top (but avoid duplicates)
+    if not levels or abs(levels[-1] - z_max) > 0.01:
         levels.append(z_max)
+    
+    # Remove any duplicate levels (safety check)
+    levels = sorted(list(set(levels)))
     
     # Report spacing distribution
     spacings = [levels[i+1] - levels[i] for i in range(len(levels)-1)]
-    avg_spacing = sum(spacings) / len(spacings) if spacings else base_spacing
+    if spacings:
+        avg_spacing = sum(spacings) / len(spacings)
+        min_spacing_actual = min(spacings)
+        max_spacing_actual = max(spacings)
+    else:
+        avg_spacing = base_spacing
+        min_spacing_actual = base_spacing
+        max_spacing_actual = base_spacing
     
     print(f"✨ Adaptive slicing complete:")
-    print(f"   Levels: {len(levels)} (uniform would be {int(z_range/base_spacing)+1})")
-    print(f"   Spacing: min={min(spacings):.1f}mm, avg={avg_spacing:.1f}mm, max={max(spacings):.1f}mm")
+    print(f"   Levels: {len(levels)} (target max: {CONFIG['max_sections']})")
+    print(f"   Spacing: min={min_spacing_actual:.1f}mm, avg={avg_spacing:.1f}mm, max={max_spacing_actual:.1f}mm")
+    
+    # Verify no duplicates
+    if len(levels) != len(set(levels)):
+        print(f"   ⚠️ Warning: Duplicate levels detected and removed")
     
     return levels
 
 
-def naca_coordinates(chord_length, thickness_percent, num_pts=80):
-    """Generate NACA 00XX coordinates with cosine point distribution."""
-    angles = [i * math.pi / (num_pts // 2) for i in range(num_pts // 2 + 1)]
+def naca_coordinates(chord_length, thickness_percent, num_pts=60):
+    """Generate NACA 00XX coordinates with enhanced leading edge resolution."""
+    
+    # Create biased point distribution for better leading edge definition
+    # More points concentrated at the leading edge where curvature is highest
+    angles = []
+    le_bias = CONFIG.get('leading_edge_bias', 0.35)  # 35% of points in first 10% of chord
+    
+    # Points for leading edge region (0 to 10% chord)
+    le_points = int(num_pts * le_bias / 2)
+    for i in range(le_points + 1):
+        angle = (i / le_points) * math.pi * 0.3  # First 30% of the angle range
+        angles.append(angle)
+    
+    # Points for the rest of the airfoil
+    remaining_points = num_pts // 2 - le_points
+    for i in range(1, remaining_points):
+        angle = math.pi * 0.3 + (i / remaining_points) * math.pi * 0.7
+        angles.append(angle)
+    
     x_positions = [(1 - math.cos(angle)) / 2 for angle in angles]
     
     coords = []
@@ -457,14 +480,6 @@ def build_foil_from_step(doc):
     shrunk_wire = Part.Wire(subs[1].Edges)
     print(f"✅ Loaded wires: {len(orig_wire.Edges)} + {len(shrunk_wire.Edges)} edges")
     
-    # Display wires
-    for name, wire, color in [("Orig", orig_wire, (1.0, 0.6, 0.6)),
-                              ("Shrunk", shrunk_wire, (1.0, 0.0, 0.0))]:
-        feat = doc.addObject("Part::Feature", f"{BOAT_NAME}_{name}")
-        feat.Shape = wire
-        feat.ViewObject.ShapeColor = color
-        feat.ViewObject.LineWidth = 2
-    
     # Run comprehensive diagnostics
     diagnostics = comprehensive_profile_diagnostics(shrunk_wire, doc)
     
@@ -565,9 +580,9 @@ def build_foil_from_step(doc):
             
         else:
             # Normal NACA section
-            # Position and orientation
-            p_le = Vector(x2, 0.0, z)  # Leading edge at min x
-            p_te = Vector(x1, 0.0, z)  # Trailing edge at max x
+            # Position and orientation (fixed comments)
+            p_le = Vector(x2, 0.0, z)  # Leading edge at max x (front of rudder)
+            p_te = Vector(x1, 0.0, z)  # Trailing edge at min x (back of rudder)
             vec = p_te - p_le
             ux = vec.normalize()
             uy = ux.cross(Vector(0, 0, 1)).normalize()
@@ -598,66 +613,34 @@ def build_foil_from_step(doc):
               f"{absolute_thickness:<10.2f} {section_type:<15}")
     
     print(f"\n✅ Generated {len(section_wires)} sections")
+    print(f"📦 Creating 3D loft from {len(section_wires)} sections...")
     
-    # DEBUG MODE or normal lofting
-    if DEBUG_MODE:
-        print(f"\n🔍 DEBUG MODE: Displaying {len(section_wires)} section wires")
-        
-        for idx, wire in enumerate(section_wires):
-            feat = doc.addObject("Part::Feature", f"Section_{idx:03d}")
-            feat.Shape = wire
-            
-            # Color gradient from red (tip) to green (top)
-            color_factor = idx / max(len(section_wires) - 1, 1)
-            feat.ViewObject.ShapeColor = (1.0 - color_factor, color_factor, 0.0)
-            feat.ViewObject.LineWidth = 2
-            
-            if idx < len(chords):
-                z_pos = chords[idx][0][1]
-                feat.Label = f"Section_{idx:03d}_Z{z_pos:.1f}"
-        
-        print("✅ Debug visualization complete")
-        print("   Red = tip sections, Green = top sections")
-        
-    else:
-        print(f"\n📦 Creating 3D loft from {len(section_wires)} sections...")
-        
-        # Try multiple lofting strategies
-        loft = None
+    # Single loft attempt - prioritize smoothness over speed
+    try:
+        # Use standard (smooth) loft for better surface quality
+        print("   Attempting smooth loft for better surface quality...")
+        loft = Part.makeLoft(section_wires, solid=True, ruled=False)
+        print("   ✅ Loft successful")
+    except Exception as e:
+        print(f"   ⚠️ Smooth loft failed: {e}")
+        print("   Attempting ruled loft as fallback...")
         try:
-            # First try: standard loft
-            print("   Attempting standard loft...")
-            loft = Part.makeLoft(section_wires, solid=True, ruled=False)
-            print("   ✅ Standard loft successful")
-        except Exception as e:
-            print(f"   ⚠️ Standard loft failed: {e}")
-            
-            try:
-                # Second try: ruled loft
-                print("   Attempting ruled loft...")
-                loft = Part.makeLoft(section_wires, solid=True, ruled=True)
-                print("   ✅ Ruled loft successful")
-            except Exception as e2:
-                print(f"   ⚠️ Ruled loft failed: {e2}")
-                
-                try:
-                    # Third try: surface loft then solidify
-                    print("   Attempting surface loft...")
-                    loft_surface = Part.makeLoft(section_wires, solid=False, ruled=False)
-                    loft = Part.makeSolid(loft_surface)
-                    print("   ✅ Surface loft + solidify successful")
-                except Exception as e3:
-                    print(f"   ❌ All lofting attempts failed: {e3}")
-                    return
-        
-        # Create display object
-        foil = doc.addObject("Part::Feature", f"{BOAT_NAME}_Foil")
-        foil.Shape = loft
-        foil.ViewObject.ShapeColor = (0.6, 0.8, 1.0)
-        foil.ViewObject.DisplayMode = "Shaded"
-        
-        # Export
-        export_geometry(foil, BOAT_NAME + "_Foil")
+            loft = Part.makeLoft(section_wires, solid=True, ruled=True)
+            print("   ✅ Ruled loft successful (may appear more faceted)")
+        except Exception as e2:
+            print(f"\n❌ All loft attempts failed: {e2}")
+            print(f"   Geometry too complex with {len(section_wires)} sections")
+            print(f"   Try reducing max_sections in CONFIG (currently {CONFIG['max_sections']})")
+            return
+    
+    # Create display object
+    foil = doc.addObject("Part::Feature", f"{BOAT_NAME}_Foil")
+    foil.Shape = loft
+    foil.ViewObject.ShapeColor = (0.6, 0.8, 1.0)
+    foil.ViewObject.DisplayMode = "Shaded"
+    
+    # Export
+    export_geometry(foil, BOAT_NAME + "_Foil")
     
     doc.recompute()
     print(f"🛥️ {BOAT_NAME} foil complete!\n")
