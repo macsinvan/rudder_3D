@@ -268,43 +268,7 @@
             font-size: 13px;
         }
         
-        .point-row {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 8px;
-            align-items: center;
-            background: #f8f9fa;
-            padding: 6px;
-            border-radius: 3px;
-        }
-        
-        .point-row input {
-            width: 80px;
-            padding: 5px;
-            border: 1px solid #ddd;
-            border-radius: 3px;
-        }
-        
-        .point-row button {
-            padding: 5px 10px;
-            background: #f44336;
-            color: white;
-            border: none;
-            border-radius: 3px;
-            cursor: pointer;
-        }
-        
-        .point-row button:hover {
-            background: #d32f2f;
-        }
-        
-        .point-label {
-            font-size: 12px;
-            color: #666;
-            min-width: 40px;
-        }
-        
-        .add-segment-btn, .add-point-btn {
+        .add-segment-btn {
             padding: 10px;
             background: #4CAF50;
             color: white;
@@ -315,7 +279,7 @@
             font-weight: 500;
         }
         
-        .add-segment-btn:hover, .add-point-btn:hover {
+        .add-segment-btn:hover {
             background: #45a049;
         }
         
@@ -394,11 +358,6 @@
             display: block;
         }
         
-        .hidden {
-            display: none !important;
-        }
-        
-        /* File input styling */
         .file-input-wrapper {
             position: relative;
             display: inline-block;
@@ -581,8 +540,8 @@
     
     <script>
         // Global variables
-        let segments = [];  // Array of {type: 'LINE'|'ARC', points: [], rounded: false}
-        let corners = [];   // Array of detected corners
+        let segments = [];
+        let corners = [];
         let gridSnap = false;
         let scale = 1;
         let uploadedImage = null;
@@ -592,11 +551,6 @@
         let zoomLevel = 1;
         let panX = 0;
         let panY = 0;
-        let isPanning = false;
-        let isDraggingPoint = false;
-        let selectedPoint = null;
-        let lastMouseX = 0;
-        let lastMouseY = 0;
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
@@ -605,14 +559,302 @@
             setTimeout(drawCanvas, 100);
         });
         
-        // Redraw on window resize
         window.addEventListener('resize', function() {
             drawCanvas();
         });
         
-        // Canvas setup
         const canvas = document.getElementById('rudderCanvas');
         const ctx = canvas.getContext('2d');
+        
+        function showStatus(message, type) {
+            const statusEl = document.getElementById('statusMessage');
+            statusEl.textContent = message;
+            statusEl.className = `status-message ${type}`;
+            setTimeout(() => {
+                statusEl.style.display = 'none';
+            }, 5000);
+        }
+        
+        function clearAll() {
+            if (confirm('Are you sure you want to clear all data?')) {
+                segments = [];
+                corners = [];
+                updateSegmentsList();
+                updateCornersDisplay();
+                drawCanvas();
+                showStatus('All data cleared', 'info');
+            }
+        }
+        
+        function importFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const csvText = e.target.result;
+                    const lines = csvText.split('\n').map(line => line.trim()).filter(line => line);
+                    
+                    if (lines.length === 0) {
+                        showStatus('CSV file is empty', 'error');
+                        return;
+                    }
+                    
+                    segments = [];
+                    corners = [];
+                    
+                    let inParametersSection = true;
+                    let inOutlineSection = false;
+                    let currentSegmentType = null;
+                    let segmentPoints = [];
+                    
+                    for (let i = 0; i < lines.length; i++) {
+                        const line = lines[i].trim();
+                        
+                        if (line.startsWith('#')) {
+                            if (line.includes('Outline Points')) {
+                                inParametersSection = false;
+                                inOutlineSection = true;
+                            }
+                            continue;
+                        }
+                        
+                        if (!line) continue;
+                        
+                        const parts = line.split(',').map(p => p.trim());
+                        
+                        if (inParametersSection && parts.length >= 2) {
+                            const key = parts[0].toLowerCase();
+                            const value = parts[1];
+                            
+                            switch (key) {
+                                case 'customer':
+                                    document.getElementById('customer').value = value;
+                                    break;
+                                case 'boatname':
+                                    document.getElementById('boatName').value = value;
+                                    updateImagePath();
+                                    break;
+                                case 'brand':
+                                    document.getElementById('brand').value = value;
+                                    break;
+                                case 'model':
+                                    document.getElementById('model').value = value;
+                                    break;
+                                case 'year':
+                                    document.getElementById('year').value = value;
+                                    break;
+                                case 'version':
+                                    document.getElementById('version').value = value;
+                                    break;
+                                case 'date':
+                                    document.getElementById('date').value = value;
+                                    break;
+                                case 'boxsize':
+                                    if (parts.length >= 3) {
+                                        document.getElementById('boxWidth').value = parts[1];
+                                        document.getElementById('boxHeight').value = parts[2];
+                                    }
+                                    break;
+                                case 'thicknessratio':
+                                    document.getElementById('thicknessRatio').value = value;
+                                    break;
+                                case 'image':
+                                    document.getElementById('imagePath').value = value;
+                                    break;
+                            }
+                            continue;
+                        }
+                        
+                        if (inOutlineSection) {
+                            if (line === 'X,Y') {
+                                continue;
+                            }
+                            
+                            if (parts[0] === 'SEGMENT') {
+                                if (currentSegmentType && segmentPoints.length > 0) {
+                                    if (currentSegmentType === 'LINE' && segmentPoints.length >= 1) {
+                                        segments.push({
+                                            type: 'LINE',
+                                            points: [segmentPoints[0]],
+                                            rounded: false
+                                        });
+                                    } else if (currentSegmentType === 'ARC' && segmentPoints.length >= 2) {
+                                        segments.push({
+                                            type: 'ARC',
+                                            points: [segmentPoints[0], segmentPoints[1]],
+                                            rounded: false
+                                        });
+                                    }
+                                }
+                                
+                                currentSegmentType = parts[1];
+                                segmentPoints = [];
+                                continue;
+                            }
+                            
+                            if (parts.length >= 2) {
+                                const x = parseFloat(parts[0]);
+                                const y = parseFloat(parts[1]);
+                                
+                                if (!isNaN(x) && !isNaN(y)) {
+                                    segmentPoints.push({x: x, y: y});
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (currentSegmentType && segmentPoints.length > 0) {
+                        if (currentSegmentType === 'LINE' && segmentPoints.length >= 1) {
+                            segments.push({
+                                type: 'LINE',
+                                points: [segmentPoints[0]],
+                                rounded: false
+                            });
+                        } else if (currentSegmentType === 'ARC' && segmentPoints.length >= 2) {
+                            segments.push({
+                                type: 'ARC',
+                                points: [segmentPoints[0], segmentPoints[1]],
+                                rounded: false
+                            });
+                        }
+                    }
+                    
+                    updateSegmentsList();
+                    updateCornersDisplay();
+                    drawCanvas();
+                    showStatus(`Imported ${segments.length} segments and populated form fields`, 'success');
+                    
+                } catch (error) {
+                    showStatus('Error parsing CSV file: ' + error.message, 'error');
+                }
+            };
+            
+            reader.readAsText(file);
+            event.target.value = '';
+        }
+        
+        function exportCSV() {
+            if (segments.length === 0) {
+                showStatus('No segments to export', 'info');
+                return;
+            }
+            
+            try {
+                let csvContent = '';
+                
+                csvContent += `# Parameters\n`;
+                csvContent += `customer,${document.getElementById('customer').value || ''}\n`;
+                csvContent += `boatname,${document.getElementById('boatName').value || ''}\n`;
+                csvContent += `brand,${document.getElementById('brand').value || ''}\n`;
+                csvContent += `model,${document.getElementById('model').value || ''}\n`;
+                csvContent += `year,${document.getElementById('year').value || ''}\n`;
+                csvContent += `version,${document.getElementById('version').value || ''}\n`;
+                csvContent += `date,${document.getElementById('date').value || ''}\n`;
+                
+                const boxWidth = document.getElementById('boxWidth').value || '';
+                const boxHeight = document.getElementById('boxHeight').value || '';
+                if (boxWidth && boxHeight) {
+                    csvContent += `boxsize,${boxWidth},${boxHeight}\n`;
+                }
+                
+                csvContent += `thicknessratio,${document.getElementById('thicknessRatio').value || ''}\n`;
+                csvContent += `image,${document.getElementById('imagePath').value || ''}\n`;
+                
+                csvContent += `\n# Outline Points\n`;
+                csvContent += `X,Y\n`;
+                
+                segments.forEach((segment, index) => {
+                    csvContent += `SEGMENT,${segment.type}\n`;
+                    
+                    if (segment.type === 'LINE') {
+                        const point = segment.points[0];
+                        csvContent += `${point.x.toFixed(1)},${point.y.toFixed(1)}\n`;
+                    } else if (segment.type === 'ARC') {
+                        const apex = segment.points[0];
+                        const end = segment.points[1];
+                        csvContent += `${apex.x.toFixed(1)},${apex.y.toFixed(1)}\n`;
+                        csvContent += `${end.x.toFixed(1)},${end.y.toFixed(1)}\n`;
+                    }
+                });
+                
+                const blob = new Blob([csvContent], { type: 'text/csv' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                
+                const boatName = document.getElementById('boatName').value || 'rudder';
+                const date = document.getElementById('date').value || new Date().toISOString().split('T')[0];
+                
+                a.href = url;
+                a.download = `${boatName}_rudder_outline_${date}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                
+                showStatus('CSV exported successfully', 'success');
+                
+            } catch (error) {
+                showStatus('Error exporting CSV: ' + error.message, 'error');
+            }
+        }
+        
+        function generateExamplePoints() {
+            if (segments.length > 0) {
+                if (!confirm('This will replace existing segments. Continue?')) {
+                    return;
+                }
+            }
+            
+            segments = [];
+            corners = [];
+            
+            const exampleSegments = [
+                {type: 'LINE', points: [{x: 250.0, y: 100.0}], rounded: false},
+                {type: 'ARC', points: [{x: 300.0, y: 50.0}, {x: 350.0, y: 100.0}], rounded: false},
+                {type: 'LINE', points: [{x: 400.0, y: 200.0}], rounded: false},
+                {type: 'LINE', points: [{x: 450.0, y: 400.0}], rounded: false},
+                {type: 'ARC', points: [{x: 480.0, y: 600.0}, {x: 450.0, y: 800.0}], rounded: false},
+                {type: 'LINE', points: [{x: 400.0, y: 950.0}], rounded: false},
+                {type: 'LINE', points: [{x: 250.0, y: 1000.0}], rounded: false},
+                {type: 'LINE', points: [{x: 100.0, y: 950.0}], rounded: false},
+                {type: 'ARC', points: [{x: 50.0, y: 800.0}, {x: 80.0, y: 600.0}], rounded: false},
+                {type: 'LINE', points: [{x: 100.0, y: 400.0}], rounded: false},
+                {type: 'LINE', points: [{x: 150.0, y: 200.0}], rounded: false},
+                {type: 'ARC', points: [{x: 200.0, y: 50.0}, {x: 250.0, y: 100.0}], rounded: false}
+            ];
+            
+            segments = exampleSegments;
+            
+            document.getElementById('boxWidth').value = 500;
+            document.getElementById('boxHeight').value = 1100;
+            
+            updateSegmentsList();
+            updateCornersDisplay();
+            drawCanvas();
+            showStatus('Example rudder outline loaded', 'success');
+        }
+        
+        function zoomIn() {
+            zoomLevel = Math.min(zoomLevel * 1.2, 5);
+            document.getElementById('zoomDisplay').textContent = Math.round(zoomLevel * 100) + '%';
+            drawCanvas();
+        }
+        
+        function zoomOut() {
+            zoomLevel = Math.max(zoomLevel / 1.2, 0.2);
+            document.getElementById('zoomDisplay').textContent = Math.round(zoomLevel * 100) + '%';
+            drawCanvas();
+        }
+        
+        function resetView() {
+            zoomLevel = 1;
+            panX = 0;
+            panY = 0;
+            document.getElementById('zoomDisplay').textContent = '100%';
+            drawCanvas();
+        }
         
         function toggleGridSnap() {
             gridSnap = !gridSnap;
@@ -684,30 +926,6 @@
                 imagePath = `../${boatName}/Input/${boatName}_Rudder_Outline${ext}`;
                 document.getElementById('imagePath').value = imagePath;
             }
-        }
-        
-        // Corner Detection Functions
-        function getSegmentDirection(segment, atEnd) {
-            if (segment.type === 'LINE') {
-                if (segment.rounded && segment.originalPoints) {
-                    const endPoint = segment.originalPoints[0];
-                    return atEnd ? 
-                        {x: endPoint.x, y: endPoint.y} : 
-                        {x: endPoint.x, y: endPoint.y};
-                } else {
-                    const endPoint = segment.points[0];
-                    return {x: endPoint.x, y: endPoint.y};
-                }
-            } else if (segment.type === 'ARC') {
-                const apex = segment.points[0];
-                const end = segment.points[1];
-                if (atEnd) {
-                    return {x: end.x - apex.x, y: end.y - apex.y};
-                } else {
-                    return {x: apex.x, y: apex.y};
-                }
-            }
-            return {x: 0, y: 0};
         }
         
         function detectCorners() {
@@ -886,8 +1104,6 @@
                 y: corner.point.y + corner.outgoingDir.y * tangentDist
             };
             
-            // Calculate arc apex for INWARD rounding (fillet)
-            // The apex is the midpoint between tangent points for proper filleting
             const apex = {
                 x: (tangent1.x + tangent2.x) / 2,
                 y: (tangent1.y + tangent2.y) / 2
@@ -1301,11 +1517,10 @@
                     
                     if (segment.type === 'LINE') {
                         const point = segment.points[0];
-                        const isSelected = selectedPoint && selectedPoint.segIndex === segIndex && selectedPoint.pointIndex === 0;
                         
-                        ctx.fillStyle = isSelected ? '#ff0000' : '#2196F3';
+                        ctx.fillStyle = '#2196F3';
                         ctx.beginPath();
-                        ctx.arc(point.x * scale, point.y * scale, isSelected ? 6 : 4, 0, 2 * Math.PI);
+                        ctx.arc(point.x * scale, point.y * scale, 4, 0, 2 * Math.PI);
                         ctx.fill();
                         
                         if (!isRoundingArc) {
@@ -1316,10 +1531,9 @@
                         }
                         currentPos = point;
                     } else if (segment.type === 'ARC') {
-                        const isApexSelected = selectedPoint && selectedPoint.segIndex === segIndex && selectedPoint.pointIndex === 0;
-                        ctx.fillStyle = isApexSelected ? '#ff0000' : (isRoundingArc ? '#FF8C00' : '#FFA500');
+                        ctx.fillStyle = isRoundingArc ? '#FF8C00' : '#FFA500';
                         ctx.beginPath();
-                        ctx.arc(segment.points[0].x * scale, segment.points[0].y * scale, isApexSelected ? 6 : 4, 0, 2 * Math.PI);
+                        ctx.arc(segment.points[0].x * scale, segment.points[0].y * scale, 4, 0, 2 * Math.PI);
                         ctx.fill();
                         
                         if (!isRoundingArc) {
@@ -1328,10 +1542,9 @@
                             ctx.fillText(`${pointNum}a`, segment.points[0].x * scale + 6, segment.points[0].y * scale - 6);
                         }
                         
-                        const isEndSelected = selectedPoint && selectedPoint.segIndex === segIndex && selectedPoint.pointIndex === 1;
-                        ctx.fillStyle = isEndSelected ? '#ff0000' : '#2196F3';
+                        ctx.fillStyle = '#2196F3';
                         ctx.beginPath();
-                        ctx.arc(segment.points[1].x * scale, segment.points[1].y * scale, isEndSelected ? 6 : 4, 0, 2 * Math.PI);
+                        ctx.arc(segment.points[1].x * scale, segment.points[1].y * scale, 4, 0, 2 * Math.PI);
                         ctx.fill();
                         
                         if (!isRoundingArc) {
@@ -1345,3 +1558,6 @@
             
             ctx.restore();
         }
+    </script>
+</body>
+</html>
