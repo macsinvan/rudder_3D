@@ -293,7 +293,6 @@
         
         #rudderCanvas {
             display: block;
-            cursor: crosshair;
             background: white;
         }
         
@@ -523,7 +522,7 @@
                             <button onclick="zoomIn()">🔍+ Zoom In</button>
                             <button onclick="zoomOut()">🔍- Zoom Out</button>
                             <button onclick="resetView()">🔄 Reset View</button>
-                            <span style="margin-left: 20px; font-size: 14px;">Zoom: <span id="zoomDisplay">100%</span> | Drag to pan</span>
+                            <span style="margin-left: 20px; font-size: 14px;">Zoom: <span id="zoomDisplay">100%</span> | Drag points to move, hold Shift + drag to pan</span>
                         </div>
                         <div class="canvas-container" id="canvasContainer" style="flex-grow: 1;">
                             <canvas id="rudderCanvas"></canvas>
@@ -551,12 +550,18 @@
         let zoomLevel = 1;
         let panX = 0;
         let panY = 0;
+        let isPanning = false;
+        let isDraggingPoint = false;
+        let selectedPoint = null;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
             const today = new Date().toISOString().split('T')[0];
             document.getElementById('date').value = today;
             setTimeout(drawCanvas, 100);
+            setupCanvasEvents();
         });
         
         window.addEventListener('resize', function() {
@@ -565,6 +570,157 @@
         
         const canvas = document.getElementById('rudderCanvas');
         const ctx = canvas.getContext('2d');
+        
+        // Mouse event setup
+        function setupCanvasEvents() {
+            canvas.addEventListener('mousedown', handleMouseDown);
+            canvas.addEventListener('mousemove', handleMouseMove);
+            canvas.addEventListener('mouseup', handleMouseUp);
+            canvas.addEventListener('mouseleave', handleMouseUp);
+        }
+        
+        function getMousePos(event) {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = event.clientX - rect.left;
+            const mouseY = event.clientY - rect.top;
+            
+            // Convert to canvas coordinates (accounting for padding, zoom, and pan)
+            const padding = 20;
+            const canvasX = (mouseX - padding - panX) / scale;
+            const canvasY = (mouseY - padding - panY) / scale;
+            
+            return { x: canvasX, y: canvasY };
+        }
+        
+        function findPointAt(x, y) {
+            const hitRadius = 8 / scale; // Adjust hit radius based on zoom
+            
+            for (let segIndex = 0; segIndex < segments.length; segIndex++) {
+                const segment = segments[segIndex];
+                
+                // Check all points in this segment
+                for (let pointIndex = 0; pointIndex < segment.points.length; pointIndex++) {
+                    const point = segment.points[pointIndex];
+                    const distance = Math.sqrt(Math.pow(x - point.x, 2) + Math.pow(y - point.y, 2));
+                    
+                    if (distance <= hitRadius) {
+                        return { segIndex, pointIndex };
+                    }
+                }
+            }
+            
+            return null;
+        }
+        
+        function handleMouseDown(event) {
+            const mousePos = getMousePos(event);
+            const foundPoint = findPointAt(mousePos.x, mousePos.y);
+            
+            if (foundPoint && !event.shiftKey) {
+                // Start dragging a point
+                isDraggingPoint = true;
+                selectedPoint = foundPoint;
+                canvas.style.cursor = 'grabbing';
+                event.preventDefault();
+            } else if (event.shiftKey) {
+                // Start panning
+                isPanning = true;
+                lastMouseX = event.clientX;
+                lastMouseY = event.clientY;
+                canvas.style.cursor = 'grabbing';
+                event.preventDefault();
+            }
+        }
+        
+        function handleMouseMove(event) {
+            const mousePos = getMousePos(event);
+            
+            if (isDraggingPoint && selectedPoint) {
+                // Drag the selected point
+                const boxWidth = parseFloat(document.getElementById('boxWidth').value) || 500;
+                const boxHeight = parseFloat(document.getElementById('boxHeight').value) || 1100;
+                
+                let newX = mousePos.x;
+                let newY = mousePos.y;
+                
+                // Apply grid snapping if enabled
+                if (gridSnap) {
+                    newX = Math.round(newX / 10) * 10;
+                    newY = Math.round(newY / 10) * 10;
+                }
+                
+                // Constrain to box boundaries
+                newX = Math.max(0, Math.min(newX, boxWidth));
+                newY = Math.max(0, Math.min(newY, boxHeight));
+                
+                // Update the point
+                segments[selectedPoint.segIndex].points[selectedPoint.pointIndex].x = newX;
+                segments[selectedPoint.segIndex].points[selectedPoint.pointIndex].y = newY;
+                
+                // Clear corners when points are moved
+                corners = [];
+                updateCornersDisplay();
+                
+                // Update the UI and redraw
+                updateSegmentsList();
+                drawCanvas();
+                
+            } else if (isPanning) {
+                // Pan the view
+                const deltaX = event.clientX - lastMouseX;
+                const deltaY = event.clientY - lastMouseY;
+                
+                panX += deltaX;
+                panY += deltaY;
+                
+                lastMouseX = event.clientX;
+                lastMouseY = event.clientY;
+                
+                drawCanvas();
+            } else {
+                // Update cursor based on what's under the mouse
+                const foundPoint = findPointAt(mousePos.x, mousePos.y);
+                
+                if (foundPoint) {
+                    canvas.style.cursor = 'grab';
+                } else if (event.shiftKey) {
+                    canvas.style.cursor = 'grab';
+                } else {
+                    canvas.style.cursor = 'crosshair';
+                }
+            }
+        }
+        
+        function handleMouseUp(event) {
+            if (isDraggingPoint) {
+                isDraggingPoint = false;
+                selectedPoint = null;
+            }
+            
+            if (isPanning) {
+                isPanning = false;
+            }
+            
+            canvas.style.cursor = 'crosshair';
+        }
+        
+        // Handle keyboard events for modifier keys
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Shift') {
+                const mousePos = getMousePos({ clientX: lastMouseX, clientY: lastMouseY });
+                const foundPoint = findPointAt(mousePos.x, mousePos.y);
+                
+                if (!foundPoint && !isDraggingPoint) {
+                    canvas.style.cursor = 'grab';
+                }
+            }
+        });
+        
+        document.addEventListener('keyup', function(event) {
+            if (event.key === 'Shift' && !isPanning) {
+                canvas.style.cursor = 'crosshair';
+            }
+        });
         
         function showStatus(message, type) {
             const statusEl = document.getElementById('statusMessage');
@@ -579,6 +735,7 @@
             if (confirm('Are you sure you want to clear all data?')) {
                 segments = [];
                 corners = [];
+                selectedPoint = null;
                 updateSegmentsList();
                 updateCornersDisplay();
                 drawCanvas();
@@ -603,6 +760,7 @@
                     
                     segments = [];
                     corners = [];
+                    selectedPoint = null;
                     
                     let inParametersSection = true;
                     let inOutlineSection = false;
@@ -809,6 +967,7 @@
             
             segments = [];
             corners = [];
+            selectedPoint = null;
             
             const exampleSegments = [
                 {type: 'LINE', points: [{x: 250.0, y: 100.0}], rounded: false},
@@ -1229,6 +1388,7 @@
         function removeSegment(index) {
             segments.splice(index, 1);
             corners = [];
+            selectedPoint = null;
             updateSegmentsList();
             updateCornersDisplay();
             drawCanvas();
@@ -1517,10 +1677,11 @@
                     
                     if (segment.type === 'LINE') {
                         const point = segment.points[0];
+                        const isSelected = selectedPoint && selectedPoint.segIndex === segIndex && selectedPoint.pointIndex === 0;
                         
-                        ctx.fillStyle = '#2196F3';
+                        ctx.fillStyle = isSelected ? '#ff0000' : '#2196F3';
                         ctx.beginPath();
-                        ctx.arc(point.x * scale, point.y * scale, 4, 0, 2 * Math.PI);
+                        ctx.arc(point.x * scale, point.y * scale, isSelected ? 8 : 5, 0, 2 * Math.PI);
                         ctx.fill();
                         
                         if (!isRoundingArc) {
@@ -1531,9 +1692,10 @@
                         }
                         currentPos = point;
                     } else if (segment.type === 'ARC') {
-                        ctx.fillStyle = isRoundingArc ? '#FF8C00' : '#FFA500';
+                        const isApexSelected = selectedPoint && selectedPoint.segIndex === segIndex && selectedPoint.pointIndex === 0;
+                        ctx.fillStyle = isApexSelected ? '#ff0000' : (isRoundingArc ? '#FF8C00' : '#FFA500');
                         ctx.beginPath();
-                        ctx.arc(segment.points[0].x * scale, segment.points[0].y * scale, 4, 0, 2 * Math.PI);
+                        ctx.arc(segment.points[0].x * scale, segment.points[0].y * scale, isApexSelected ? 8 : 5, 0, 2 * Math.PI);
                         ctx.fill();
                         
                         if (!isRoundingArc) {
@@ -1542,9 +1704,10 @@
                             ctx.fillText(`${pointNum}a`, segment.points[0].x * scale + 6, segment.points[0].y * scale - 6);
                         }
                         
-                        ctx.fillStyle = '#2196F3';
+                        const isEndSelected = selectedPoint && selectedPoint.segIndex === segIndex && selectedPoint.pointIndex === 1;
+                        ctx.fillStyle = isEndSelected ? '#ff0000' : '#2196F3';
                         ctx.beginPath();
-                        ctx.arc(segment.points[1].x * scale, segment.points[1].y * scale, 4, 0, 2 * Math.PI);
+                        ctx.arc(segment.points[1].x * scale, segment.points[1].y * scale, isEndSelected ? 8 : 5, 0, 2 * Math.PI);
                         ctx.fill();
                         
                         if (!isRoundingArc) {
