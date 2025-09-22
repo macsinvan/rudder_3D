@@ -1,39 +1,38 @@
-# Rudder Profile Specification for Core Model,
-# ,
-# UNITS: Millimeters (mm),
-# ORIGIN: (0,0) is the top leading edge of the rudder (top-left corner in side view)
-# DIRECTION: Outline points must proceed CLOCKWISE around the rudder,
-# STRUCTURE: ,
-#   - First section: parameter key-value pairs (optional),
-#   - Second section: a list of X,Y coordinates defining the 2D outline
-#   - The outline MUST form a closed loop (first and last points identical),
-# --- Parameters ---
-Customer,Andrew
-BoatName,MackenSea
-Brand,Nautitech
-Model,44 Open
-Year,2024
-Version,1.5
-Date,2025-08-15
-BoxSize,500,1100
-ThicknessRatio,0.16
-Image,../MackenSea/Input/MackenSea_Rudder_Outline.png
+# Parameters
+customer,Andrew
+boatname,MackenSea
+brand,Nautitech
+model,44 Open
+year,2024
+version,1.5
+date,2025-08-15
+boxsize,500,1100
+thicknessratio,0.16
+image,../MackenSea/Input/MackenSea_Rudder_Outline.png
 
-# --- Outline Points (X,Z) ---
+# Outline Points
 X,Y
 SEGMENT,LINE
 0.0,0.0
 SEGMENT,LINE
-282.20961035612953,48.24125198227011
+281.3,47.5
 SEGMENT,LINE
-307.5636796472226,72.91007615738768
+304.7,70.0
 SEGMENT,LINE
-425.4258395950066,70.16909569348573
+428.6,70.0
 SEGMENT,LINE
-500,81.20547406623805
+500.0,83.3
+SEGMENT,ARC
+479.8,351.2
+367.7,994.2
+SEGMENT,ARC
+330.4,1046.8
+232.1,1084.1
 SEGMENT,LINE
-500,1100
-SEGMENT,LINE
-0,1100
-SEGMENT,LINE
-0,0
+133.9,1095.5
+SEGMENT,ARC
+128.3,1091.2
+122.8,1086.9
+SEGMENT,ARC
+40.0,500.0
+0.0,0.0

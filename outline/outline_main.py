@@ -1,7 +1,7 @@
 """
 Rudder Outline Builder - Scaled Version with Integrity Checks
-Processes Profile and Outline CSV files with LINE and ARC segments.
-Scales to standard dimensions based on BoxSize from outline CSV.
+Processes Profile CSV file and auto-generates outline from profile.
+Scales to standard dimensions based on BoxSize from profile CSV.
 Creates wire and shrunk wire for each, exports as STEP.
 """
 import os
@@ -23,7 +23,6 @@ OUTPUT_FOLDER = f"{BOAT_FOLDER}/output/outline"
 
 # Files
 PROFILE_CSV = f"{BOAT_NAME}_Rudder_Profile.csv"
-OUTLINE_CSV = f"{BOAT_NAME}_Rudder_Outline.csv"
 PROFILE_STEP = f"{BOAT_NAME}_Profile.step"
 OUTLINE_STEP = f"{BOAT_NAME}_Outline.step"
 
@@ -81,7 +80,7 @@ def read_csv(csv_path):
             # Parse parameters
             if ',' in line:
                 # Special handling for BoxSize which has format: BoxSize,500,1110
-                if line.startswith('BoxSize,'):
+                if line.startswith('BoxSize,') or line.startswith('boxsize,'):
                     parts = line.split(',')
                     if len(parts) >= 3:
                         parameters['BoxSize'] = f"{parts[1].strip()},{parts[2].strip()}"
@@ -132,6 +131,102 @@ def read_csv(csv_path):
         raise ValueError("No valid segments found in CSV")
     
     return segments, parameters
+
+
+def generate_outline_from_profile(profile_segments, profile_parameters):
+    """
+    Generate outline segments from profile segments.
+    Outline: (0,0) → (max_x,0) → (max_x,profile_y_at_max_x) → follow COMPLETE profile to (0,0)
+    """
+    # Collect all points from profile to find max_x
+    all_points = []
+    for _, points in profile_segments:
+        all_points.extend(points)
+    
+    if not all_points:
+        raise ValueError("No points found in profile")
+    
+    # Find max X and corresponding Y
+    max_x = max(p[0] for p in all_points)
+    
+    # Find which segment and point index contains max_x
+    max_x_segment_idx = None
+    max_x_point_idx = None
+    profile_y_at_max_x = None
+    
+    for seg_idx, (seg_type, points) in enumerate(profile_segments):
+        for pt_idx, point in enumerate(points):
+            if abs(point[0] - max_x) < 0.01:  # Small tolerance
+                max_x_segment_idx = seg_idx
+                max_x_point_idx = pt_idx
+                profile_y_at_max_x = point[1]
+                break
+        if max_x_segment_idx is not None:
+            break
+    
+    if profile_y_at_max_x is None:
+        # Fallback: find closest point to max_x
+        closest_point = min(all_points, key=lambda p: abs(p[0] - max_x))
+        profile_y_at_max_x = closest_point[1]
+        print(f"   Warning: Using closest point for max_x, Y = {profile_y_at_max_x}")
+    
+    print(f"   Outline: max_x = {max_x}, profile_y_at_max_x = {profile_y_at_max_x}")
+    print(f"   Max X found in segment {max_x_segment_idx}, point {max_x_point_idx}")
+    
+    # Create outline segments
+    outline_segments = []
+    
+    # Segment 1: (0,0) → (max_x, 0) - Square top horizontal
+    outline_segments.append(('line', [(0.0, 0.0), (max_x, 0.0)]))
+    
+    # Segment 2: (max_x, 0) → (max_x, profile_y_at_max_x) - Square top vertical
+    if abs(profile_y_at_max_x) > 0.001:
+        outline_segments.append(('line', [(max_x, 0.0), (max_x, profile_y_at_max_x)]))
+    
+    # Segment 3: Follow COMPLETE profile from max_x point forward to (0,0)
+    if max_x_segment_idx is not None:
+        # Start from the segment containing max_x
+        for seg_idx in range(max_x_segment_idx, len(profile_segments)):
+            seg_type, points = profile_segments[seg_idx]
+            
+            if seg_idx == max_x_segment_idx:
+                # For the segment containing max_x, start from that point onwards
+                segment_points = points[max_x_point_idx:]
+                if len(segment_points) > 1:
+                    outline_segments.append((seg_type, segment_points))
+            else:
+                # For subsequent segments, include all points
+                if len(points) > 1:
+                    outline_segments.append((seg_type, points))
+        
+        print(f"   Added {len(outline_segments) - 2} profile segments to outline")
+    else:
+        print("   Warning: Could not find max_x in segments, using fallback approach")
+        # Fallback: find all points after max_x and create line segments
+        remaining_points = []
+        found_max_x = False
+        
+        for _, points in profile_segments:
+            for point in points:
+                if not found_max_x and abs(point[0] - max_x) < 0.01:
+                    found_max_x = True
+                    remaining_points.append(point)
+                elif found_max_x:
+                    remaining_points.append(point)
+        
+        # Create line segments from remaining points
+        for i in range(len(remaining_points) - 1):
+            p1 = remaining_points[i]
+            p2 = remaining_points[i + 1]
+            if abs(p1[0] - p2[0]) > 0.001 or abs(p1[1] - p2[1]) > 0.001:
+                outline_segments.append(('line', [p1, p2]))
+    
+    print(f"   Created {len(outline_segments)} total outline segments")
+    
+    # Copy parameters from profile (including BoxSize)
+    outline_parameters = profile_parameters.copy()
+    
+    return outline_segments, outline_parameters
 
 
 def calculate_scale_factors(segments, box_size_x=None, box_size_z=None):
@@ -429,6 +524,81 @@ def process_csv(csv_filename, object_prefix, colors, doc, scale_x=1.0, scale_z=1
     return objects, all_points, segments, parameters
 
 
+def process_segments(segments, object_prefix, colors, doc, scale_x=1.0, scale_z=1.0):
+    """Process segments directly and create FreeCAD objects with scaling."""
+    print(f"📂 Processing {object_prefix} segments")
+    
+    # Create scaled edges and wire
+    edges = create_edges(segments, scale_x, scale_z)
+    wire = Part.Wire(edges)
+    
+    # Close wire if needed
+    if not wire.isClosed():
+        last = wire.Edges[-1].Vertexes[-1].Point
+        first = wire.Edges[0].Vertexes[0].Point
+        if last.distanceToPoint(first) > 0.1:
+            wire = Part.Wire(edges + [Part.makeLine(last, first)])
+    
+    print(f"   Wire: {len(wire.Edges)} edges, closed: {wire.isClosed()}")
+    
+    # Validate wire
+    if not validate_shape(wire, f"{object_prefix} wire"):
+        print(f"   ❌ Wire validation failed, aborting")
+        return None, None
+    
+    # Report scaled dimensions
+    bbox = wire.BoundBox
+    print(f"   ✅ SCALED dimensions: X = {bbox.XMax:.1f}mm, Z = {abs(bbox.ZMin):.1f}mm")
+    
+    objects = []
+    
+    # Create fill (face)
+    try:
+        face = Part.Face(wire)
+        if validate_shape(face, f"{object_prefix} face"):
+            fill_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_{object_prefix}_Fill")
+            fill_obj.Shape = face
+            fill_obj.ViewObject.ShapeColor = colors['fill']
+            fill_obj.ViewObject.Transparency = 70
+    except Exception as e:
+        print(f"   ⚠️ Face creation failed: {e}")
+    
+    # Create wire object
+    wire_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_{object_prefix}_Wire")
+    wire_obj.Shape = wire
+    wire_obj.ViewObject.ShapeColor = colors['wire']
+    wire_obj.ViewObject.LineWidth = 3
+    objects.append(wire_obj)
+    
+    # Create shrunk wire
+    try:
+        shrunk_wire = wire.makeOffset2D(OFFSET_DIST)
+        
+        # Validate shrunk wire
+        if not validate_shape(shrunk_wire, f"{object_prefix} shrunk wire"):
+            raise ValueError("Shrunk wire validation failed")
+        
+        shrunk_obj = doc.addObject("Part::Feature", f"{BOAT_NAME}_{object_prefix}_Shrunk")
+        shrunk_obj.Shape = shrunk_wire
+        shrunk_obj.ViewObject.ShapeColor = colors['shrunk']
+        shrunk_obj.ViewObject.LineWidth = 2
+        objects.append(shrunk_obj)
+        
+        print(f"   Shrunk: {len(shrunk_wire.Edges)} edges")
+        
+    except Exception as e:
+        print(f"❌ Shrunk wire failed: {e}")
+        return None, None
+    
+    # Get scaled points for grid
+    all_points = []
+    for _, points in segments:
+        for point in points:
+            all_points.append((point[0] * scale_x, point[1] * scale_z))
+    
+    return objects, all_points
+
+
 def draw_grid(points, doc):
     """Draw reference grid."""
     if not points:
@@ -444,10 +614,14 @@ def draw_grid(points, doc):
     start_x, end_x = 0, int(max_x) + GRID_MARGIN
     start_z, end_z = 0, int(min_z) - GRID_MARGIN
     
+    print(f"   Grid bounds: X={start_x} to {end_x}, Z={start_z} to {end_z}")
+    
     # Vertical lines
     for x in range(start_x, end_x + 1, GRID_SPACING):
         line = Part.makeLine(Vector(x, 0, start_z), Vector(x, 0, end_z))
-        obj = doc.addObject("Part::Feature", f"Grid_V_{x}")
+        # Fix object naming for negative coordinates
+        obj_name = f"Grid_V_{x}" if x >= 0 else f"Grid_V_N{abs(x)}"
+        obj = doc.addObject("Part::Feature", obj_name)
         obj.Shape = line
         color = (0.4, 0.4, 0.4) if x % (GRID_SPACING * 10) == 0 else (0.8, 0.8, 0.8)
         width = 2 if x % (GRID_SPACING * 10) == 0 else 1
@@ -455,14 +629,25 @@ def draw_grid(points, doc):
         obj.ViewObject.LineWidth = width
     
     # Horizontal lines
+    grid_count = 0
     for z in range(start_z, end_z - 1, -GRID_SPACING):
         line = Part.makeLine(Vector(start_x, 0, z), Vector(end_x, 0, z))
-        obj = doc.addObject("Part::Feature", f"Grid_H_{z}")
+        # Fix object naming for negative coordinates
+        obj_name = f"Grid_H_{z}" if z >= 0 else f"Grid_H_N{abs(z)}"
+        obj = doc.addObject("Part::Feature", obj_name)
         obj.Shape = line
         color = (0.4, 0.4, 0.4) if z % (GRID_SPACING * 10) == 0 else (0.8, 0.8, 0.8)
         width = 2 if z % (GRID_SPACING * 10) == 0 else 1
         obj.ViewObject.ShapeColor = color
         obj.ViewObject.LineWidth = width
+        grid_count += 1
+        
+        # Limit grid lines to prevent hanging
+        if grid_count > 200:
+            print(f"   Grid generation stopped at {grid_count} lines to prevent hanging")
+            break
+    
+    print(f"   Grid complete: {grid_count} horizontal lines created")
 
 
 def run():
@@ -479,48 +664,57 @@ def run():
     doc = App.newDocument(doc_name)
     Gui.activateWorkbench("PartWorkbench")
     
-    # Process Outline FIRST to calculate scale factors
-    print("\n📋 OUTLINE (reading BoxSize and calculating scale factors):")
-    outline_path = f"{INPUT_FOLDER}/{OUTLINE_CSV}"
-    box_size_x = None
-    box_size_z = None
+    # Process Profile CSV to get BoxSize and calculate scale factors
+    print("\n📋 PROFILE (reading BoxSize and calculating scale factors):")
+    profile_path = f"{INPUT_FOLDER}/{PROFILE_CSV}"
     
-    if os.path.exists(outline_path):
-        try:
-            outline_segments, outline_params = read_csv(outline_path)
-            
-            # Debug: Show parsed parameters
-            print(f"   Parsed parameters: {list(outline_params.keys())}")
-            
-            # Get BoxSize from parameters
-            if 'BoxSize_X' in outline_params and 'BoxSize_Z' in outline_params:
-                box_size_x = outline_params['BoxSize_X']
-                box_size_z = outline_params['BoxSize_Z']
-                print(f"   Found BoxSize in outline: {box_size_x} x {box_size_z}mm")
-            else:
-                print(f"   ⚠️ BoxSize not found in outline CSV, using original dimensions")
-                if 'BoxSize' in outline_params:
-                    print(f"   (BoxSize raw value: {outline_params['BoxSize']})")
-            
-            print(f"   Found {len(outline_segments)} segments")
-            
-            scale_x, scale_z, orig_x, orig_z, target_x, target_z = calculate_scale_factors(
-                outline_segments, box_size_x, box_size_z)
-        except ValueError as e:
-            print(f"❌ Failed to calculate scale factors: {e}")
-            scale_x, scale_z, orig_x, orig_z, target_x, target_z = 1.0, 1.0, 0, 0, 0, 0
-    else:
-        print(f"⚠️ {OUTLINE_CSV} not found, using scale 1.0")
-        scale_x, scale_z, orig_x, orig_z, target_x, target_z = 1.0, 1.0, 0, 0, 0, 0
+    if not os.path.exists(profile_path):
+        print(f"❌ {PROFILE_CSV} not found!")
+        return
+    
+    try:
+        profile_segments, profile_params = read_csv(profile_path)
+        
+        # Debug: Show parsed parameters
+        print(f"   Parsed parameters: {list(profile_params.keys())}")
+        
+        # Get BoxSize from parameters
+        box_size_x = None
+        box_size_z = None
+        if 'BoxSize_X' in profile_params and 'BoxSize_Z' in profile_params:
+            box_size_x = profile_params['BoxSize_X']
+            box_size_z = profile_params['BoxSize_Z']
+            print(f"   Found BoxSize in profile: {box_size_x} x {box_size_z}mm")
+        else:
+            print(f"   ⚠️ BoxSize not found in profile CSV, using original dimensions")
+            if 'BoxSize' in profile_params:
+                print(f"   (BoxSize raw value: {profile_params['BoxSize']})")
+        
+        print(f"   Found {len(profile_segments)} segments")
+        
+        scale_x, scale_z, orig_x, orig_z, target_x, target_z = calculate_scale_factors(
+            profile_segments, box_size_x, box_size_z)
+    except ValueError as e:
+        print(f"❌ Failed to process profile: {e}")
+        return
+    
+    # Generate outline from profile
+    print("\n📋 OUTLINE (auto-generating from profile):")
+    try:
+        outline_segments, outline_params = generate_outline_from_profile(profile_segments, profile_params)
+        print(f"   Generated {len(outline_segments)} outline segments")
+    except ValueError as e:
+        print(f"❌ Failed to generate outline: {e}")
+        return
     
     # Process Outline with scaling
     print("\n📋 OUTLINE (applying scaling):")
-    outline_objects, outline_points, _, outline_params = process_csv(
-        OUTLINE_CSV, "Outline", OUTLINE_COLORS, doc, scale_x, scale_z)
+    outline_objects, outline_points = process_segments(
+        outline_segments, "Outline", OUTLINE_COLORS, doc, scale_x, scale_z)
     
     # Process Profile with SAME scale factors
     print("\n📋 PROFILE (using same scale factors):")
-    profile_objects, profile_points, _, profile_params = process_csv(
+    profile_objects, profile_points, _, _ = process_csv(
         PROFILE_CSV, "Profile", PROFILE_COLORS, doc, scale_x, scale_z)
     
     # Add dimension labels to show scaling
@@ -574,9 +768,9 @@ def run():
     print(f"   Scale factors: X={scale_x:.4f}, Z={scale_z:.4f}")
     
     # Print parsed parameters if available
-    if outline_params:
-        print(f"\n📋 Outline Parameters:")
-        for key, value in outline_params.items():
+    if profile_params:
+        print(f"\n📋 Profile Parameters:")
+        for key, value in profile_params.items():
             if not key.startswith('BoxSize_'):
                 print(f"   {key}: {value}")
     
