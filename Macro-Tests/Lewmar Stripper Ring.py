@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
-FreeCAD Macro: Lewmar Stripper Ring 45500408 - Step 4: Shaped Extension
+FreeCAD Macro: Lewmar Stripper Ring 45500408 - Complete Model
 Step 1: Base cylinder 85mm diameter, 15mm height
 Step 2: Add trapezoid extending from cylinder
 Step 3: Add small nib at trapezoid end  
 Step 4: Merge and shape with varying thickness (2mm to 7mm)
+Step 5: Add "TOP" engraving
+Step 6: Create final merged object
+Step 7: Export STL for 3D printing
 Author: Generated for 3D Printing
+Recommended Materials: ASA, PETG, or Nylon for marine applications
 """
 
 import FreeCAD as App
@@ -34,6 +38,8 @@ def create_base_with_shaped_extension():
     
     # Create solid cylinder
     base_cylinder = Part.makeCylinder(base_radius, base_depth)
+    
+    print(f"Solid cylinder created")
     
     # Create base cylinder object
     cylinder_obj = doc.addObject("Part::Feature", "Base_Cylinder")
@@ -241,11 +247,176 @@ def create_base_with_shaped_extension():
     
     print("Base cylinder and shaped trapezoid+nib created successfully!")
     print("Shaped component has varying thickness: 2mm to 7mm")
-    print("Ready for next step - what should we add next?")
     
-    return cylinder_obj, shaped_obj, cut_tool_obj
+    # Step 5: Add "TOP" engraving
+    print("Step 5: Adding TOP engraving...")
+    
+    # Text parameters
+    text_content = "TOP"
+    text_height = 4.0  # 4mm high letters
+    text_depth = 0.5   # Engraving depth
+    
+    # Position 16mm down from end of nib
+    text_y_pos = nib_end_y - 16.0  # 16mm back from nib end
+    text_z_pos = z_offset + trapezoid_thickness - text_depth  # Position for engraving INTO surface
+    
+    print(f"Text position: Y={text_y_pos}mm, Z={text_z_pos}mm")
+    
+    # Create text geometry
+    text_obj = doc.addObject("Part::Feature", "TOP_Text")
+    
+    # Create simple block letters for "TOP" (since FreeCAD text can be complex)
+    # Create as extruded rectangles for each letter
+    
+    # Letter spacing and positioning
+    letter_width = 2.5
+    letter_spacing = 3.5
+    total_width = 3 * letter_width + 2 * (letter_spacing - letter_width)  # Approximate
+    
+    # Create "T"
+    t_horizontal = Part.makeBox(letter_width, 0.8, text_height)
+    t_horizontal.translate(App.Vector(0, letter_width - 0.8, 0))  # Move horizontal bar to top
+    t_vertical = Part.makeBox(0.8, letter_width, text_height)
+    t_letter = t_horizontal.fuse(t_vertical.translate(App.Vector((letter_width-0.8)/2, 0, 0)))
+    
+    # Create "O" 
+    o_outer = Part.makeBox(letter_width, letter_width, text_height)
+    o_inner = Part.makeBox(letter_width-1.0, letter_width-1.0, text_height + 1)
+    o_inner.translate(App.Vector(0.5, 0.5, -0.5))
+    o_letter = o_outer.cut(o_inner)
+    o_letter.translate(App.Vector(letter_spacing, 0, 0))
+    
+    # Create "P"
+    p_vertical = Part.makeBox(0.8, letter_width, text_height)
+    p_horizontal1 = Part.makeBox(letter_width-0.8, 0.8, text_height)
+    p_horizontal1.translate(App.Vector(0.8, letter_width-0.8, 0))
+    p_horizontal2 = Part.makeBox(letter_width-0.8, 0.8, text_height)
+    p_horizontal2.translate(App.Vector(0.8, (letter_width-0.8)/2, 0))
+    p_letter = p_vertical.fuse(p_horizontal1).fuse(p_horizontal2)
+    p_letter.translate(App.Vector(2 * letter_spacing, 0, 0))
+    
+    # Combine all letters
+    top_text = t_letter.fuse(o_letter).fuse(p_letter)
+    
+    # Position the text
+    top_text.translate(App.Vector(-total_width/2, text_y_pos, text_z_pos))
+    top_text.translate(App.Vector(0, base_radius, 0))  # Apply same translation as other objects
+    
+    # Assign geometry to text object
+    text_obj.Shape = top_text
+    text_obj.Label = "TOP Text"
+    
+    # Make text visible in green
+    if App.GuiUp:
+        text_obj.ViewObject.ShapeColor = (0.2, 0.8, 0.2)
+        text_obj.ViewObject.Transparency = 0
+        text_obj.ViewObject.DisplayMode = "Shaded"
+    
+    # Create engraving by cutting text from shaped object
+    engraved_solid = shaped_solid.cut(top_text)
+    
+    # Update the shaped object with engraving
+    shaped_obj.Shape = engraved_solid
+    
+    print("TOP engraving added successfully!")
+    
+    # Step 6: Create final merged object
+    print("Step 6: Creating final merged object...")
+    final_merged = cylinder_obj.Shape.fuse(shaped_obj.Shape)
+    
+    # Cut inner hole through entire merged shape to create ring
+    print("Cutting inner hole to create ring...")
+    inner_radius = base_radius - 3.7  # 42.5 - 3.7 = 38.8mm
+    inner_cylinder = Part.makeCylinder(inner_radius, base_depth + 2)  # Slightly taller to ensure clean cut
+    inner_cylinder.translate(App.Vector(0, 0, -1))  # Center the cut
+    
+    final_merged = final_merged.cut(inner_cylinder)
+    print(f"Ring inner radius: {inner_radius}mm")
+    
+    # Add light chamfer on all edges
+    print("Adding light chamfer on all edges...")
+    try:
+        chamfer_radius = 0.2  # Very light 0.2mm chamfer
+        edges_to_chamfer = []
+        for edge in final_merged.Edges:
+            if edge.Length > 1.0:  # Only chamfer edges longer than 1mm
+                edges_to_chamfer.append(edge)
+        
+        if edges_to_chamfer:
+            final_merged = final_merged.makeFillet(chamfer_radius, edges_to_chamfer)
+            print(f"Applied {chamfer_radius}mm chamfer to {len(edges_to_chamfer)} edges")
+    except:
+        print("Chamfering failed, using original shape")
+    
+    # Create final object
+    final_obj = doc.addObject("Part::Feature", "Lewmar_Stripper_Ring_Final")
+    final_obj.Shape = final_merged
+    final_obj.Label = "Lewmar Stripper Ring 45500408 - Final"
+    
+    # Set final object color
+    if App.GuiUp:
+        final_obj.ViewObject.ShapeColor = (0.2, 0.2, 0.2)  # Dark gray like original
+        final_obj.ViewObject.Transparency = 0
+        final_obj.ViewObject.DisplayMode = "Shaded"
+        
+        # Hide individual components
+        cylinder_obj.ViewObject.Visibility = False
+        shaped_obj.ViewObject.Visibility = False
+    
+    # Step 7: Export STL
+    print("Step 7: Exporting STL...")
+    
+    import os
+    import Mesh
+    
+    # Get downloads folder
+    downloads_path = os.path.join(os.path.expanduser("~"), "Downloads")
+    stl_filename = os.path.join(downloads_path, "Lewmar_Stripper_Ring_45500408.stl")
+    
+    # Create mesh from final shape
+    mesh = Mesh.Mesh()
+    mesh.addFacets(final_obj.Shape.tessellate(0.1))  # 0.1mm tolerance for good quality
+    
+    # Export STL
+    mesh.write(stl_filename)
+    
+    print(f"STL exported to: {stl_filename}")
+    print(f"File size: {len(mesh.Facets)} triangles")
+    
+    # Print material recommendations
+    print("\n" + "="*50)
+    print("3D PRINTING RECOMMENDATIONS:")
+    print("="*50)
+    print("RECOMMENDED MATERIAL: PLA CF (Carbon Fiber)")
+    print("- BEST CHOICE for marine applications")
+    print("- Excellent strength-to-weight ratio")
+    print("- Carbon fiber reinforcement provides stiffness")
+    print("- Good chemical resistance when properly printed")
+    print("- Cost-effective compared to specialty marine filaments")
+    print("\nPRINT SETTINGS FOR PLA CF:")
+    print("- Layer Height: 0.15-0.2mm")
+    print("- Infill: 80-100% for marine strength requirements")
+    print("- Nozzle Temp: 210-230°C")
+    print("- Bed Temp: 60-70°C")
+    print("- Print Speed: 30-50mm/s")
+    print("- Supports: Yes (for trapezoid overhangs)")
+    print("- Orientation: Ring flat on bed")
+    print("\nPOST-PROCESSING:")
+    print("- Sand contact surfaces smooth (400-800 grit)")
+    print("- Consider marine-grade protective coating")
+    print("- Test fit before final installation")
+    print("\nMARINE APPLICATION NOTES:")
+    print("- PLA CF offers optimal balance of strength and printability")
+    print("- Superior to standard PLA for marine hardware")
+    print("- Monitor for wear in high-stress applications")
+    print("="*50)
+    
+    print("Final Lewmar Stripper Ring model completed!")
+    print("Ready for 3D printing!")
+    
+    return cylinder_obj, shaped_obj, cut_tool_obj, final_obj
 
 # Run the macro
 if __name__ == "__main__":
-    # Create the base with shaped extension - Steps 1-4
-    cylinder_object, shaped_object, cutting_tool = create_base_with_shaped_extension()
+    # Create the base with shaped extension - Steps 1-7 (Complete)
+    cylinder_object, shaped_object, cutting_tool, final_object = create_base_with_shaped_extension()
