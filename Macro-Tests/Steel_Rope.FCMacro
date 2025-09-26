@@ -1,0 +1,186 @@
+import FreeCAD
+import Part
+from FreeCAD import Base
+
+def create_wire_rope_and_core(cylinder_length=250.0, overall_diameter=6.0, wire_diameter=1.0, 
+                             num_wires=12, helix_pitch=100.0):
+    """
+    Creates a wire rope with helical wires around a central core
+    
+    Args:
+        cylinder_length: Length of the main cylinder (mm)
+        overall_diameter: Overall diameter of wire rope (mm)
+        wire_diameter: Diameter of individual wires (mm)
+        num_wires: Number of helical wires around the core
+        helix_pitch: Pitch of the helix (mm per revolution)
+    
+    Returns:
+        (doc, wire_rope_solid, core_shape, wire_shapes_list)
+    """
+    
+    # Calculate derived parameters
+    core_diameter = overall_diameter - wire_diameter
+    helix_radius = core_diameter / 2  # Put wire centers at core radius
+    
+    # Calculate extensions needed for helical offsets
+    vertical_offset = helix_pitch / num_wires
+    total_offset_range = (num_wires - 1) * vertical_offset
+    extension_each_side = total_offset_range
+    
+    # Extended length to accommodate all wire offsets
+    extended_length = cylinder_length + (2 * extension_each_side)
+    start_z = -extension_each_side
+    
+    print(f"Creating wire rope: {overall_diameter}mm diameter × {extended_length:.1f}mm length")
+    print(f"Core: {core_diameter}mm diameter")
+    print(f"Wires: {num_wires} × {wire_diameter}mm diameter")
+    print(f"Helix pitch: {helix_pitch}mm")
+    
+    # Create document
+    doc = FreeCAD.newDocument("WireRope")
+    
+    # 1. CREATE EXTENDED CORE CYLINDER
+    print("\n1. Creating core cylinder...")
+    core = Part.makeCylinder(
+        core_diameter / 2,              # radius
+        extended_length,                # height
+        Base.Vector(0, 0, start_z),    # start position
+        Base.Vector(0, 0, 1)           # direction (vertical)
+    )
+    
+    core_obj = doc.addObject("Part::Feature", "Core")
+    core_obj.Shape = core
+    core_obj.Label = f"Core_{core_diameter}mm"
+    
+    print(f"✓ Core created: {core_diameter}mm diameter × {extended_length:.1f}mm length")
+    
+    # 2. CREATE HELICAL WIRES
+    print(f"\n2. Creating {num_wires} helical wires...")
+    
+    # Create the base helix path
+    helix = Part.makeHelix(
+        helix_pitch,        # pitch
+        extended_length,    # height
+        helix_radius       # radius
+    )
+    
+    # Move the helix to start at the correct Z position
+    helix.translate(Base.Vector(0, 0, start_z))
+    
+    # Create wire profile (small circle)
+    start_point = helix.Vertexes[0].Point
+    circle = Part.makeCircle(wire_diameter / 2, start_point)
+    
+    # Make the first wire by sweeping circle along helix
+    wire_shape = Part.Wire(helix).makePipeShell([Part.Wire(circle)], True, True)
+    
+    # Create all wires with vertical offsets
+    wire_shapes = []
+    for i in range(num_wires):
+        # Copy the wire shape
+        if i == 0:
+            current_wire = wire_shape
+        else:
+            current_wire = wire_shape.copy()
+            # Apply vertical offset to stagger the helixes
+            current_wire.translate(Base.Vector(0, 0, i * vertical_offset))
+        
+        # Store for later fusion
+        wire_shapes.append(current_wire)
+        
+        # Add to document
+        wire_obj = doc.addObject("Part::Feature", f"Wire_{i:02d}")
+        wire_obj.Shape = current_wire
+        wire_obj.Label = f"Wire_{i:02d}"
+        
+        print(f"   Wire {i+1}/{num_wires} created (offset: {i * vertical_offset:.1f}mm)")
+    
+    # 3. FUSE CORE AND WIRES INTO SINGLE SOLID
+    print("\n3. Fusing core and wires into wire rope solid...")
+    
+    # Start with core as base
+    wire_rope_solid = core.copy()
+    
+    # Fuse each wire with the growing solid
+    for i, wire in enumerate(wire_shapes):
+        wire_rope_solid = wire_rope_solid.fuse(wire)
+        print(f"   Fused wire {i+1}/{num_wires}")
+    
+    # Convert compound to single solid if needed
+    if wire_rope_solid.ShapeType == "Compound":
+        solids = []
+        for shape in wire_rope_solid.SubShapes:
+            if shape.ShapeType == "Solid":
+                solids.append(shape)
+        
+        if len(solids) > 1:
+            single_solid = solids[0]
+            for solid in solids[1:]:
+                single_solid = single_solid.fuse(solid)
+            wire_rope_solid = single_solid
+        elif len(solids) == 1:
+            wire_rope_solid = solids[0]
+    
+    # Add final wire rope to document
+    rope_obj = doc.addObject("Part::Feature", "WireRope")
+    rope_obj.Shape = wire_rope_solid
+    rope_obj.Label = "WireRope_Complete"
+    
+    # 4. VALIDATE RESULT
+    print("\n4. Validating wire rope...")
+    
+    if wire_rope_solid.isValid():
+        volume = wire_rope_solid.Volume
+        print(f"✓ Wire rope valid: {volume:.1f} mm³")
+        print(f"✓ Shape type: {wire_rope_solid.ShapeType}")
+    else:
+        print("❌ Wire rope geometry invalid")
+    
+    # 5. SET COLORS (if GUI available)
+    try:
+        if hasattr(FreeCAD, 'Gui'):
+            # Core: Blue
+            core_obj.ViewObject.ShapeColor = (0.3, 0.6, 1.0)
+            
+            # Individual wires: Red with transparency
+            for i in range(num_wires):
+                wire_name = f"Wire_{i:02d}"
+                wire_obj = doc.getObject(wire_name)
+                if wire_obj:
+                    wire_obj.ViewObject.ShapeColor = (0.8, 0.2, 0.2)
+                    wire_obj.ViewObject.Transparency = 30
+            
+            # Final rope: Green
+            rope_obj.ViewObject.ShapeColor = (0.0, 0.8, 0.0)
+            rope_obj.ViewObject.Transparency = 0
+            
+            print("✓ Colors applied")
+    except:
+        print("! GUI not available - colors skipped")
+    
+    # Recompute document
+    doc.recompute()
+    
+    print(f"\n🎉 Wire rope creation complete!")
+    print(f"   Core: {core_diameter}mm diameter")
+    print(f"   {num_wires} wires: {wire_diameter}mm diameter each")
+    print(f"   Overall: {overall_diameter}mm diameter × {extended_length:.1f}mm length")
+    
+    return doc, wire_rope_solid, core, wire_shapes
+
+# Example usage
+if __name__ == "__main__":
+    try:
+        # Create wire rope with default parameters
+        doc, rope_solid, core_shape, wires = create_wire_rope_and_core()
+        
+        print("\n✅ SUCCESS: Wire rope and core created!")
+        
+        # Optional: Export to file
+        # rope_solid.exportStl("wire_rope.stl")
+        # print("Exported to wire_rope.stl")
+        
+    except Exception as e:
+        print(f"\n❌ ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
