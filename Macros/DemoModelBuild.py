@@ -140,6 +140,8 @@ class DemoModelState:
         self.pieces = []
         self.piece_objects = []
         self.chord_bounds_cache = {}
+        self.piece_volumes = {}  # Track volumes for foam calculation
+        self.port_half_solid = None  # Store solid version before hollowing
     
     def clear_chord_cache(self):
         """Clear the chord bounds cache"""
@@ -499,6 +501,85 @@ def ensure_solid(shape, operation_name="operations"):
     return None
 
 # ============================================================================
+# VOLUME CALCULATION FUNCTION
+# ============================================================================
+
+def calculate_piece_volumes(pieces, port_half_solid, port_half_hollowed):
+    """Calculate internal cavity volumes for each piece."""
+    print(f"\n📊 Calculating internal cavity volumes for foam estimation...")
+    
+    piece_volumes = {}
+    total_cavity_volume = 0
+    
+    for piece_name, piece_shape in pieces:
+        print(f"\n   Processing {piece_name}:")
+        
+        try:
+            # Get the hollowed piece volume
+            hollowed_volume = piece_shape.Volume
+            
+            # Create cutting box for this piece
+            piece_bbox = piece_shape.BoundBox
+            cutting_box = Part.makeBox(
+                piece_bbox.XLength + 10,
+                piece_bbox.YLength + 10,
+                piece_bbox.ZLength + 10,
+                Vector(piece_bbox.XMin - 5, piece_bbox.YMin - 5, piece_bbox.ZMin - 5)
+            )
+            
+            # Get solid version of this piece
+            solid_piece = port_half_solid.common(cutting_box)
+            solid_volume = solid_piece.Volume
+            
+            # Calculate cavity
+            cavity_volume = solid_volume - hollowed_volume
+            cavity_volume_ml = cavity_volume / 1000  # mm³ to ml
+            
+            piece_volumes[piece_name] = {
+                'solid_volume': solid_volume,
+                'hollowed_volume': hollowed_volume,
+                'cavity_volume': cavity_volume,
+                'cavity_volume_ml': cavity_volume_ml,
+                'fill_percentage': (cavity_volume / solid_volume * 100) if solid_volume > 0 else 0
+            }
+            
+            total_cavity_volume += cavity_volume
+            
+            print(f"      Solid volume: {solid_volume:.2f} mm³")
+            print(f"      Hollowed volume: {hollowed_volume:.2f} mm³")
+            print(f"      Cavity volume: {cavity_volume:.2f} mm³ ({cavity_volume_ml:.2f} ml)")
+            print(f"      Hollowness: {piece_volumes[piece_name]['fill_percentage']:.1f}%")
+            
+        except Exception as e:
+            print(f"      ❌ Failed to calculate volume: {e}")
+            piece_volumes[piece_name] = {
+                'solid_volume': 0,
+                'hollowed_volume': 0,
+                'cavity_volume': 0,
+                'cavity_volume_ml': 0,
+                'fill_percentage': 0
+            }
+    
+    # Calculate totals
+    total_cavity_ml = total_cavity_volume / 1000
+    
+    print(f"\n   📊 FOAM VOLUME SUMMARY:")
+    print(f"      Total cavity volume: {total_cavity_volume:.2f} mm³")
+    print(f"      Total cavity volume: {total_cavity_ml:.2f} ml")
+    print(f"      Port half total (one side): {total_cavity_ml:.2f} ml")
+    print(f"      Complete model (both halves): {total_cavity_ml * 2:.2f} ml")
+    
+    # Add foam expansion factor suggestion
+    foam_expansion_factor = 1.5  # Typical 2-part foam expands 1.5-2x
+    print(f"\n   💡 FOAM MIXING RECOMMENDATIONS:")
+    print(f"      Assuming {foam_expansion_factor}x expansion factor:")
+    print(f"      Mix volume per half: {total_cavity_ml / foam_expansion_factor:.2f} ml")
+    print(f"      Mix volume total: {(total_cavity_ml * 2) / foam_expansion_factor:.2f} ml")
+    print(f"      Add 10-20% safety margin for losses and overfill")
+    
+    return piece_volumes
+
+# ============================================================================
 # MAIN WORKFLOW FUNCTIONS
 # ============================================================================
 
@@ -773,6 +854,10 @@ def add_y_joining_to_port():
         return False
     state.port_half = solid_shape
     
+    # Store the solid version before hollowing for volume calculations
+    state.port_half_solid = state.port_half.copy()
+    print(f"   📦 Stored solid port half for volume calculations")
+    
     state.port_half_obj.Shape = state.port_half
     state.port_half_obj.Label = f"{BOAT_NAME}_Port_Half_with_Joining_Holes"
     state.port_half_obj.ViewObject.ShapeColor = VISUALIZATION_CONFIG['colors']['port_joined']
@@ -996,6 +1081,16 @@ def cut_pieces():
         print(f"   ❌ FAILED: No pieces were created")
         return False
     
+    # Calculate volumes after cutting
+    if hasattr(state, 'port_half_solid') and state.port_half_solid:
+        state.piece_volumes = calculate_piece_volumes(
+            state.pieces, 
+            state.port_half_solid, 
+            state.port_half
+        )
+    else:
+        print(f"   ⚠️ Warning: Solid port half not stored, skipping volume calculations")
+    
     update_view()
     return True
 
@@ -1053,7 +1148,24 @@ def final_view_and_summary():
     print(f"      3. Mirror and print again (creates starboard half)")
     print(f"      4. Join pieces using {HOLE_CONFIG['diameter']}mm dowels (X and Y holes)")
     print(f"      5. Join port and starboard halves using Y-direction joining holes")
-    print(f"   Alignment features:")
+    print(f"      6. Fill cavities with expanding foam through {FOAM_HOLE_CONFIG['diameter']}mm holes")
+    
+    # Add foam volume details if available
+    if hasattr(state, 'piece_volumes') and state.piece_volumes:
+        print(f"\n   🧪 FOAM REQUIREMENTS BY PIECE:")
+        total_cavity_ml = 0
+        for piece_name in sorted(state.piece_volumes.keys()):
+            vol_info = state.piece_volumes[piece_name]
+            print(f"      {piece_name}: {vol_info['cavity_volume_ml']:.1f} ml cavity ({vol_info['fill_percentage']:.1f}% hollow)")
+            total_cavity_ml += vol_info['cavity_volume_ml']
+        
+        print(f"\n   📊 TOTAL FOAM VOLUMES:")
+        print(f"      Port half (one side): {total_cavity_ml:.1f} ml")
+        print(f"      Complete model (both halves): {total_cavity_ml * 2:.1f} ml")
+        print(f"      With 1.5x expansion: Mix {total_cavity_ml * 2 / 1.5:.1f} ml total")
+        print(f"      Recommended: Mix {total_cavity_ml * 2 / 1.5 * 1.2:.1f} ml (includes 20% safety margin)")
+    
+    print(f"\n   Alignment features:")
     print(f"      • Z-cuts: {len(HOLE_POSITIONS['z_cut'])} holes at {z_pos_str} of chord")
     print(f"        - {FOAM_HOLE_CONFIG['diameter']}mm diameter foam injection holes")
     print(f"        - {FOAM_HOLE_CONFIG['depth']}mm depth")

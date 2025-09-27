@@ -27,7 +27,7 @@ def create_base_with_shaped_extension():
     doc = App.newDocument("Lewmar_Stripper_Ring_Step4")
     
     # Step 1: Base cylinder dimensions (CORRECTED - back to original)
-    base_diameter = 85.0    # 85mm diameter
+    base_diameter = 86.0    # 86mm diameter
     base_radius = base_diameter / 2  # 42.5mm radius
     base_depth = 15.0       # 15mm deep (DO NOT CHANGE)
     
@@ -47,7 +47,7 @@ def create_base_with_shaped_extension():
     cylinder_obj.Label = "Base Cylinder"
     
     # Step 2: Trapezoid (CORRECTED dimensions, ORIGINAL orientation)
-    trapezoid_width_bottom = 85.0   # Bottom width matches cylinder diameter
+    trapezoid_width_bottom = base_diameter   # Bottom width matches cylinder diameter
     trapezoid_width_top = 30.0      # Top width 30mm
     trapezoid_length = base_radius + 25.0  # Length = radius + 25 = 67.5mm
     trapezoid_thickness = 7.0       # 7mm thick
@@ -368,10 +368,12 @@ def create_base_with_shaped_extension():
     
     import os
     import Mesh
+    from datetime import datetime
     
-    # Get downloads folder
+    # Get downloads folder with timestamped filename
     downloads_path = os.path.join(os.path.expanduser("~"), "Downloads")
-    stl_filename = os.path.join(downloads_path, "Lewmar_Stripper_Ring_45500408.stl")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stl_filename = os.path.join(downloads_path, f"Lewmar_Stripper_Ring_45500408_{timestamp}.stl")
     
     # Create mesh from final shape
     mesh = Mesh.Mesh()

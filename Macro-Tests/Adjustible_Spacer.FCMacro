@@ -1,0 +1,661 @@
+# FreeCAD Macro for Adjustable Threaded Spacer
+# Version: 4.3 - Fixed Threading (minimal changes)
+# Compatible with: FreeCAD 1.0+
+# Description: Creates two-part adjustable spacer with male/female threads
+
+import FreeCAD
+import FreeCADGui
+import Part
+import Mesh
+import os
+import math
+from FreeCAD import Base
+
+# Import PySide2 for UI (FreeCAD 1.0 compatible)
+try:
+    from PySide2 import QtWidgets, QtCore, QtGui
+    from PySide2.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, 
+                                   QLabel, QDoubleSpinBox, QCheckBox, QPushButton,
+                                   QGroupBox, QMessageBox, QSpinBox, QTabWidget, QWidget)
+    from PySide2.QtCore import Qt
+    PYSIDE_AVAILABLE = True
+except ImportError:
+    try:
+        from PySide import QtGui, QtCore
+        from PySide.QtGui import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
+                                  QLabel, QDoubleSpinBox, QCheckBox, QPushButton,
+                                  QGroupBox, QMessageBox, QSpinBox, QTabWidget, QWidget)
+        from PySide.QtCore import Qt
+        PYSIDE_AVAILABLE = True
+    except ImportError:
+        PYSIDE_AVAILABLE = False
+        FreeCAD.Console.PrintError("PySide not available. Running with default parameters.\n")
+
+# ==============================================================================
+# THREAD CREATION FUNCTIONS - WORKING VERSION
+# ==============================================================================
+
+def create_external_threads_improved(diameter, length, pitch):
+    """Create external (male) threads - SIMPLE WORKING VERSION"""
+    major_radius = diameter / 2.0
+    minor_radius = major_radius - (pitch * 0.6)
+    
+    # Create base cylinder
+    core = Part.makeCylinder(minor_radius, length)
+    
+    # Create simple thread representation using stacked cones
+    thread_segments = []
+    num_turns = int(length / pitch)
+    
+    for i in range(num_turns):
+        z_pos = i * pitch
+        # Each thread is a truncated cone
+        cone = Part.makeCone(
+            minor_radius,
+            major_radius,
+            pitch * 0.3,
+            Base.Vector(0, 0, z_pos),
+            Base.Vector(0, 0, 1)
+        )
+        thread_segments.append(cone)
+        
+        cone2 = Part.makeCone(
+            major_radius,
+            minor_radius,  
+            pitch * 0.3,
+            Base.Vector(0, 0, z_pos + pitch * 0.3),
+            Base.Vector(0, 0, 1)
+        )
+        thread_segments.append(cone2)
+    
+    # Fuse all segments
+    result = core
+    for segment in thread_segments:
+        result = result.fuse(segment)
+    
+    return result
+
+def create_internal_threads_improved(outer_dia, inner_dia, length, pitch):
+    """Create internal (female) threads with proper clearance"""
+    clearance = 0.3  
+    thread_dia = inner_dia + clearance
+    major_radius = thread_dia / 2.0 + pitch * 0.6
+    minor_radius = thread_dia / 2.0
+    
+    # Create outer cylinder
+    outer_cyl = Part.makeCylinder(outer_dia / 2, length)
+    
+    # Create base bore
+    bore = Part.makeCylinder(minor_radius, length)
+    
+    # Create thread grooves as cones (inverse of male threads)
+    thread_cuts = []
+    num_turns = int(length / pitch)
+    
+    for i in range(num_turns):
+        z_pos = i * pitch
+        # Thread grooves cut INTO the material
+        groove = Part.makeCone(
+            major_radius,
+            minor_radius,
+            pitch * 0.3,
+            Base.Vector(0, 0, z_pos),
+            Base.Vector(0, 0, 1)
+        )
+        thread_cuts.append(groove)
+        
+        groove2 = Part.makeCone(
+            minor_radius,
+            major_radius,
+            pitch * 0.3,
+            Base.Vector(0, 0, z_pos + pitch * 0.3),
+            Base.Vector(0, 0, 1)
+        )
+        thread_cuts.append(groove2)
+    
+    # Combine all cutting tools
+    cutting_tool = bore
+    for cut in thread_cuts:
+        cutting_tool = cutting_tool.fuse(cut)
+    
+    # Cut threads from outer cylinder
+    female_thread = outer_cyl.cut(cutting_tool)
+    
+    return female_thread
+
+# ==============================================================================
+# GEOMETRY-DRIVEN UI CONFIGURATION DIALOG
+# ==============================================================================
+
+class AdjustableSpacerDialog(QDialog):
+    """Geometry-driven configuration dialog for adjustable spacer"""
+    
+    def __init__(self):
+        super(AdjustableSpacerDialog, self).__init__()
+        self.setWindowTitle("Adjustable Table Leg Spacer")
+        self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
+        self.setModal(True)
+        self.resize(400, 450)
+        
+        # Store parameters
+        self.parameters = {}
+        self.accepted = False
+        
+        self.setup_ui()
+        self.load_defaults()
+        self.connect_signals()
+    
+    def setup_ui(self):
+        """Create the geometry-driven interface"""
+        main_layout = QVBoxLayout(self)
+        
+        # Primary Settings Group
+        settings_group = QGroupBox("Spacer Settings")
+        settings_layout = QGridLayout(settings_group)
+        
+        # Minimum height (THE key parameter)
+        settings_layout.addWidget(QLabel("Minimum Height (mm):"), 0, 0)
+        settings_layout.addWidget(QLabel("(Slip under table leg)"), 0, 2)
+        self.min_height = QDoubleSpinBox()
+        self.min_height.setRange(8.0, 100.0)  # Increased upper limit
+        self.min_height.setSingleStep(1.0)
+        self.min_height.setDecimals(1)
+        settings_layout.addWidget(self.min_height, 0, 1)
+        
+        # Outer diameter
+        settings_layout.addWidget(QLabel("Outer Diameter (mm):"), 1, 0)
+        self.outer_diameter = QDoubleSpinBox()
+        self.outer_diameter.setRange(30.0, 100.0)
+        self.outer_diameter.setSingleStep(5.0)
+        self.outer_diameter.setDecimals(1)
+        settings_layout.addWidget(self.outer_diameter, 1, 1)
+        
+        # Thread pitch
+        settings_layout.addWidget(QLabel("Thread Pitch (mm):"), 2, 0)
+        self.thread_pitch = QDoubleSpinBox()
+        self.thread_pitch.setRange(2.0, 4.0)
+        self.thread_pitch.setSingleStep(0.5)
+        self.thread_pitch.setDecimals(1)
+        settings_layout.addWidget(self.thread_pitch, 2, 1)
+        
+        main_layout.addWidget(settings_group)
+        
+        # Options Group
+        options_group = QGroupBox("Options")
+        options_layout = QVBoxLayout(options_group)
+        
+        # Expand base checkbox
+        self.expand_base = QCheckBox("Expand base for extra stability (1.5× diameter)")
+        self.expand_base.setChecked(False)
+        options_layout.addWidget(self.expand_base)
+        
+        # Top indent checkbox
+        self.enable_indent = QCheckBox("Add indent on top (for furniture leg)")
+        self.enable_indent.setChecked(False)
+        options_layout.addWidget(self.enable_indent)
+        
+        # Indent controls (hidden by default)
+        indent_container = QWidget()
+        indent_layout = QGridLayout(indent_container)
+        indent_layout.setContentsMargins(20, 0, 0, 0)
+        
+        indent_layout.addWidget(QLabel("Indent Diameter (mm):"), 0, 0)
+        self.indent_diameter = QDoubleSpinBox()
+        self.indent_diameter.setRange(5.0, 90.0)
+        self.indent_diameter.setSingleStep(5.0)
+        self.indent_diameter.setDecimals(1)
+        indent_layout.addWidget(self.indent_diameter, 0, 1)
+        
+        indent_layout.addWidget(QLabel("Indent Depth (mm):"), 1, 0)
+        self.indent_depth = QDoubleSpinBox()
+        self.indent_depth.setRange(1.0, 3.0)
+        self.indent_depth.setSingleStep(0.5)
+        self.indent_depth.setDecimals(1)
+        indent_layout.addWidget(self.indent_depth, 1, 1)
+        
+        self.indent_container = indent_container
+        self.indent_container.setVisible(False)
+        options_layout.addWidget(self.indent_container)
+        
+        main_layout.addWidget(options_group)
+        
+        # Calculated Range Preview
+        preview_group = QGroupBox("Calculated Adjustment Range")
+        preview_layout = QVBoxLayout(preview_group)
+        
+        self.preview_label = QLabel()
+        self.preview_label.setWordWrap(True)
+        self.preview_label.setStyleSheet("background-color: #f0f0f0; padding: 10px; border: 1px solid #ccc; font-size: 12pt;")
+        preview_layout.addWidget(self.preview_label)
+        
+        main_layout.addWidget(preview_group)
+        
+        # Auto export checkbox
+        self.auto_export = QCheckBox("Automatically save STL files")
+        self.auto_export.setChecked(True)
+        main_layout.addWidget(self.auto_export)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        self.create_button = QPushButton("Create Spacer")
+        self.create_button.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 10px; }")
+        self.cancel_button = QPushButton("Cancel")
+        
+        button_layout.addWidget(self.cancel_button)
+        button_layout.addStretch()
+        button_layout.addWidget(self.create_button)
+        
+        main_layout.addLayout(button_layout)
+    
+    def load_defaults(self):
+        """Load default parameter values"""
+        self.min_height.setValue(15.0)
+        self.outer_diameter.setValue(50.0)
+        self.thread_pitch.setValue(3.0)
+        self.indent_diameter.setValue(30.0)
+        self.indent_depth.setValue(2.0)
+        
+        self.update_preview()
+    
+    def connect_signals(self):
+        """Connect UI signals to update functions"""
+        # Connect all parameter changes to preview update
+        self.min_height.valueChanged.connect(self.update_preview)
+        self.outer_diameter.valueChanged.connect(self.update_preview)
+        self.thread_pitch.valueChanged.connect(self.update_preview)
+        self.expand_base.toggled.connect(self.update_preview)
+        self.enable_indent.toggled.connect(self.on_indent_toggled)
+        self.indent_diameter.valueChanged.connect(self.update_preview)
+        self.indent_depth.valueChanged.connect(self.update_preview)
+        
+        # Buttons
+        self.create_button.clicked.connect(self.accept_dialog)
+        self.cancel_button.clicked.connect(self.reject)
+    
+    def on_indent_toggled(self, checked):
+        """Show/hide indent controls"""
+        self.indent_container.setVisible(checked)
+        self.update_preview()
+    
+    def update_preview(self):
+        """Update preview based on geometry constraints"""
+        # Get values
+        min_height = self.min_height.value()
+        outer_dia = self.outer_diameter.value()
+        thread_pitch = self.thread_pitch.value()
+        
+        # Calculate constraints
+        wall_thickness = 5.0  # Back to 5mm for strength
+        thread_dia = outer_dia - 2 * wall_thickness
+        
+        # Female part constraints based on minimum height
+        # Minimum height = male base (4mm) + female solid top (5mm) + clearance
+        male_base = 4.0  # Keep at 4mm
+        female_top = 5.0
+        
+        # Female total height is constrained by minimum height requirement
+        female_total_height = min_height - male_base + 2  # Small overlap when compressed
+        
+        # Available thread depth in female
+        female_thread_depth = female_total_height - female_top
+        
+        # Required minimum engagement
+        min_engagement = 4 * thread_pitch
+        
+        # Calculate adjustment range (limited by female thread depth)
+        if female_thread_depth > min_engagement:
+            adjustment_range = female_thread_depth - min_engagement
+        else:
+            adjustment_range = 0
+        
+        # Maximum height
+        max_height = min_height + adjustment_range
+        
+        # Validation
+        errors = []
+        
+        if female_thread_depth < min_engagement:
+            errors.append(f"⚠️ Minimum height too small - need at least {male_base + female_top + min_engagement:.0f}mm")
+        
+        if thread_dia < 15:
+            errors.append("⚠️ Diameter too small (need at least 30mm)")
+        
+        if self.enable_indent.isChecked():
+            if self.indent_diameter.value() >= thread_dia:
+                errors.append(f"⚠️ Indent diameter must be less than {thread_dia:.0f}mm")
+        
+        # Build preview text
+        if errors:
+            preview_text = "<b>Configuration Issues:</b><br>"
+            for error in errors:
+                preview_text += f"{error}<br>"
+            self.create_button.setEnabled(False)
+        else:
+            preview_text = f"""<b>Geometry-Calculated Range:</b><br>
+- Minimum height: <b>{min_height:.0f}mm</b><br>
+- Maximum height: <b>{max_height:.0f}mm</b><br>
+- Adjustment range: <b>{adjustment_range:.0f}mm</b><br>
+<br>
+<i>Female depth: {female_thread_depth:.0f}mm limits adjustment</i><br>
+<br>
+✅ Ready to create"""
+            self.create_button.setEnabled(True)
+        
+        self.preview_label.setText(preview_text)
+    
+    def accept_dialog(self):
+        """Accept dialog and calculate all parameters"""
+        min_height = self.min_height.value()
+        
+        # Calculate geometry constraints
+        male_base = 4.0  # Keep at 4mm
+        female_top = 5.0
+        female_total_height = min_height - male_base + 2
+        female_thread_depth = female_total_height - female_top
+        min_engagement = 4 * self.thread_pitch.value()
+        
+        # Adjustment range limited by female depth
+        if female_thread_depth > min_engagement:
+            adjustment_range = female_thread_depth - min_engagement
+        else:
+            adjustment_range = 0
+        
+        self.parameters = {
+            'outer_diameter': self.outer_diameter.value(),
+            'min_height': min_height,
+            'adjustment_range': adjustment_range,
+            'base_height': male_base,
+            'thread_pitch': self.thread_pitch.value(),
+            'wall_thickness': 5.0,  # Back to 5mm for strength
+            'enable_expanded_base': self.expand_base.isChecked(),
+            'base_expansion': 1.5,  # Fixed ratio
+            'base_thickness': 3.0,  # Fixed
+            'enable_indent': self.enable_indent.isChecked(),
+            'indent_diameter': self.indent_diameter.value(),
+            'indent_depth': self.indent_depth.value(),
+            'auto_export': self.auto_export.isChecked(),
+            'mesh_tolerance': 0.1  # Fixed
+        }
+        self.accepted = True
+        self.accept()
+
+# ==============================================================================
+# SPACER CREATION FUNCTIONS
+# ==============================================================================
+
+def create_adjustable_spacer_parts(params):
+    """Create the male and female parts of the adjustable spacer"""
+    
+    FreeCAD.Console.PrintMessage("\n" + "="*60 + "\n")
+    FreeCAD.Console.PrintMessage("Creating Adjustable Threaded Spacer...\n")
+    FreeCAD.Console.PrintMessage("="*60 + "\n")
+    
+    # Create a new document if none exists
+    if not FreeCAD.ActiveDocument:
+        FreeCAD.newDocument("AdjustableThreadedSpacer")
+    
+    doc = FreeCAD.ActiveDocument
+    
+    # Extract parameters
+    outer_dia = params['outer_diameter']
+    min_height = params['min_height']
+    adj_range = params['adjustment_range']
+    base_height = params['base_height']
+    thread_pitch = params['thread_pitch']
+    wall_thickness = params['wall_thickness']
+    
+    thread_dia = outer_dia - 2 * wall_thickness
+    min_engagement = 4 * thread_pitch
+    thread_length = adj_range + min_engagement
+    
+    # ============================================================
+    # CREATE MALE PART (Bottom) with matching base diameter
+    # ============================================================
+    FreeCAD.Console.PrintMessage(f"Creating Male Part: {outer_dia}mm base, {thread_dia}mm threads\n")
+    
+    # Create base cylinder with SAME diameter as female outer diameter
+    male_base = Part.makeCylinder(outer_dia/2, base_height)
+    
+    # Create threaded shaft
+    try:
+        male_threads = create_external_threads_improved(thread_dia, thread_length, thread_pitch)
+        male_threads.translate(Base.Vector(0, 0, base_height))
+        male_part = male_base.fuse(male_threads)
+        FreeCAD.Console.PrintMessage(f"Threads created: {thread_dia}mm × {thread_length}mm\n")
+    except Exception as e:
+        FreeCAD.Console.PrintWarning(f"Thread generation error: {str(e)}\n")
+        # Fallback: simple cylinder
+        shaft = Part.makeCylinder(thread_dia/2, thread_length)
+        shaft.translate(Base.Vector(0, 0, base_height))
+        male_part = male_base.fuse(shaft)
+    
+    # Add expanded base if enabled
+    if params['enable_expanded_base']:
+        base_dia = outer_dia * params['base_expansion']
+        base_thick = params['base_thickness']
+        
+        expanded_base = Part.makeCylinder(base_dia/2, base_thick)
+        
+        # Create tapered transition
+        taper_height = 3.0
+        taper = Part.makeCone(base_dia/2, outer_dia/2, taper_height)
+        taper.translate(Base.Vector(0, 0, base_thick))
+        
+        base_assembly = expanded_base.fuse(taper)
+        
+        # Move male part up and fuse
+        male_part.translate(Base.Vector(0, 0, base_thick + taper_height - base_height))
+        male_part = base_assembly.fuse(male_part)
+        
+        FreeCAD.Console.PrintMessage(f"Added expanded base: {base_dia}mm diameter\n")
+    
+    # ============================================================
+    # CREATE FEMALE PART (Top) - Hollow cylinder with internal threads
+    # ============================================================
+    FreeCAD.Console.PrintMessage(f"Creating Female Part: {outer_dia}mm outer, {wall_thickness}mm walls\n")
+    
+    female_total_height = thread_length + 5  # Thread length + 5mm solid top
+    
+    try:
+        # Create threaded section
+        female_threads = create_internal_threads_improved(outer_dia, thread_dia, thread_length, thread_pitch)
+        
+        # Add solid top
+        top_cyl = Part.makeCylinder(outer_dia/2, 5)
+        top_cyl.translate(Base.Vector(0, 0, thread_length))
+        
+        female_part = female_threads.fuse(top_cyl)
+        FreeCAD.Console.PrintMessage(f"Female threads created: {thread_length}mm depth\n")
+        
+    except Exception as e:
+        FreeCAD.Console.PrintWarning(f"Using simplified female threads: {str(e)}\n")
+        # Fallback: Simple hollow cylinder
+        outer_cyl = Part.makeCylinder(outer_dia/2, female_total_height)
+        inner_cyl = Part.makeCylinder(thread_dia/2 + 0.3, female_total_height - 5)  # Leave 5mm solid at top
+        female_part = outer_cyl.cut(inner_cyl)
+    
+    # Add indent if enabled
+    if params['enable_indent']:
+        indent_dia = params['indent_diameter']
+        indent_depth = params['indent_depth']
+        
+        indent_cyl = Part.makeCylinder(indent_dia/2, indent_depth)
+        indent_cyl.translate(Base.Vector(0, 0, female_total_height - indent_depth))
+        
+        female_part = female_part.cut(indent_cyl)
+        FreeCAD.Console.PrintMessage(f"Added top indent: {indent_dia}mm × {indent_depth}mm\n")
+    
+    # Create FreeCAD objects
+    male_obj = doc.addObject("Part::Feature", "AdjustableSpacer_Male")
+    male_obj.Shape = male_part
+    
+    female_obj = doc.addObject("Part::Feature", "AdjustableSpacer_Female")
+    female_obj.Shape = female_part
+    
+    # Position parts for viewing (side by side)
+    female_obj.Placement.Base = Base.Vector(outer_dia * 1.5, 0, 0)
+    
+    # Recompute and fit view
+    doc.recompute()
+    
+    try:
+        FreeCADGui.ActiveDocument.ActiveView.fitAll()
+        FreeCADGui.ActiveDocument.ActiveView.viewIsometric()
+    except:
+        pass
+    
+    # Print summary
+    actual_min = base_height + 5  # Male base + female solid top
+    max_height = actual_min + adj_range
+    
+    FreeCAD.Console.PrintMessage("\n" + "="*60 + "\n")
+    FreeCAD.Console.PrintMessage("ADJUSTABLE SPACER CREATED SUCCESSFULLY!\n")
+    FreeCAD.Console.PrintMessage(f"Both parts have {outer_dia}mm base diameter\n")
+    FreeCAD.Console.PrintMessage(f"Height Range: {actual_min}mm (compressed) to {max_height}mm (extended)\n")
+    FreeCAD.Console.PrintMessage(f"Thread Specs: M{thread_dia} × {thread_pitch}mm pitch\n")
+    FreeCAD.Console.PrintMessage(f"Male: {outer_dia}mm base + {thread_dia}mm threaded shaft\n")
+    FreeCAD.Console.PrintMessage(f"Female: {outer_dia}mm outer with {wall_thickness}mm walls\n")
+    FreeCAD.Console.PrintMessage("="*60 + "\n")
+    
+    return male_obj, female_obj
+
+# ==============================================================================
+# STL EXPORT FUNCTION
+# ==============================================================================
+
+def export_adjustable_spacer_to_stl(male_obj, female_obj, params):
+    """Export both parts to separate STL files"""
+    
+    downloads_path = os.path.expanduser("~/Downloads")
+    
+    outer_dia = int(params['outer_diameter'])
+    min_height = int(params['min_height'])
+    adj_range = int(params['adjustment_range'])
+    
+    base_filename = f"AdjustableSpacer_D{outer_dia}_H{min_height}-{min_height+adj_range}"
+    
+    try:
+        mesh_tolerance = params['mesh_tolerance']
+        
+        # Export male part
+        male_filename = f"{base_filename}_Male.stl"
+        male_path = os.path.join(downloads_path, male_filename)
+        male_mesh = Mesh.Mesh(male_obj.Shape.tessellate(mesh_tolerance))
+        male_mesh.write(male_path)
+        
+        # Export female part  
+        female_filename = f"{base_filename}_Female.stl"
+        female_path = os.path.join(downloads_path, female_filename)
+        female_mesh = Mesh.Mesh(female_obj.Shape.tessellate(mesh_tolerance))
+        female_mesh.write(female_path)
+        
+        FreeCAD.Console.PrintMessage(f"\n" + "="*60 + "\n")
+        FreeCAD.Console.PrintMessage("STL EXPORT SUCCESSFUL!\n")
+        FreeCAD.Console.PrintMessage(f"Male Part: {male_filename}\n")
+        FreeCAD.Console.PrintMessage(f"Female Part: {female_filename}\n")
+        FreeCAD.Console.PrintMessage(f"Location: {downloads_path}\n")
+        
+        # Check file sizes
+        if os.path.exists(male_path):
+            male_size = os.path.getsize(male_path) / 1024
+            FreeCAD.Console.PrintMessage(f"Male file size: {male_size:.1f} KB\n")
+        if os.path.exists(female_path):
+            female_size = os.path.getsize(female_path) / 1024
+            FreeCAD.Console.PrintMessage(f"Female file size: {female_size:.1f} KB\n")
+        
+        # Print slicer recommendations
+        FreeCAD.Console.PrintMessage("\n" + "-"*60 + "\n")
+        FreeCAD.Console.PrintMessage("RECOMMENDED PRINT SETTINGS:\n\n")
+        FreeCAD.Console.PrintMessage("For Both Parts:\n")
+        FreeCAD.Console.PrintMessage("  • Layer Height: 0.2mm\n")
+        FreeCAD.Console.PrintMessage("  • Print Orientation: VERTICAL (threads up)\n")
+        FreeCAD.Console.PrintMessage("  • Supports: NONE NEEDED\n")
+        FreeCAD.Console.PrintMessage("  • Wall Loops: 3-4\n")
+        FreeCAD.Console.PrintMessage("  • Infill: 20-30%\n")
+        FreeCAD.Console.PrintMessage("  • First Layer: Slow for good adhesion\n\n")
+        
+        FreeCAD.Console.PrintMessage("Thread Quality Tips:\n")
+        FreeCAD.Console.PrintMessage("  • Enable 'Thin Wall Detection'\n")
+        FreeCAD.Console.PrintMessage("  • Reduce print speed for threads (50%)\n")
+        FreeCAD.Console.PrintMessage("  • After printing, test fit and twist\n")
+        FreeCAD.Console.PrintMessage("  • May need light sanding for smooth operation\n")
+        FreeCAD.Console.PrintMessage("="*60 + "\n")
+        
+        return male_path, female_path
+        
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"Error exporting STL: {str(e)}\n")
+        return None, None
+
+# ==============================================================================
+# MAIN EXECUTION
+# ==============================================================================
+
+def run_adjustable_spacer_macro():
+    """Main function to run the adjustable spacer macro"""
+    
+    FreeCAD.Console.PrintMessage("="*60 + "\n")
+    FreeCAD.Console.PrintMessage("ADJUSTABLE THREADED SPACER MACRO v4.3\n")
+    FreeCAD.Console.PrintMessage("Compatible with FreeCAD 1.0+\n")
+    FreeCAD.Console.PrintMessage("="*60 + "\n")
+    
+    if PYSIDE_AVAILABLE:
+        # Show configuration dialog
+        dialog = AdjustableSpacerDialog()
+        dialog.exec_()
+        
+        if dialog.accepted:
+            params = dialog.parameters
+            
+            # Create the spacer parts
+            male_obj, female_obj = create_adjustable_spacer_parts(params)
+            
+            # Export to STL if requested
+            if params['auto_export']:
+                male_path, female_path = export_adjustable_spacer_to_stl(male_obj, female_obj, params)
+                if male_path and female_path:
+                    FreeCAD.Console.PrintMessage("\n✅ Ready for 3D printing!\n")
+                    FreeCAD.Console.PrintMessage("Import both STL files into your slicer.\n")
+                    FreeCAD.Console.PrintMessage("Print vertically for best thread quality.\n")
+            else:
+                FreeCAD.Console.PrintMessage("\nManual STL export available:\n")
+                FreeCAD.Console.PrintMessage("Select each part → File → Export → STL\n")
+            
+            FreeCAD.Console.PrintMessage("\n🎯 Adjustable spacer creation completed!\n")
+        else:
+            FreeCAD.Console.PrintMessage("Spacer creation cancelled by user.\n")
+    
+    else:
+        # Fallback: Create with default parameters
+        FreeCAD.Console.PrintWarning("PySide not available. Creating with default parameters.\n")
+        
+        default_params = {
+            'outer_diameter': 50.0,
+            'min_height': 20.0,
+            'adjustment_range': 30.0,
+            'base_height': 4.0,  # Keep at 4mm
+            'thread_pitch': 3.0,
+            'wall_thickness': 5.0,  # Back to 5mm for strength
+            'enable_expanded_base': False,
+            'base_expansion': 1.5,
+            'base_thickness': 3.0,
+            'enable_indent': False,
+            'indent_diameter': 35.0,
+            'indent_depth': 2.0,
+            'auto_export': True,
+            'mesh_tolerance': 0.1
+        }
+        
+        male_obj, female_obj = create_adjustable_spacer_parts(default_params)
+        male_path, female_path = export_adjustable_spacer_to_stl(male_obj, female_obj, default_params)
+        
+        if male_path and female_path:
+            FreeCAD.Console.PrintMessage("\n✅ Default adjustable spacer created and exported!\n")
+
+# ==============================================================================
+# RUN THE MACRO
+# ==============================================================================
+
+# Execute the adjustable spacer macro
+run_adjustable_spacer_macro()

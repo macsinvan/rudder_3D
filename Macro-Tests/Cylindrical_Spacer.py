@@ -1,7 +1,7 @@
-# FreeCAD Macro for Configurable Test Cylinder with Cylindrical Indent
+# FreeCAD Macro for Configurable Cylindrical Spacer with Cylindrical Indent
 # Version: 3.0 - UI Configurable with Cylindrical Indent
 # Compatible with: FreeCAD 1.0+
-# Description: Creates parametric cylinders with configurable cylindrical indents for 3D printing and foam filling tests
+# Description: Creates parametric cylindrical spacers with configurable cylindrical indents for 3D printing and foam filling
 
 import FreeCAD
 import FreeCADGui
@@ -34,12 +34,12 @@ except ImportError:
 # UI CONFIGURATION DIALOG
 # ==============================================================================
 
-class TestCylinderConfigDialog(QDialog):
-    """Configuration dialog for test cylinder parameters"""
+class CylindricalSpacerConfigDialog(QDialog):
+    """Configuration dialog for cylindrical spacer parameters"""
     
     def __init__(self):
-        super(TestCylinderConfigDialog, self).__init__()
-        self.setWindowTitle("Test Cylinder Configuration")
+        super(CylindricalSpacerConfigDialog, self).__init__()
+        self.setWindowTitle("Cylindrical Spacer Configuration")
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
         self.setModal(True)
         self.resize(400, 500)
@@ -56,27 +56,27 @@ class TestCylinderConfigDialog(QDialog):
         """Create the user interface"""
         main_layout = QVBoxLayout(self)
         
-        # Cylinder Dimensions Group
-        cylinder_group = QGroupBox("Cylinder Dimensions")
-        cylinder_layout = QGridLayout(cylinder_group)
+        # Spacer Dimensions Group
+        spacer_group = QGroupBox("Spacer Dimensions")
+        spacer_layout = QGridLayout(spacer_group)
         
-        # Cylinder diameter
-        cylinder_layout.addWidget(QLabel("Diameter (mm):"), 0, 0)
-        self.cylinder_diameter = QDoubleSpinBox()
-        self.cylinder_diameter.setRange(10.0, 200.0)
-        self.cylinder_diameter.setSingleStep(1.0)
-        self.cylinder_diameter.setDecimals(1)
-        cylinder_layout.addWidget(self.cylinder_diameter, 0, 1)
+        # Spacer diameter
+        spacer_layout.addWidget(QLabel("Diameter (mm):"), 0, 0)
+        self.spacer_diameter = QDoubleSpinBox()
+        self.spacer_diameter.setRange(10.0, 200.0)
+        self.spacer_diameter.setSingleStep(1.0)
+        self.spacer_diameter.setDecimals(1)
+        spacer_layout.addWidget(self.spacer_diameter, 0, 1)
         
-        # Cylinder height
-        cylinder_layout.addWidget(QLabel("Height (mm):"), 1, 0)
-        self.cylinder_height = QDoubleSpinBox()
-        self.cylinder_height.setRange(5.0, 200.0)
-        self.cylinder_height.setSingleStep(1.0)
-        self.cylinder_height.setDecimals(1)
-        cylinder_layout.addWidget(self.cylinder_height, 1, 1)
+        # Spacer height
+        spacer_layout.addWidget(QLabel("Height (mm):"), 1, 0)
+        self.spacer_height = QDoubleSpinBox()
+        self.spacer_height.setRange(5.0, 200.0)
+        self.spacer_height.setSingleStep(1.0)
+        self.spacer_height.setDecimals(1)
+        spacer_layout.addWidget(self.spacer_height, 1, 1)
         
-        main_layout.addWidget(cylinder_group)
+        main_layout.addWidget(spacer_group)
         
         # Cylindrical Indent Group
         indent_group = QGroupBox("Cylindrical Indent")
@@ -138,7 +138,7 @@ class TestCylinderConfigDialog(QDialog):
         # Buttons
         button_layout = QHBoxLayout()
         
-        self.create_button = QPushButton("Create Cylinder")
+        self.create_button = QPushButton("Create Spacer")
         self.create_button.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }")
         self.cancel_button = QPushButton("Cancel")
         
@@ -150,8 +150,8 @@ class TestCylinderConfigDialog(QDialog):
     
     def load_defaults(self):
         """Load default parameter values"""
-        self.cylinder_diameter.setValue(50.0)
-        self.cylinder_height.setValue(32.0)
+        self.spacer_diameter.setValue(50.0)
+        self.spacer_height.setValue(32.0)
         self.indent_diameter.setValue(40.0)
         self.indent_depth.setValue(3.0)
         self.mesh_tolerance.setValue(0.1)
@@ -161,8 +161,8 @@ class TestCylinderConfigDialog(QDialog):
     def connect_signals(self):
         """Connect UI signals to update functions"""
         # Connect all parameter changes to preview update
-        self.cylinder_diameter.valueChanged.connect(self.update_preview)
-        self.cylinder_height.valueChanged.connect(self.update_preview)
+        self.spacer_diameter.valueChanged.connect(self.update_preview)
+        self.spacer_height.valueChanged.connect(self.update_preview)
         self.enable_indent.toggled.connect(self.on_indent_enabled)
         self.indent_diameter.valueChanged.connect(self.update_preview)
         self.indent_depth.valueChanged.connect(self.update_preview)
@@ -180,15 +180,15 @@ class TestCylinderConfigDialog(QDialog):
     def update_preview(self):
         """Update the preview information"""
         # Get current values
-        cyl_dia = self.cylinder_diameter.value()
-        cyl_height = self.cylinder_height.value()
+        spacer_dia = self.spacer_diameter.value()
+        spacer_height = self.spacer_height.value()
         indent_enabled = self.enable_indent.isChecked()
         indent_dia = self.indent_diameter.value()
         indent_depth = self.indent_depth.value()
         
         # Calculate volume
-        cyl_radius = cyl_dia / 2.0
-        cylinder_volume = 3.14159 * cyl_radius * cyl_radius * cyl_height
+        spacer_radius = spacer_dia / 2.0
+        spacer_volume = 3.14159 * spacer_radius * spacer_radius * spacer_height
         
         # Calculate indent volume if enabled
         indent_volume = 0
@@ -197,20 +197,20 @@ class TestCylinderConfigDialog(QDialog):
             # Volume of cylinder: V = π * r² * h
             indent_volume = 3.14159 * indent_radius * indent_radius * indent_depth
         
-        net_volume = (cylinder_volume - indent_volume) / 1000.0  # Convert to cm³
+        net_volume = (spacer_volume - indent_volume) / 1000.0  # Convert to cm³
         
         # Validation checks
         warnings = []
         if indent_enabled:
-            if indent_dia >= cyl_dia:
-                warnings.append("⚠️ Indent diameter should be smaller than cylinder diameter")
-            if indent_depth >= cyl_height:
-                warnings.append("⚠️ Indent depth should be less than cylinder height")
+            if indent_dia >= spacer_dia:
+                warnings.append("⚠️ Indent diameter should be smaller than spacer diameter")
+            if indent_depth >= spacer_height:
+                warnings.append("⚠️ Indent depth should be less than spacer height")
         
         # Build preview text
-        preview_text = f"""<b>Cylinder Specifications:</b>
-• Dimensions: {cyl_dia}mm diameter × {cyl_height}mm height
-• Base Volume: {cylinder_volume/1000:.1f} cm³
+        preview_text = f"""<b>Spacer Specifications:</b>
+• Dimensions: {spacer_dia}mm diameter × {spacer_height}mm height
+• Base Volume: {spacer_volume/1000:.1f} cm³
 
 """
         
@@ -239,8 +239,8 @@ class TestCylinderConfigDialog(QDialog):
     def accept_dialog(self):
         """Accept dialog and store parameters"""
         self.parameters = {
-            'cylinder_diameter': self.cylinder_diameter.value(),
-            'cylinder_height': self.cylinder_height.value(),
+            'spacer_diameter': self.spacer_diameter.value(),
+            'spacer_height': self.spacer_height.value(),
             'enable_indent': self.enable_indent.isChecked(),
             'indent_diameter': self.indent_diameter.value(),
             'indent_depth': self.indent_depth.value(),
@@ -251,44 +251,44 @@ class TestCylinderConfigDialog(QDialog):
         self.accept()
 
 # ==============================================================================
-# CYLINDER CREATION FUNCTIONS
+# SPACER CREATION FUNCTIONS
 # ==============================================================================
 
-def create_configured_cylinder(params):
-    """Create a test cylinder with specified parameters"""
+def create_configured_spacer(params):
+    """Create a cylindrical spacer with specified parameters"""
     
     # Clear console
     FreeCAD.Console.PrintMessage("\n" + "="*60 + "\n")
-    FreeCAD.Console.PrintMessage("Creating Configured Test Cylinder...\n")
+    FreeCAD.Console.PrintMessage("Creating Configured Cylindrical Spacer...\n")
     FreeCAD.Console.PrintMessage("="*60 + "\n")
     
     # Create a new document if none exists
     if not FreeCAD.ActiveDocument:
-        FreeCAD.newDocument("ConfigurableTestCylinder")
+        FreeCAD.newDocument("ConfigurableCylindricalSpacer")
     
     doc = FreeCAD.ActiveDocument
     
     # Extract parameters
-    cyl_diameter = params['cylinder_diameter']
-    cyl_height = params['cylinder_height']
+    spacer_diameter = params['spacer_diameter']
+    spacer_height = params['spacer_height']
     enable_indent = params['enable_indent']
     indent_diameter = params['indent_diameter']
     indent_depth = params['indent_depth']
     
-    cyl_radius = cyl_diameter / 2.0
+    spacer_radius = spacer_diameter / 2.0
     
-    FreeCAD.Console.PrintMessage(f"Cylinder: {cyl_diameter}mm dia × {cyl_height}mm height\n")
+    FreeCAD.Console.PrintMessage(f"Spacer: {spacer_diameter}mm dia × {spacer_height}mm height\n")
     
-    # Create main cylinder
-    main_cylinder = Part.makeCylinder(
-        cyl_radius,
-        cyl_height,
+    # Create main spacer
+    main_spacer = Part.makeCylinder(
+        spacer_radius,
+        spacer_height,
         Base.Vector(0, 0, 0),
         Base.Vector(0, 0, 1)
     )
     
     # Create cylindrical indent if enabled
-    final_shape = main_cylinder
+    final_shape = main_spacer
     
     if enable_indent:
         FreeCAD.Console.PrintMessage(f"Adding cylindrical indent: {indent_diameter}mm dia × {indent_depth}mm deep\n")
@@ -300,35 +300,35 @@ def create_configured_cylinder(params):
         indent_cylinder = Part.makeCylinder(
             indent_radius,
             indent_depth,
-            Base.Vector(0, 0, cyl_height - indent_depth),
+            Base.Vector(0, 0, spacer_height - indent_depth),
             Base.Vector(0, 0, 1)
         )
         
-        # Cut the cylinder from the main cylinder
-        final_shape = main_cylinder.cut(indent_cylinder)
+        # Cut the cylinder from the main spacer
+        final_shape = main_spacer.cut(indent_cylinder)
         FreeCAD.Console.PrintMessage("Cylindrical indent created successfully\n")
     
     # Create the FreeCAD object
-    cylinder_name = "TestCylinder_Config"
+    spacer_name = "CylindricalSpacer_Config"
     if enable_indent:
-        cylinder_name += f"_Indent{int(indent_diameter)}x{indent_depth}"
+        spacer_name += f"_Indent{int(indent_diameter)}x{indent_depth}"
     
-    cylinder_obj = doc.addObject("Part::Feature", cylinder_name)
-    cylinder_obj.Shape = final_shape
+    spacer_obj = doc.addObject("Part::Feature", spacer_name)
+    spacer_obj.Shape = final_shape
     
     # Add custom properties for parametric control
-    cylinder_obj.addProperty("App::PropertyLength", "Diameter", "Dimensions", "Cylinder diameter")
-    cylinder_obj.Diameter = cyl_diameter
+    spacer_obj.addProperty("App::PropertyLength", "Diameter", "Dimensions", "Spacer diameter")
+    spacer_obj.Diameter = spacer_diameter
     
-    cylinder_obj.addProperty("App::PropertyLength", "Height", "Dimensions", "Cylinder height")
-    cylinder_obj.Height = cyl_height
+    spacer_obj.addProperty("App::PropertyLength", "Height", "Dimensions", "Spacer height")
+    spacer_obj.Height = spacer_height
     
     if enable_indent:
-        cylinder_obj.addProperty("App::PropertyLength", "IndentDiameter", "Indent", "Cylindrical indent diameter")
-        cylinder_obj.IndentDiameter = indent_diameter
+        spacer_obj.addProperty("App::PropertyLength", "IndentDiameter", "Indent", "Cylindrical indent diameter")
+        spacer_obj.IndentDiameter = indent_diameter
         
-        cylinder_obj.addProperty("App::PropertyLength", "IndentDepth", "Indent", "Cylindrical indent depth")
-        cylinder_obj.IndentDepth = indent_depth
+        spacer_obj.addProperty("App::PropertyLength", "IndentDepth", "Indent", "Cylindrical indent depth")
+        spacer_obj.IndentDepth = indent_depth
     
     # Calculate volumes
     total_volume = final_shape.Volume / 1000  # Convert to cm³
@@ -345,8 +345,8 @@ def create_configured_cylinder(params):
     
     # Print summary
     FreeCAD.Console.PrintMessage("\n" + "="*60 + "\n")
-    FreeCAD.Console.PrintMessage("CYLINDER CREATED SUCCESSFULLY!\n")
-    FreeCAD.Console.PrintMessage(f"Dimensions: {cyl_diameter}mm dia × {cyl_height}mm height\n")
+    FreeCAD.Console.PrintMessage("SPACER CREATED SUCCESSFULLY!\n")
+    FreeCAD.Console.PrintMessage(f"Dimensions: {spacer_diameter}mm dia × {spacer_height}mm height\n")
     
     if enable_indent:
         FreeCAD.Console.PrintMessage(f"Cylindrical Indent: {indent_diameter}mm dia × {indent_depth}mm deep\n")
@@ -354,25 +354,25 @@ def create_configured_cylinder(params):
     FreeCAD.Console.PrintMessage(f"Final Volume: {total_volume:.1f} cm³\n")
     FreeCAD.Console.PrintMessage("="*60 + "\n")
     
-    return cylinder_obj
+    return spacer_obj
 
 # ==============================================================================
 # STL EXPORT FUNCTION
 # ==============================================================================
 
-def export_cylinder_to_stl(obj, params):
-    """Export the configured cylinder to STL file"""
+def export_spacer_to_stl(obj, params):
+    """Export the configured spacer to STL file"""
     
     # Generate filename based on configuration
-    cyl_dia = int(params['cylinder_diameter'])
-    cyl_height = int(params['cylinder_height'])
+    spacer_dia = int(params['spacer_diameter'])
+    spacer_height = int(params['spacer_height'])
     
     if params['enable_indent']:
         indent_dia = int(params['indent_diameter'])
         indent_depth = params['indent_depth']
-        filename = f"TestCylinder_D{cyl_dia}_H{cyl_height}_Indent{indent_dia}x{indent_depth}.stl"
+        filename = f"CylindricalSpacer_D{spacer_dia}_H{spacer_height}_Indent{indent_dia}x{indent_depth}.stl"
     else:
-        filename = f"TestCylinder_D{cyl_dia}_H{cyl_height}_Solid.stl"
+        filename = f"CylindricalSpacer_D{spacer_dia}_H{spacer_height}_Solid.stl"
     
     # Get Downloads folder path
     downloads_path = os.path.expanduser("~/Downloads")
@@ -427,7 +427,7 @@ def print_slicer_recommendations(params):
         FreeCAD.Console.PrintMessage("  5. Fill to ~75% capacity (foam expands 2-3x)\n")
         FreeCAD.Console.PrintMessage("  6. Allow 24 hours to fully cure\n")
     else:
-        FreeCAD.Console.PrintMessage("For Solid Test Cylinder:\n")
+        FreeCAD.Console.PrintMessage("For Solid Cylindrical Spacer:\n")
         FreeCAD.Console.PrintMessage("  • Infill Pattern: CUBIC or GRID\n")
         FreeCAD.Console.PrintMessage("  • Infill Density: 15-25%\n")
         FreeCAD.Console.PrintMessage("  • Wall Loops: 3-4\n")
@@ -445,28 +445,28 @@ def print_slicer_recommendations(params):
 # MAIN EXECUTION
 # ==============================================================================
 
-def run_configurable_cylinder_macro():
-    """Main function to run the configurable cylinder macro"""
+def run_configurable_spacer_macro():
+    """Main function to run the configurable spacer macro"""
     
     FreeCAD.Console.PrintMessage("="*60 + "\n")
-    FreeCAD.Console.PrintMessage("CONFIGURABLE TEST CYLINDER MACRO v3.0\n")
+    FreeCAD.Console.PrintMessage("CONFIGURABLE CYLINDRICAL SPACER MACRO v3.0\n")
     FreeCAD.Console.PrintMessage("Compatible with FreeCAD 1.0+\n")
     FreeCAD.Console.PrintMessage("="*60 + "\n")
     
     if PYSIDE_AVAILABLE:
         # Show configuration dialog
-        dialog = TestCylinderConfigDialog()
+        dialog = CylindricalSpacerConfigDialog()
         dialog.exec_()
         
         if dialog.accepted:
             params = dialog.parameters
             
-            # Create the cylinder
-            cylinder_obj = create_configured_cylinder(params)
+            # Create the spacer
+            spacer_obj = create_configured_spacer(params)
             
             # Export to STL if requested
             if params['auto_export']:
-                stl_path = export_cylinder_to_stl(cylinder_obj, params)
+                stl_path = export_spacer_to_stl(spacer_obj, params)
                 if stl_path:
                     FreeCAD.Console.PrintMessage("\n✅ Ready for 3D printing!\n")
                     FreeCAD.Console.PrintMessage("Import the STL into Bambu Studio and use recommended settings.\n")
@@ -474,17 +474,17 @@ def run_configurable_cylinder_macro():
                 FreeCAD.Console.PrintMessage("\nManual STL export available:\n")
                 FreeCAD.Console.PrintMessage("File → Export → Select STL format\n")
             
-            FreeCAD.Console.PrintMessage("\n🎯 Cylinder creation completed successfully!\n")
+            FreeCAD.Console.PrintMessage("\n🎯 Spacer creation completed successfully!\n")
         else:
-            FreeCAD.Console.PrintMessage("Cylinder creation cancelled by user.\n")
+            FreeCAD.Console.PrintMessage("Spacer creation cancelled by user.\n")
     
     else:
         # Fallback: Create with default parameters if PySide not available
         FreeCAD.Console.PrintWarning("PySide not available. Creating with default parameters.\n")
         
         default_params = {
-            'cylinder_diameter': 50.0,
-            'cylinder_height': 32.0,
+            'spacer_diameter': 50.0,
+            'spacer_height': 32.0,
             'enable_indent': True,
             'indent_diameter': 40.0,
             'indent_depth': 3.0,
@@ -492,15 +492,15 @@ def run_configurable_cylinder_macro():
             'mesh_tolerance': 0.1
         }
         
-        cylinder_obj = create_configured_cylinder(default_params)
-        stl_path = export_cylinder_to_stl(cylinder_obj, default_params)
+        spacer_obj = create_configured_spacer(default_params)
+        stl_path = export_spacer_to_stl(spacer_obj, default_params)
         
         if stl_path:
-            FreeCAD.Console.PrintMessage("\n✅ Default cylinder created and exported!\n")
+            FreeCAD.Console.PrintMessage("\n✅ Default spacer created and exported!\n")
 
 # ==============================================================================
 # RUN THE MACRO
 # ==============================================================================
 
-# Execute the configurable cylinder macro
-run_configurable_cylinder_macro()
+# Execute the configurable spacer macro
+run_configurable_spacer_macro()
