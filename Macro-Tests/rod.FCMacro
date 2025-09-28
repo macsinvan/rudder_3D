@@ -1,0 +1,60 @@
+# COPY THIS ENTIRE CODE INTO FREECAD
+# File -> Macro -> Macros... -> Create -> Paste this code -> Execute
+
+import FreeCAD
+import FreeCADGui
+import Part
+
+print("Creating Table Leg Leveler Base with THREADED ROD...")
+
+# Create document
+if not FreeCAD.ActiveDocument:
+    FreeCAD.newDocument("LegLeveler")
+doc = FreeCAD.ActiveDocument
+
+# Activate Fasteners
+FreeCADGui.activateWorkbench('FastenersWorkbench')
+
+# CREATE BASE
+base = Part.makeCylinder(13.5, 5, FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1))
+base_obj = doc.addObject("Part::Feature", "BaseCylinder")
+base_obj.Shape = base
+print("✓ Base created: 27mm × 5mm")
+
+# CREATE THREADED ROD - NOT A NAIL!
+print("Creating THREADED ROD (not a nail!)...")
+FreeCADGui.runCommand('FSThreadedRod', 0)
+
+# Get the threaded rod
+rod = doc.Objects[-1]
+print(f"Created: {rod.Name}")
+
+# Configure it EXACTLY like your macro
+rod.Diameter = "Custom"
+doc.recompute()
+rod.DiameterCustom = '26 mm'
+rod.Thread = True
+
+# Set length if possible
+if hasattr(rod, 'Length'):
+    rod.Length = '25 mm'
+
+# Position on base
+rod.Placement.Base = FreeCAD.Vector(0, 0, 5)
+doc.recompute()
+
+# COMBINE
+fusion = doc.addObject("Part::MultiFuse", "LevelerBase")
+fusion.Shapes = [base_obj, rod]
+base_obj.ViewObject.Visibility = False
+rod.ViewObject.Visibility = False
+doc.recompute()
+
+# View
+FreeCADGui.activeDocument().activeView().viewAxonometric()
+FreeCADGui.SendMsgToActiveView("ViewFit")
+
+print("=" * 50)
+print("✅ SUCCESS! Created with FSThreadedRod")
+print("NOT A NAIL!")
+print("=" * 50)
