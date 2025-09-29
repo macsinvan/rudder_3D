@@ -84,12 +84,18 @@ def create_wire_rope_and_core(cylinder_length=250.0, overall_diameter=8.0, wire_
     outer_wire_radius = (overall_diameter - wire_diameter) / 2
     num_outer_wires = 12
     
-    # Use simple length - no complex offset calculations
-    extended_length = cylinder_length * 1.2  # Just 20% extra for safety
-    start_z = -cylinder_length * 0.1  # Start 10% before
-    
-    # Simple vertical offset
+    # Calculate vertical offset
     vertical_offset = helix_pitch / num_outer_wires
+    
+    # Intelligent calculation of extended length
+    min_for_complete_turns = 2 * helix_pitch  # At least 2 complete turns for stability
+    min_for_vertical_offset = helix_pitch + (num_outer_wires - 1) * vertical_offset  # Account for all staggered wires
+    min_with_safety = cylinder_length + helix_pitch  # Requested length plus one full pitch
+    extended_length = max(min_for_complete_turns, min_for_vertical_offset, min_with_safety, cylinder_length * 1.5)
+    
+    # Calculate start position to ensure complete turns before cutting zone
+    # We need at least one full pitch before z=0 to ensure all wires are fully formed
+    start_z = -helix_pitch  # Start one full pitch before z=0
     
     print(f"SIMPLIFIED: Creating 13-wire rope: {overall_diameter}mm diameter")
     print(f"Solid core: {core_diameter:.1f}mm + 12 outer helical wires")
