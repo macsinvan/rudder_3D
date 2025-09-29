@@ -332,8 +332,9 @@ Practical Extension: {thread_length/2:.1f}mm (50% recommended)"""
             
             # Set length to go through the part (leave 4mm wall below indent)
             thread_length = height - indent_depth - 4
+            actual_length = thread_length + 5  # Add 5mm to ensure complete threads at entry
             if hasattr(thread_rod, 'Length'):
-                thread_rod.Length = f'{thread_length} mm'
+                thread_rod.Length = f'{actual_length} mm'
             
             # Position rod to penetrate from bottom (assuming rod reference is at its top)
             thread_rod.Placement.Base = FreeCAD.Vector(0, 0, thread_length)

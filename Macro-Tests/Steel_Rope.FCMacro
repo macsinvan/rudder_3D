@@ -130,6 +130,7 @@ def create_wire_rope_and_core(cylinder_length=250.0, overall_diameter=8.0, wire_
     
     # 3. CREATE 12 ROTATED AND OFFSET COPIES
     wire_shapes = []
+    wire_objects = []  # Keep track of wire objects to hide them later
     
     for i in range(num_outer_wires):
         # Copy template
@@ -148,6 +149,7 @@ def create_wire_rope_and_core(cylinder_length=250.0, overall_diameter=8.0, wire_
         wire_obj = doc.addObject("Part::Feature", f"Wire_{i:02d}")
         wire_obj.Shape = wire_copy
         wire_obj.Label = f"Wire_{i:02d}_{angle:.0f}deg"
+        wire_objects.append(wire_obj)  # Store reference
         
         if hasattr(FreeCAD, 'Gui'):
             wire_obj.ViewObject.ShapeColor = (1.0, 0.2, 0.2)
@@ -170,23 +172,49 @@ def create_wire_rope_and_core(cylinder_length=250.0, overall_diameter=8.0, wire_
     
     print(f"SIMPLIFIED: Final fused volume: {fused_solid.Volume:.1f} mm³")
     
-    # Add final result (no cutting)
-    final_obj = doc.addObject("Part::Feature", "WireRope_Simple")
-    final_obj.Shape = fused_solid
-    final_obj.Label = "WireRope_Simple"
+    # 5. CUTTING OPERATION - CREATE CLEAN ENDS
+    print("Performing cutting operation for clean ends...")
+    
+    # Create cutting cylinder that represents the final desired length
+    # The cutting cylinder starts at z=0 and extends for cylinder_length
+    cutting_cylinder = Part.makeCylinder(
+        overall_diameter,  # Large enough to encompass entire rope
+        cylinder_length,
+        Base.Vector(0, 0, 0),
+        Base.Vector(0, 0, 1)
+    )
+    
+    # Perform intersection to get only the rope within the desired length
+    cut_rope = fused_solid.common(cutting_cylinder)
+    
+    print(f"Cut rope volume: {cut_rope.Volume:.1f} mm³")
+    print(f"Clean cut length: {cylinder_length} mm")
+    
+    # Add final result (with cutting)
+    final_obj = doc.addObject("Part::Feature", "WireRope_CleanCut")
+    final_obj.Shape = cut_rope
+    final_obj.Label = "WireRope_CleanCut"
     
     if hasattr(FreeCAD, 'Gui'):
         final_obj.ViewObject.ShapeColor = (0.0, 0.8, 0.0)
         final_obj.ViewObject.Transparency = 0
+    
+    # HIDE ALL STRANDS AND CORE AT THE END
+    if hasattr(FreeCAD, 'Gui'):
+        # Hide the core
+        core_obj.ViewObject.Visibility = False
+        # Hide all wire strands
+        for wire_obj in wire_objects:
+            wire_obj.ViewObject.Visibility = False
     
     doc.recompute()
     
     if hasattr(FreeCAD, 'Gui'):
         FreeCADGui.ActiveDocument.ActiveView.fitAll()
     
-    print(f"SIMPLIFIED COMPLETE: Volume: {fused_solid.Volume:.1f} mm³")
+    print(f"COMPLETE WITH CLEAN CUTS: Volume: {cut_rope.Volume:.1f} mm³")
     
-    return doc, fused_solid, solid_core, wire_shapes
+    return doc, cut_rope, solid_core, wire_shapes
 
 class WireRopeDesignerDialog(QtWidgets.QDialog):
     def __init__(self):
@@ -283,6 +311,11 @@ class WireRopeDesignerDialog(QtWidgets.QDialog):
         self.length_spin.setSuffix(" mm")
         input_layout.addRow("Clean Cut Length:", self.length_spin)
         
+        # STL export checkbox
+        self.stl_checkbox = QtWidgets.QCheckBox("Export STL file")
+        self.stl_checkbox.setChecked(True)
+        input_layout.addRow("", self.stl_checkbox)
+        
         left_panel.addWidget(input_group)
         
         # Calculated specifications group
@@ -302,11 +335,6 @@ class WireRopeDesignerDialog(QtWidgets.QDialog):
         self.create_btn = QtWidgets.QPushButton("🚀 Create Wire Rope")
         self.create_btn.clicked.connect(self.create_wire_rope)
         button_layout.addWidget(self.create_btn)
-        
-        self.export_btn = QtWidgets.QPushButton("💾 Export STL")
-        self.export_btn.clicked.connect(self.export_stl)
-        self.export_btn.setEnabled(False)
-        button_layout.addWidget(self.export_btn)
         
         left_panel.addLayout(button_layout)
         left_panel.addStretch()
@@ -474,7 +502,6 @@ class WireRopeDesignerDialog(QtWidgets.QDialog):
             progress.close()
             
             self.last_created_rope = rope_solid
-            self.export_btn.setEnabled(True)
             
             volume = rope_solid.Volume
             self.log_message(f"✅ Wire rope created successfully!")
@@ -483,38 +510,29 @@ class WireRopeDesignerDialog(QtWidgets.QDialog):
             self.log_message(f"Document: {doc.Name}")
             self.log_message(f"Specifications: {rope_diameter}mm × {length}mm, 13-wire with {specs['wire_diameter']}mm wires")
             
+            # Export STL if checkbox is checked
+            if self.stl_checkbox.isChecked():
+                filename, _ = QtWidgets.QFileDialog.getSaveFileName(
+                    self,
+                    "Export Wire Rope STL",
+                    f"rigging_13wire_{rope_diameter}mm_{length}mm_{specs['wire_diameter']}mm_wire.stl",
+                    "STL Files (*.stl)"
+                )
+                
+                if filename:
+                    rope_solid.exportStl(filename)
+                    self.log_message(f"✅ STL exported: {filename}")
+            
+            # CLOSE THE DIALOG AFTER SUCCESSFUL CREATION
+            self.accept()
+            
         except Exception as e:
             if hasattr(locals(), 'progress'):
                 progress.close()
             self.log_message(f"❌ Error creating wire rope: {str(e)}")
-        finally:
-            # Re-enable UI
+            # Re-enable UI on error
             self.create_btn.setEnabled(True)
             self.create_btn.setText("🚀 Create Wire Rope")
-    
-    def export_stl(self):
-        if not self.last_created_rope:
-            self.log_message("❌ No wire rope to export")
-            return
-        
-        try:
-            rope_diameter = self.diameter_combo.currentData()
-            length = self.length_spin.value()
-            specs = calculate_wire_specs(rope_diameter)
-            
-            filename, _ = QtWidgets.QFileDialog.getSaveFileName(
-                self,
-                "Export Wire Rope STL",
-                f"rigging_13wire_{rope_diameter}mm_{length}mm_{specs['wire_diameter']}mm_wire.stl",
-                "STL Files (*.stl)"
-            )
-            
-            if filename:
-                self.last_created_rope.exportStl(filename)
-                self.log_message(f"✅ STL exported: {filename}")
-            
-        except Exception as e:
-            self.log_message(f"❌ Export failed: {str(e)}")
     
     def log_message(self, message):
         import datetime
