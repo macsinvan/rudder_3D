@@ -1,7 +1,7 @@
 """
-FreeCAD Script: Cap - Simplified Single-Part Design
+FreeCAD Script: Cap - Split Compression Ring with 3mm Gap
 Sphere diameter = 2.25 × Line diameter
-Compression ring = cutout (one part)
+Compression ring split in two with 3mm gap for compression
 3.5° taper angle, ring length = sphere diameter/2
 """
 
@@ -16,11 +16,12 @@ import math
 # Primary design parameters
 LINE_DIA = 12.0                    # Line diameter (mm)
 SPHERE_RATIO = 2.25                # Sphere = 2.25 × Line diameter
-TAPER_ANGLE = 3.5                  # Taper angle in degrees (CHANGED from 2.5°)
+TAPER_ANGLE = 3.5                  # Taper angle in degrees
+GAP_WIDTH = 3.0                    # Gap width for compression (mm)
 
 # Calculated dimensions
 SPHERE_OUTER_DIA = LINE_DIA * SPHERE_RATIO      # 27.0mm
-FERRULE_LENGTH = SPHERE_OUTER_DIA / 2.0         # 13.5mm (CHANGED: sphere diameter/2)
+FERRULE_LENGTH = SPHERE_OUTER_DIA / 2.0         # 13.5mm (sphere diameter/2)
 HOLE_DIA = LINE_DIA + 0.5                       # 12.5mm (clearance for line)
 
 # Taper calculation
@@ -28,7 +29,7 @@ taper_rad = math.radians(TAPER_ANGLE)
 radius_increase = FERRULE_LENGTH * math.tan(taper_rad)    # 0.825mm
 
 # Ring dimensions (starts at line diameter, tapers outward)
-RING_NARROW_DIA = LINE_DIA                                # 12.0mm (CHANGED: starts at line dia)
+RING_NARROW_DIA = LINE_DIA                                # 12.0mm (starts at line dia)
 RING_WIDE_DIA = LINE_DIA + (2 * radius_increase)         # 13.65mm
 
 # Visualization
@@ -44,7 +45,7 @@ def create_line():
     
     doc = App.ActiveDocument
     if not doc:
-        doc = App.newDocument("CapSimplified")
+        doc = App.newDocument("CapSplitRing")
     
     # Line extends above and below sphere
     line_start = App.Vector(0, 0, -LINE_LENGTH/2)
@@ -109,9 +110,9 @@ def create_sphere_with_tapered_recess():
     return sphere_obj
 
 
-def create_compression_ring():
-    """Create compression ring - starts at line diameter, tapers outward"""
-    print(f"Creating compression ring: {FERRULE_LENGTH:.1f}mm long")
+def create_split_compression_ring():
+    """Create compression ring split in two with 3mm gap"""
+    print(f"Creating SPLIT compression ring: {FERRULE_LENGTH:.1f}mm long, {GAP_WIDTH}mm gap")
     
     doc = App.ActiveDocument
     
@@ -135,16 +136,38 @@ def create_compression_ring():
     # Subtract line from ring = hollow compression ring
     hollow_ring = ring_cone.cut(line_cutter)
     
-    ring_obj = doc.addObject("Part::Feature", "CompressionRing")
-    ring_obj.Shape = hollow_ring
+    # CREATE CUTTING PLATE (3mm thick, along XZ plane)
+    # Plate needs to be large enough to cut through entire ring
+    plate_size = RING_WIDE_DIA + 10  # Extra large to ensure full cut
+    
+    cutting_plate = Part.makeBox(
+        plate_size,              # Width in X
+        GAP_WIDTH,              # Thickness in Y (3mm gap)
+        FERRULE_LENGTH + 2      # Height in Z (extra to ensure cut)
+    )
+    
+    # Position plate: centered on Y-axis, aligned with Z-axis
+    cutting_plate.translate(App.Vector(
+        -plate_size/2,          # Center in X
+        -GAP_WIDTH/2,           # Center in Y (creates symmetric gap)
+        -FERRULE_LENGTH - 1     # Align with ring in Z
+    ))
+    
+    # Cut the gap from the ring
+    split_ring = hollow_ring.cut(cutting_plate)
+    
+    ring_obj = doc.addObject("Part::Feature", "CompressionRing_Split")
+    ring_obj.Shape = split_ring
     ring_obj.ViewObject.ShapeColor = (0.7, 0.7, 0.7)  # Gray
     ring_obj.ViewObject.Transparency = 40
     
     print(f"  Outer: {RING_NARROW_DIA:.2f}mm → {RING_WIDE_DIA:.2f}mm")
     print(f"  Inner: {LINE_DIA}mm")
     print(f"  Length: {FERRULE_LENGTH:.1f}mm")
+    print(f"  Gap width: {GAP_WIDTH}mm (along XZ plane)")
     print(f"  Starts at: Z=0 (line diameter)")
     print(f"  Taper: {TAPER_ANGLE}°")
+    print(f"  Split into TWO halves for compression")
     
     return ring_obj
 
@@ -155,13 +178,14 @@ def create_compression_ring():
 
 def main():
     print("=" * 70)
-    print("CAP - SIMPLIFIED SINGLE-PART DESIGN")
+    print("CAP - SPLIT COMPRESSION RING (3mm GAP)")
     print("=" * 70)
     print(f"\nDesign Parameters:")
     print(f"  Line diameter: {LINE_DIA}mm")
     print(f"  Sphere ratio: {SPHERE_RATIO}× line diameter")
     print(f"  Taper angle: {TAPER_ANGLE}°")
     print(f"  Ring length: sphere diameter/2")
+    print(f"  Gap width: {GAP_WIDTH}mm")
     print()
     print(f"Calculated Dimensions:")
     print(f"  Sphere diameter: {SPHERE_OUTER_DIA:.1f}mm")
@@ -174,14 +198,14 @@ def main():
     # Create components
     line = create_line()
     sphere = create_sphere_with_tapered_recess()
-    ring = create_compression_ring()
+    ring = create_split_compression_ring()
     
     print("\nComponents created:")
     print("  1. Line (brown) - 12mm mooring line")
     print("  2. Sphere (red, semi-transparent) - 27mm solid sphere")
-    print("  3. CompressionRing (gray, semi-transparent) - 13.5mm long")
+    print("  3. CompressionRing_Split (gray, semi-transparent) - TWO halves with 3mm gap")
     print()
-    print("Simplified! Ring starts at line diameter, length = sphere dia/2")
+    print("Ring now SPLITS for compression action!")
     print()
     
     App.ActiveDocument.recompute()
