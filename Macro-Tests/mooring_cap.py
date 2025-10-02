@@ -92,7 +92,7 @@ GAP_WIDTH = 2.0
 WALL_THICKNESS = 3.0
 
 # Internal ridges (grip rope)
-RIDGE_HEIGHT = 0.5
+RIDGE_HEIGHT = 1.0
 RIDGE_SPACING = 3.0
 RIDGE_WIDTH = 0.5
 
@@ -119,7 +119,7 @@ def calculate_dimensions(line_dia):
     radius_increase = ferrule_length * math.tan(taper_rad)
     
     ring_inner_dia = line_dia
-    ring_head_outer_dia = ring_inner_dia + (2 * WALL_THICKNESS)
+    ring_head_outer_dia = ring_inner_dia + (2 * WALL_THICKNESS) - 1.0  # Reduced by 1mm
     ring_base_outer_dia = ring_head_outer_dia + (2 * radius_increase)
     
     ring_head_with_teeth = ring_head_outer_dia + (2 * RATCHET_TOOTH_HEIGHT)
