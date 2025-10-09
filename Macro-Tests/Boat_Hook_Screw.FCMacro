@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Square Thread Screw for FreeCAD 1.0
+Creates a screw with raised square threads using proper helix method
+
+Specifications:
+- 15 mm diameter core cylinder
+- 3 mm raised square threads (protruding outward)
+- 5 mm pitch
+- 23 mm long
+- No head
+"""
+
+import FreeCAD as App
+import Part
+from FreeCAD import Base
+
+# ============================================
+# PARAMETERS - Easy to modify for reuse
+# ============================================
+class ScrewParams:
+    """All screw parameters in one place"""
+    core_diameter = 15.0   # mm - base cylinder diameter
+    thread_height = 3.0    # mm - how far threads protrude outward
+    thread_pitch = 5.0     # mm - distance between thread centers
+    thread_width = 2.5     # mm - width of the square thread ridge
+    screw_length = 23.0    # mm - total length of screw
+    
+    # Calculated parameters
+    @property
+    def outer_diameter(self):
+        """Total diameter including threads"""
+        return self.core_diameter + (2 * self.thread_height)
+    
+    @property
+    def thread_gap(self):
+        """Gap between thread ridges"""
+        return self.thread_pitch - self.thread_width
+    
+    @property
+    def num_turns(self):
+        """Number of complete thread turns"""
+        return self.screw_length / self.thread_pitch
+
+
+def create_square_thread_screw(params=None):
+    """
+    Create a screw with raised square threads using proper helix method
+    
+    Args:
+        params: ScrewParams object (optional, uses defaults if None)
+    
+    Returns:
+        FreeCAD Part object of the screw
+    """
+    
+    # Use provided params or defaults
+    if params is None:
+        params = ScrewParams()
+    
+    # Ensure we have a document
+    if not App.ActiveDocument:
+        App.newDocument("SquareThreadScrew")
+    doc = App.ActiveDocument
+    
+    print(f"\nCreating Square Thread SCREW with Raised Threads")
+    print(f"  Core diameter: {params.core_diameter} mm")
+    print(f"  Thread height: {params.thread_height} mm (protruding)")
+    print(f"  Thread pitch:  {params.thread_pitch} mm")
+    print(f"  Thread width:  {params.thread_width} mm")
+    print(f"  Screw length:  {params.screw_length} mm")
+    print(f"  Total diameter: {params.outer_diameter} mm")
+    print(f"  Thread turns:  {params.num_turns:.1f}\n")
+    
+    # Step 1: Create the core cylinder
+    print("Step 1: Creating core cylinder...")
+    core_cylinder = Part.makeCylinder(
+        params.core_diameter / 2,   # radius
+        params.screw_length,         # height
+        Base.Vector(0, 0, 0),        # position
+        Base.Vector(0, 0, 1)         # direction (Z-axis)
+    )
+    
+    # Step 2: Create helix for thread path
+    print("Step 2: Creating helix for thread path...")
+    
+    # Helix at the outer surface of the core cylinder
+    # The thread will extend outward from here
+    helix_radius = params.core_diameter / 2
+    
+    # Make helix slightly longer for complete threads
+    helix = Part.makeHelix(
+        params.thread_pitch,         # pitch
+        params.screw_length + params.thread_width,  # height (a bit extra)
+        helix_radius,                # radius at core surface
+        0,                          # angle
+        True                        # right-hand thread
+    )
+    
+    print(f"  Helix created at radius {helix_radius:.1f} mm")
+    
+    # Step 3: Create the square thread profile AT THE HELIX START POINT
+    print("Step 3: Creating square thread profile at helix start...")
+    
+    # Get the start point of the helix - THIS IS KEY!
+    start_point = helix.Vertexes[0].Point
+    print(f"  Helix starts at: ({start_point.x:.2f}, {start_point.y:.2f}, {start_point.z:.2f})")
+    
+    # Create rectangular profile for the thread at the helix start point
+    # The profile extends radially outward from the core surface
+    profile_points = [
+        Base.Vector(start_point.x, start_point.y, start_point.z - params.thread_width/2),
+        Base.Vector(start_point.x + params.thread_height, start_point.y, start_point.z - params.thread_width/2),
+        Base.Vector(start_point.x + params.thread_height, start_point.y, start_point.z + params.thread_width/2),
+        Base.Vector(start_point.x, start_point.y, start_point.z + params.thread_width/2),
+        Base.Vector(start_point.x, start_point.y, start_point.z - params.thread_width/2)  # close
+    ]
+    
+    # Create wire from profile points
+    profile_wire = Part.makePolygon(profile_points)
+    
+    print(f"  Square profile: {params.thread_height}mm x {params.thread_width}mm")
+    
+    # Step 4: Create the thread using makePipeShell (the correct method from wire rope)
+    print("Step 4: Creating thread using makePipeShell...")
+    
+    # Convert helix to wire
+    helix_wire = Part.Wire(helix)
+    
+    # Use makePipeShell with proper parameters (like in wire rope code)
+    thread_solid = helix_wire.makePipeShell(
+        [profile_wire],  # List of profile wires
+        True,            # Make solid
+        True             # Use Frenet (follows curve tangent properly)
+    )
+    
+    print("  Thread solid created successfully")
+    
+    # Step 5: Trim thread to exact screw length
+    print("Step 5: Trimming thread to screw length...")
+    
+    # Create trimming box
+    trim_box = Part.makeBox(
+        params.outer_diameter * 2,
+        params.outer_diameter * 2,
+        params.screw_length,
+        Base.Vector(-params.outer_diameter, -params.outer_diameter, 0)
+    )
+    
+    # Trim the thread
+    thread_trimmed = thread_solid.common(trim_box)
+    
+    # Step 6: Combine core cylinder with thread
+    print("Step 6: Combining core cylinder with raised thread...")
+    
+    final_screw = core_cylinder.fuse(thread_trimmed)
+    
+    # Step 7: Add to document
+    print("Step 7: Adding to document...")
+    
+    # Remove old object if it exists
+    old_obj = doc.getObject("SquareThreadScrew")
+    if old_obj:
+        doc.removeObject(old_obj.Name)
+    
+    # Create new object
+    screw_obj = doc.addObject("Part::Feature", "SquareThreadScrew")
+    screw_obj.Shape = final_screw
+    
+    # Set appearance
+    screw_obj.ViewObject.ShapeColor = (0.7, 0.7, 0.8)
+    screw_obj.ViewObject.DisplayMode = "Shaded"
+    
+    # Recompute
+    doc.recompute()
+    
+    # Adjust view
+    try:
+        import FreeCADGui
+        FreeCADGui.activeDocument().activeView().viewAxonometric()
+        FreeCADGui.SendMsgToActiveView("ViewFit")
+    except:
+        pass
+    
+    print("\n✓ Square thread SCREW created successfully!")
+    print(f"✓ Core: {params.core_diameter}mm diameter")
+    print(f"✓ Threads: {params.thread_height}mm raised square threads")
+    print(f"✓ {params.num_turns:.1f} thread turns")
+    print(f"✓ Volume: {final_screw.Volume:.1f} mm³\n")
+    
+    return screw_obj
+
+
+def make_custom_screw(core_dia=15, length=23, thread_height=3, pitch=5, thread_width=2.5):
+    """
+    Convenience function to create a screw with custom parameters
+    
+    Example:
+        make_custom_screw(core_dia=20, length=30)
+        make_custom_screw(core_dia=10, pitch=3)
+    """
+    params = ScrewParams()
+    params.core_diameter = core_dia
+    params.screw_length = length
+    params.thread_height = thread_height
+    params.thread_pitch = pitch
+    params.thread_width = thread_width
+    
+    return create_square_thread_screw(params)
+
+
+# ============================================
+# MAIN EXECUTION
+# ============================================
+if __name__ == "__main__" or __name__ == "__console__":
+    # Create the screw with default parameters
+    screw = create_square_thread_screw()
+    
+    # Print usage info
+    print("To create a custom screw, use:")
+    print("  make_custom_screw(core_dia=20, length=30)")
+    print("  make_custom_screw(pitch=6, thread_height=4)")
