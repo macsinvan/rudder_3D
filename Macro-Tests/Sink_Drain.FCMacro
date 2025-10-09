@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+FreeCAD 1.0 Script - DRAIN BASIN WITH PROPER CORNER COVERAGE
+Completely rewritten hole placement logic for proper corner coverage
+- 80mm deep
+- 2mm wall thickness
+- Mesh bottom with holes in ALL corners
+"""
+
+import FreeCAD
+import Part
+import math
+
+# Parameters
+wall_depth = 80.0          # mm - basin depth
+wall_thickness = 2.0       # mm
+flange_width = 10.0       # mm - extends outward
+flange_thickness = 4.0    # mm
+length = 395.0            # mm - outer length
+width = 250.0             # mm - outer width  
+corner_radius = 75.0      # mm
+hole_diameter = 3.0       # mm - mesh holes
+hole_spacing = 6.0        # mm - center to center
+bottom_fillet = 2.0       # mm - bottom edge fillet
+
+print("="*60)
+print("DRAIN BASIN WITH COMPLETE CORNER COVERAGE")
+print("="*60)
+
+# Create or get document
+doc = FreeCAD.newDocument("DrainBasin_AllCorners") if not FreeCAD.ActiveDocument else FreeCAD.ActiveDocument
+
+# Clear existing objects
+for obj in doc.Objects:
+    doc.removeObject(obj.Name)
+
+print("\n[1/5] Creating base profile...")
+
+# Create rounded rectangle profile
+profile = Part.makeBox(length, width, 1, FreeCAD.Vector(0, 0, 0))
+edges_to_fillet = []
+for i, edge in enumerate(profile.Edges):
+    if abs(edge.Curve.Direction.z) > 0.99:
+        edges_to_fillet.append((i+1, corner_radius, corner_radius))
+        
+if edges_to_fillet:
+    profile = profile.makeFillet(corner_radius, [profile.Edges[i[0]-1] for i in edges_to_fillet])
+
+profile_face = None
+for face in profile.Faces:
+    if abs(face.CenterOfMass.z) < 0.1:
+        profile_face = face
+        break
+
+print("✓ Profile created: {}mm x {}mm with {}mm radius corners".format(length, width, corner_radius))
+
+print("\n[2/5] Extruding and hollowing basin...")
+
+solid_basin = profile_face.extrude(FreeCAD.Vector(0, 0, -wall_depth))
+
+top_face = None
+for face in solid_basin.Faces:
+    if abs(face.CenterOfMass.z) < 0.1 and abs(face.normalAt(0,0).z - 1) < 0.1:
+        top_face = face
+        break
+
+hollow_basin = solid_basin.makeThickness([top_face], -wall_thickness, 1e-6)
+print("✓ Basin hollowed: {}mm deep, {}mm wall thickness".format(wall_depth, wall_thickness))
+
+print("\n[3/5] Adding top flange...")
+
+flange_outer = Part.makeBox(
+    length + 2*flange_width, 
+    width + 2*flange_width, 
+    flange_thickness,
+    FreeCAD.Vector(-flange_width, -flange_width, 0)
+)
+
+edges_to_fillet = []
+for i, edge in enumerate(flange_outer.Edges):
+    if abs(edge.Curve.Direction.z) > 0.99:
+        edges_to_fillet.append((i+1, corner_radius + flange_width, corner_radius + flange_width))
+        
+if edges_to_fillet:
+    flange_outer = flange_outer.makeFillet(corner_radius + flange_width, 
+                                          [flange_outer.Edges[i[0]-1] for i in edges_to_fillet])
+
+flange_inner = Part.makeBox(length, width, flange_thickness + 1, 
+                            FreeCAD.Vector(0, 0, -0.5))
+
+edges_to_fillet = []
+for i, edge in enumerate(flange_inner.Edges):
+    if abs(edge.Curve.Direction.z) > 0.99:
+        edges_to_fillet.append((i+1, corner_radius, corner_radius))
+        
+if edges_to_fillet:
+    flange_inner = flange_inner.makeFillet(corner_radius, 
+                                          [flange_inner.Edges[i[0]-1] for i in edges_to_fillet])
+
+flange_ring = flange_outer.cut(flange_inner)
+basin_with_flange = hollow_basin.fuse(flange_ring)
+print("✓ Top flange added: {}mm wide, {}mm thick".format(flange_width, flange_thickness))
+
+print("\n[4/5] Adding bottom edge fillets...")
+
+try:
+    bottom_edges = []
+    for edge in basin_with_flange.Edges:
+        if edge.CenterOfMass.z < -(wall_depth - 5):
+            if not hasattr(edge.Curve, 'Radius') or edge.Curve.Radius > 100:
+                bottom_edges.append(edge)
+    
+    if bottom_edges[:8]:
+        basin_with_flange = basin_with_flange.makeFillet(bottom_fillet, bottom_edges[:8])
+        print("✓ Bottom fillets added: {}mm radius".format(bottom_fillet))
+except:
+    print("⚠ Could not add bottom fillets (proceeding without)")
+
+print("\n[5/5] Creating mesh with SIMPLIFIED corner logic...")
+
+# SIMPLIFIED APPROACH: Check if point is inside the rounded rectangle
+def is_inside_rounded_rect(x, y, length, width, radius):
+    """
+    Check if point (x,y) is inside a rounded rectangle
+    Rectangle from (0,0) to (length, width) with corner radius
+    """
+    # Check main rectangular area (excluding corner squares)
+    if radius <= x <= length - radius and 0 <= y <= width:
+        return True
+    if 0 <= x <= length and radius <= y <= width - radius:
+        return True
+    
+    # Check corner circles
+    corners = [
+        (radius, radius),                    # Bottom-left
+        (length - radius, radius),            # Bottom-right  
+        (length - radius, width - radius),   # Top-right
+        (radius, width - radius)             # Top-left
+    ]
+    
+    for cx, cy in corners:
+        if math.sqrt((x - cx)**2 + (y - cy)**2) <= radius:
+            return True
+    
+    return False
+
+# Calculate hole positions
+inner_length = length - 2 * wall_thickness
+inner_width = width - 2 * wall_thickness
+inner_radius = corner_radius - wall_thickness
+
+# Safety margin for holes from edge
+hole_margin = hole_diameter / 2 + 0.5
+
+# Create grid that covers entire inner area
+start_x = wall_thickness + hole_margin
+start_y = wall_thickness + hole_margin
+end_x = length - wall_thickness - hole_margin
+end_y = width - wall_thickness - hole_margin
+
+n_x = int((end_x - start_x) / hole_spacing) + 1
+n_y = int((end_y - start_y) / hole_spacing) + 1
+
+actual_spacing_x = (end_x - start_x) / max(n_x - 1, 1) if n_x > 1 else 0
+actual_spacing_y = (end_y - start_y) / max(n_y - 1, 1) if n_y > 1 else 0
+
+holes = []
+hole_count = 0
+skipped_count = 0
+
+print("Checking {} grid positions for valid hole placement...".format(n_x * n_y))
+
+for i in range(n_x):
+    for j in range(n_y):
+        x = start_x + i * actual_spacing_x
+        y = start_y + j * actual_spacing_y
+        
+        # Check if this position is valid for a hole
+        # Position is valid if it's inside the inner rounded rectangle with margin
+        if is_inside_rounded_rect(
+            x - wall_thickness,  # Convert to local coordinates
+            y - wall_thickness,
+            inner_length,
+            inner_width, 
+            inner_radius - hole_margin
+        ):
+            hole = Part.makeCylinder(
+                hole_diameter/2,
+                wall_thickness + 2,
+                FreeCAD.Vector(x, y, -wall_depth - 1),
+                FreeCAD.Vector(0, 0, 1)
+            )
+            holes.append(hole)
+            hole_count += 1
+        else:
+            skipped_count += 1
+
+print("Placing {} holes ({} positions outside rounded rectangle)".format(hole_count, skipped_count))
+
+# Combine and cut holes
+if holes:
+    # Combine in batches
+    batch_size = 50
+    batches = []
+    
+    for i in range(0, len(holes), batch_size):
+        batch = holes[i:i+batch_size]
+        batch_combined = batch[0]
+        for hole in batch[1:]:
+            batch_combined = batch_combined.fuse(hole)
+        batches.append(batch_combined)
+        if i % 200 == 0:
+            print("  Processing holes {}/{}...".format(min(i+batch_size, len(holes)), len(holes)))
+    
+    print("Combining hole batches...")
+    combined_holes = batches[0]
+    for batch in batches[1:]:
+        combined_holes = combined_holes.fuse(batch)
+    
+    print("Cutting holes from basin...")
+    final_basin = basin_with_flange.cut(combined_holes)
+    print("✓ Mesh complete with {} holes covering ALL corners!".format(hole_count))
+else:
+    final_basin = basin_with_flange
+
+# Create final object
+final_obj = doc.addObject("Part::Feature", "DrainBasin_Complete")
+final_obj.Shape = final_basin
+final_obj.Label = "Drain Basin 80mm - All Corners"
+
+if FreeCAD.GuiUp:
+    final_obj.ViewObject.ShapeColor = (0.3, 0.4, 0.5)
+    final_obj.ViewObject.Transparency = 0
+    final_obj.ViewObject.DisplayMode = "Shaded"
+
+# Statistics
+print("\n" + "="*60)
+print("✓ COMPLETE - ALL CORNERS HAVE DRAINAGE HOLES!")
+print("="*60)
+
+bbox = final_basin.BoundBox
+volume = final_basin.Volume
+mass = volume / 1000 * 1.25
+
+print("\nFinal Basin:")
+print("  Size: {:.1f} x {:.1f} x {:.1f} mm".format(
+    bbox.XMax - bbox.XMin,
+    bbox.YMax - bbox.YMin, 
+    abs(bbox.ZMin - bbox.ZMax)))
+print("  Depth: {} mm".format(wall_depth))
+print("  Holes: {} (all corners covered)".format(hole_count))
+print("  Mass: {:.1f} g (PLA)".format(mass))
+print("  Print time: ~{:.1f} hours".format(mass/5))
+
+doc.recompute()
+if FreeCAD.GuiUp:
+    FreeCAD.Gui.activeDocument().activeView().viewAxometric()
+    FreeCAD.Gui.SendMsgToActiveView("ViewFit")
+
+print("\n✓ Ready for 3D printing with complete drainage!")

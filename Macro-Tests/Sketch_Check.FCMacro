@@ -1,0 +1,200 @@
+"""
+FreeCAD Macro: Find and Fix Sketch Gaps
+This macro identifies unconnected endpoints and can auto-fix or delete them
+"""
+
+import FreeCAD as App
+import FreeCADGui as Gui
+from PySide import QtGui
+import Part
+
+def find_and_fix_gaps():
+    # Get the active document
+    doc = App.ActiveDocument
+    if doc is None:
+        QtGui.QMessageBox.warning(None, "Error", "No active document!")
+        return
+    
+    # Get the selection
+    sel = Gui.Selection.getSelection()
+    if len(sel) == 0:
+        QtGui.QMessageBox.warning(None, "Error", "Please select a sketch!")
+        return
+    
+    sketch = sel[0]
+    
+    # Check if it's a sketch
+    if sketch.TypeId != 'Sketcher::SketchObject':
+        QtGui.QMessageBox.warning(None, "Error", "Selected object is not a sketch!")
+        return
+    
+    # Get all geometries
+    geometries = sketch.Geometry
+    
+    # Dictionary to store endpoint info: point -> [(geo_index, is_start), ...]
+    endpoint_info = {}
+    tolerance = 0.01  # 0.01mm tolerance for matching points
+    
+    # Collect all endpoints with their geometry indices
+    for i, geo in enumerate(geometries):
+        # Skip construction geometry
+        if sketch.getConstruction(i):
+            continue
+            
+        if hasattr(geo, 'StartPoint') and hasattr(geo, 'EndPoint'):
+            start = geo.StartPoint
+            end = geo.EndPoint
+            
+            # Find or create entry for start point
+            found_start = False
+            for key in endpoint_info.keys():
+                if (abs(key[0] - start.x) < tolerance and 
+                    abs(key[1] - start.y) < tolerance):
+                    endpoint_info[key].append((i, 1))  # 1 = start point
+                    found_start = True
+                    break
+            if not found_start:
+                endpoint_info[(start.x, start.y)] = [(i, 1)]
+            
+            # Find or create entry for end point
+            found_end = False
+            for key in endpoint_info.keys():
+                if (abs(key[0] - end.x) < tolerance and 
+                    abs(key[1] - end.y) < tolerance):
+                    endpoint_info[key].append((i, 2))  # 2 = end point
+                    found_end = True
+                    break
+            if not found_end:
+                endpoint_info[(end.x, end.y)] = [(i, 2)]
+    
+    # Find unconnected endpoints (appear only once)
+    gap_points = {point: info for point, info in endpoint_info.items() if len(info) == 1}
+    
+    if len(gap_points) == 0:
+        msg = "✓ No gaps found! All endpoints are connected."
+        QtGui.QMessageBox.information(None, "Success", msg)
+        return
+    
+    # Create message with gap info
+    msg = f"Found {len(gap_points)} unconnected endpoint(s):\n\n"
+    for i, ((x, y), info) in enumerate(gap_points.items(), 1):
+        geo_idx, point_type = info[0]
+        point_name = "START" if point_type == 1 else "END"
+        msg += f"{i}. Geo#{geo_idx} {point_name}: X={x:.2f}, Y={y:.2f}\n"
+    msg += "\n\nWhat would you like to do?"
+    
+    # Create dialog with options
+    msgBox = QtGui.QMessageBox()
+    msgBox.setWindowTitle("Gaps Found!")
+    msgBox.setText(msg)
+    msgBox.setIcon(QtGui.QMessageBox.Warning)
+    
+    fixButton = msgBox.addButton("Auto-Fix (Connect nearest)", QtGui.QMessageBox.ActionRole)
+    deleteButton = msgBox.addButton("Delete Unconnected", QtGui.QMessageBox.ActionRole)
+    cancelButton = msgBox.addButton("Cancel", QtGui.QMessageBox.RejectRole)
+    
+    msgBox.exec_()
+    
+    if msgBox.clickedButton() == fixButton:
+        auto_fix_gaps(sketch, gap_points, tolerance)
+    elif msgBox.clickedButton() == deleteButton:
+        delete_unconnected(sketch, gap_points)
+
+def auto_fix_gaps(sketch, gap_points, tolerance):
+    """Try to automatically fix gaps by connecting nearest endpoints"""
+    gap_list = list(gap_points.items())
+    fixed_count = 0
+    
+    doc = App.ActiveDocument
+    doc.openTransaction("Auto-fix sketch gaps")
+    
+    try:
+        # Try to pair up nearby gaps
+        used = set()
+        for i, (point1, info1) in enumerate(gap_list):
+            if i in used:
+                continue
+                
+            # Find nearest other gap
+            min_dist = float('inf')
+            nearest_idx = -1
+            
+            for j, (point2, info2) in enumerate(gap_list):
+                if j <= i or j in used:
+                    continue
+                    
+                dist = ((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)**0.5
+                if dist < min_dist and dist < 50:  # Only connect if within 50mm
+                    min_dist = dist
+                    nearest_idx = j
+            
+            if nearest_idx != -1:
+                # Connect these two points with a Coincident constraint
+                geo1_idx, point1_type = info1[0]
+                geo2_idx, point2_type = gap_list[nearest_idx][1][0]
+                
+                try:
+                    sketch.addConstraint(
+                        Sketcher.Constraint('Coincident', 
+                                          geo1_idx, point1_type,
+                                          geo2_idx, point2_type)
+                    )
+                    fixed_count += 1
+                    used.add(i)
+                    used.add(nearest_idx)
+                except:
+                    pass
+        
+        doc.commitTransaction()
+        doc.recompute()
+        
+        if fixed_count > 0:
+            QtGui.QMessageBox.information(None, "Success", 
+                f"Fixed {fixed_count} gap(s) by connecting endpoints!")
+        else:
+            QtGui.QMessageBox.warning(None, "Notice", 
+                "Could not auto-fix gaps. They may be too far apart.\nTry manual fixing or delete unconnected geometry.")
+                
+    except Exception as e:
+        doc.abortTransaction()
+        QtGui.QMessageBox.critical(None, "Error", f"Error during auto-fix: {str(e)}")
+
+def delete_unconnected(sketch, gap_points):
+    """Delete geometry that has unconnected endpoints"""
+    # Get list of geometry indices to delete
+    to_delete = set()
+    for point, info in gap_points.items():
+        geo_idx, _ = info[0]
+        to_delete.add(geo_idx)
+    
+    if len(to_delete) == 0:
+        return
+    
+    # Confirm deletion
+    reply = QtGui.QMessageBox.question(None, "Confirm Delete",
+        f"Delete {len(to_delete)} geometry element(s) with unconnected endpoints?",
+        QtGui.QMessageBox.Yes | QtGui.QMessageBox.No)
+    
+    if reply != QtGui.QMessageBox.Yes:
+        return
+    
+    doc = App.ActiveDocument
+    doc.openTransaction("Delete unconnected geometry")
+    
+    try:
+        # Delete in reverse order to maintain indices
+        for geo_idx in sorted(to_delete, reverse=True):
+            sketch.delGeometry(geo_idx)
+        
+        doc.commitTransaction()
+        doc.recompute()
+        
+        QtGui.QMessageBox.information(None, "Success", 
+            f"Deleted {len(to_delete)} unconnected geometry element(s)!")
+            
+    except Exception as e:
+        doc.abortTransaction()
+        QtGui.QMessageBox.critical(None, "Error", f"Error during deletion: {str(e)}")
+
+# Run the function
+find_and_fix_gaps()
